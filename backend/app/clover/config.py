@@ -50,7 +50,6 @@ class CloverSettings:
                 ("CLOVER_TOKEN_ENCRYPTION_KEY", self.token_encryption_key),
                 ("CLOVER_STATE_SECRET", self.state_secret),
                 ("CLOVER_WEBHOOK_SECRET", self.webhook_secret),
-                ("CLOVER_MERCHANT_ID", self.merchant_id),
                 ("PUBLIC_APP_URL", self.public_app_url),
                 ("FRONTEND_URL", self.frontend_url),
             )
@@ -59,6 +58,10 @@ class CloverSettings:
         if missing:
             raise CloverConfigurationError(
                 f"Missing Clover configuration: {', '.join(missing)}."
+            )
+        if self.ecommerce_private_token and not self.merchant_id:
+            raise CloverConfigurationError(
+                "CLOVER_MERCHANT_ID is required for the legacy sandbox credential."
             )
         if self.environment not in {"sandbox", "production"}:
             raise CloverConfigurationError(

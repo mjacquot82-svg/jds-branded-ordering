@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -145,15 +146,35 @@ class Order(OrderModelValidation, Base):
         CheckConstraint("version >= 1", name="version_positive"),
         CheckConstraint("expires_at > created_at", name="expiry_after_creation"),
         CheckConstraint(
-            "(clover_merchant_id IS NULL AND "
+            "(clover_installation_id IS NULL AND "
+            "clover_environment IS NULL AND "
+            "clover_merchant_id IS NULL AND "
             "clover_checkout_session_id IS NULL AND "
             "clover_checkout_url IS NULL AND "
             "clover_checkout_expires_at IS NULL) OR "
-            "(clover_merchant_id IS NOT NULL AND "
+            "(clover_installation_id IS NOT NULL AND "
+            "clover_environment IS NOT NULL AND "
+            "clover_merchant_id IS NOT NULL AND "
             "clover_checkout_session_id IS NOT NULL AND "
             "clover_checkout_url IS NOT NULL AND "
             "clover_checkout_expires_at IS NOT NULL)",
             name="clover_checkout_consistent",
+        ),
+        ForeignKeyConstraint(
+            [
+                "organization_id", "clover_installation_id",
+                "clover_environment", "clover_merchant_id",
+            ],
+            [
+                "clover_installations.organization_id", "clover_installations.id",
+                "clover_installations.environment", "clover_installations.merchant_id",
+            ],
+            name="fk_orders_tenant_clover_installation", ondelete="RESTRICT",
+        ),
+        Index("ix_orders_organization_clover_checkout", "organization_id", "clover_checkout_session_id"),
+        UniqueConstraint(
+            "organization_id", "clover_checkout_session_id",
+            name="uq_orders_organization_clover_checkout_session",
         ),
     )
 
@@ -197,9 +218,11 @@ class Order(OrderModelValidation, Base):
         Integer, default=1_300_000, server_default="1300000"
     )
     total_cents: Mapped[int] = mapped_column(Integer)
+    clover_installation_id: Mapped[UUID | None] = mapped_column(index=True)
+    clover_environment: Mapped[str | None] = mapped_column(String(20))
     clover_merchant_id: Mapped[str | None] = mapped_column(String(100))
     clover_checkout_session_id: Mapped[str | None] = mapped_column(
-        String(200), unique=True
+        String(200)
     )
     clover_checkout_url: Mapped[str | None] = mapped_column(Text)
     clover_checkout_expires_at: Mapped[datetime | None] = mapped_column(

@@ -27,6 +27,8 @@ from app.clover.security import (
     verify_webhook_signature,
 )
 from app.orders.models import Order, OrderItem, OrderItemModifier
+from app.tenancy.context import TenantContext
+from app.tenancy.resolver import LADELS_ORGANIZATION_ID
 
 
 def settings(**overrides: str) -> CloverSettings:
@@ -357,7 +359,18 @@ def test_tax_rates_diagnostic_returns_clover_error_details(
     monkeypatch.setattr(
         clover_api,
         "_active_credential",
-        lambda *_: ("merchant-id", "oauth-access-token"),
+        lambda *_, **__: (
+            CloverInstallation(
+                organization_id=LADELS_ORGANIZATION_ID,
+                merchant_id="merchant-id",
+                environment="sandbox",
+                app_id="app-id",
+                access_token_encrypted="",
+                refresh_token_encrypted="",
+                access_token_expires_at=datetime(2026, 8, 20, tzinfo=timezone.utc),
+            ),
+            "oauth-access-token",
+        ),
     )
 
     def rejected(*_: object, **__: object) -> tuple[dict, int, dict[str, str]]:
@@ -381,6 +394,11 @@ def test_tax_rates_diagnostic_returns_clover_error_details(
             )(),
             settings=settings(ecommerce_private_token="private-token"),
             _=object(),
+            tenant=TenantContext(
+                organization_id=LADELS_ORGANIZATION_ID,
+                organization_slug="the-guest-house",
+                source="internal",
+            ),
         )
 
     assert captured.value.status_code == 502

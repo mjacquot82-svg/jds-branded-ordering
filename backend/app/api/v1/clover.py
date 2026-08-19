@@ -4,6 +4,7 @@ import logging
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse, Response
@@ -11,16 +12,16 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from app.clover.client import CloverApiError, CloverClient, CloverTokenPair
 from app.clover.config import CloverConfigurationError, CloverSettings
-from app.clover.models import CloverInstallation, CloverPaymentEvent
+from app.clover.models import CloverInstallation, CloverOAuthState, CloverPaymentEvent
 from app.clover.security import (
     InvalidOAuthState,
     InvalidWebhookSignature,
     TokenCipher,
     create_oauth_state,
+    oauth_nonce_hash,
     verify_oauth_state,
     verify_webhook_signature,
 )
@@ -31,10 +32,10 @@ from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.db.session import get_db_session
 from app.orders.constants import OrderStatus
 from app.orders.models import Order, OrderItem
+from app.jds_auth.models import Organization
 from app.jds_auth.service import AuthPrincipal
 from app.orders.pricing import calculate_tax_cents
 from app.tenancy.context import TenantContext
-from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
 
 router = APIRouter(prefix="/clover", tags=["clover"])
 logger = logging.getLogger(__name__)
@@ -157,7 +158,7 @@ def _verify_payment_evidence(
 def _record_payment_event(
     session: Session,
     *,
-    settings: CloverSettings,
+    installation: CloverInstallation,
     payment_id: str,
     checkout_session_id: str,
     order: Order | None,
@@ -172,16 +173,17 @@ def _record_payment_event(
 ) -> CloverPaymentEvent:
     existing = session.scalar(
         select(CloverPaymentEvent).where(
-            CloverPaymentEvent.environment == settings.environment,
-            CloverPaymentEvent.merchant_id == settings.merchant_id,
+            CloverPaymentEvent.installation_id == installation.id,
             CloverPaymentEvent.payment_id == payment_id,
         )
     )
     if existing is not None:
         return existing
     event = CloverPaymentEvent(
-        environment=settings.environment,
-        merchant_id=settings.merchant_id,
+        organization_id=installation.organization_id,
+        installation_id=installation.id,
+        environment=installation.environment,
+        merchant_id=installation.merchant_id,
         payment_id=payment_id,
         checkout_session_id=checkout_session_id,
         order_id=order.id if order is not None else None,
@@ -210,16 +212,27 @@ def get_settings() -> CloverSettings:
     return settings
 
 
-def _configuration_diagnostic(settings: CloverSettings) -> dict[str, object]:
+def _configuration_diagnostic(
+    settings: CloverSettings,
+    installation: CloverInstallation | None,
+) -> dict[str, object]:
     return {
         "environment": settings.environment,
         "app_id_masked": _masked_identifier(settings.app_id),
-        "merchant_id_masked": _masked_identifier(settings.merchant_id),
+        "merchant_id_masked": _masked_identifier(
+            installation.merchant_id if installation is not None else None
+        ),
         "credential_source": settings.credential_source,
         "oauth_configured": bool(settings.app_id and settings.app_secret),
         "webhook_configured": bool(settings.webhook_secret),
-        "page_configuration": "configured" if settings.page_config_uuid else "default",
-        "page_config_uuid_masked": _masked_identifier(settings.page_config_uuid),
+        "page_configuration": (
+            "configured"
+            if installation is not None and installation.page_config_uuid
+            else "default"
+        ),
+        "page_config_uuid_masked": _masked_identifier(
+            installation.page_config_uuid if installation is not None else None
+        ),
         "platform_api_host": settings.platform_api_base_url,
         "hosted_checkout_host": settings.hosted_checkout_base_url,
         "ecommerce_service_host": settings.ecommerce_service_base_url,
@@ -256,10 +269,24 @@ def clover_launch() -> RedirectResponse:
 
 @router.get("/oauth/start")
 def oauth_start(
+    session: Session = Depends(get_db_session),
     settings: CloverSettings = Depends(get_settings),
-    _: object = Depends(require_read_permission("integrations.manage")),
+    principal: AuthPrincipal = Depends(require_read_permission("integrations.manage")),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
 ) -> RedirectResponse:
-    state = create_oauth_state(settings.state_secret)
+    state = create_oauth_state(
+        settings.state_secret, organization_id=str(tenant.organization_id),
+        membership_id=str(principal.membership_id), environment=settings.environment,
+        app_id=settings.app_id,
+    )
+    claims = verify_oauth_state(state, settings.state_secret)
+    session.add(CloverOAuthState(
+        nonce_hash=oauth_nonce_hash(claims["nonce"]),
+        organization_id=tenant.organization_id, membership_id=principal.membership_id,
+        environment=settings.environment, app_id=settings.app_id,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+    ))
+    session.commit()
     response = RedirectResponse(
         CloverClient(settings).authorization_url(state),
         status_code=status.HTTP_302_FOUND,
@@ -286,7 +313,8 @@ def oauth_callback(
     merchantId: str | None = Query(default=None),
     session: Session = Depends(get_db_session),
     settings: CloverSettings = Depends(get_settings),
-    _: object = Depends(require_read_permission("integrations.manage")),
+    principal: AuthPrincipal = Depends(require_read_permission("integrations.manage")),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
 ) -> RedirectResponse:
     resolved_merchant_id = merchant_id or merchantId
     returned_cookie = request.cookies.get(OAUTH_STATE_COOKIE)
@@ -296,7 +324,7 @@ def oauth_callback(
             detail={"code": "invalid_oauth_callback", "message": "OAuth callback is incomplete."},
         )
     try:
-        verify_oauth_state(state, settings.state_secret)
+        claims = verify_oauth_state(state, settings.state_secret)
     except InvalidOAuthState as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -307,46 +335,54 @@ def oauth_callback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "invalid_oauth_state", "message": "OAuth state does not match."},
         )
-    if resolved_merchant_id != settings.merchant_id:
+    if (
+        claims.get("organization_id") != str(tenant.organization_id)
+        or claims.get("membership_id") != str(principal.membership_id)
+        or claims.get("environment") != settings.environment
+        or claims.get("app_id") != settings.app_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
-                "code": "clover_merchant_mismatch",
-                "message": "Clover returned an unexpected merchant.",
+                "code": "clover_tenant_mismatch",
+                "message": "Clover authorization does not match this organization.",
             },
         )
 
     try:
+        oauth_state = session.scalar(
+            select(CloverOAuthState).where(
+                CloverOAuthState.nonce_hash == oauth_nonce_hash(claims["nonce"]),
+                CloverOAuthState.organization_id == tenant.organization_id,
+                CloverOAuthState.membership_id == principal.membership_id,
+                CloverOAuthState.consumed_at.is_(None),
+                CloverOAuthState.expires_at > datetime.now(timezone.utc),
+            ).with_for_update()
+        )
+        if oauth_state is None:
+            raise InvalidOAuthState("OAuth state has already been used or expired.")
+        oauth_state.consumed_at = datetime.now(timezone.utc)
+        session.commit()
         pair = CloverClient(settings).exchange_code(code)
         cipher = TokenCipher(settings.token_encryption_key)
-        values = {
-            "merchant_id": resolved_merchant_id,
-            "environment": settings.environment,
-            "app_id": settings.app_id,
-            "access_token_encrypted": cipher.encrypt(pair.access_token),
-            "refresh_token_encrypted": cipher.encrypt(pair.refresh_token),
-            "access_token_expires_at": pair.expires_at,
-            "refresh_token_expires_at": pair.refresh_expires_at,
-            "connection_state": "connected",
-            "reconnect_reason": None,
-        }
-        statement = postgresql_insert(CloverInstallation).values(**values)
-        session.execute(
-            statement.on_conflict_do_update(
-                index_elements=["merchant_id", "environment", "app_id"],
-                set_={
-                    "access_token_encrypted": values["access_token_encrypted"],
-                    "refresh_token_encrypted": values["refresh_token_encrypted"],
-                    "access_token_expires_at": values["access_token_expires_at"],
-                    "refresh_token_expires_at": values["refresh_token_expires_at"],
-                    "connection_state": values["connection_state"],
-                    "reconnect_reason": values["reconnect_reason"],
-                    "updated_at": datetime.now(timezone.utc),
-                },
-            )
-        )
+        claimed = session.scalar(select(CloverInstallation).where(CloverInstallation.environment == settings.environment, CloverInstallation.merchant_id == resolved_merchant_id))
+        if claimed is not None and claimed.organization_id != tenant.organization_id:
+            raise ValueError("Clover merchant is already connected to another organization.")
+        installation = session.scalar(select(CloverInstallation).where(CloverInstallation.organization_id == tenant.organization_id, CloverInstallation.environment == settings.environment).with_for_update())
+        if installation is None:
+            installation = CloverInstallation(id=uuid4(), organization_id=tenant.organization_id, merchant_id=resolved_merchant_id, environment=settings.environment, app_id=settings.app_id, access_token_encrypted="", refresh_token_encrypted="", access_token_expires_at=pair.expires_at)
+            session.add(installation)
+        installation.merchant_id = resolved_merchant_id
+        installation.app_id = settings.app_id
+        installation.access_token_encrypted = cipher.encrypt(pair.access_token)
+        installation.refresh_token_encrypted = cipher.encrypt(pair.refresh_token)
+        installation.access_token_expires_at = pair.expires_at
+        installation.refresh_token_expires_at = pair.refresh_expires_at
+        installation.connection_state = "connected"
+        installation.reconnect_reason = None
+        installation.page_config_uuid = settings.page_config_uuid
         session.commit()
-    except (CloverApiError, SQLAlchemyError, ValueError) as error:
+    except (CloverApiError, InvalidOAuthState, SQLAlchemyError, ValueError) as error:
         session.rollback()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -369,25 +405,23 @@ def connection_status(
     session: Session = Depends(get_db_session),
     settings: CloverSettings = Depends(get_settings),
     _: object = Depends(require_read_permission("integrations.manage")),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
 ) -> CloverConnectionResponse:
     if settings.ecommerce_private_token:
-        return CloverConnectionResponse(
-            configured=True,
-            connected=True,
-            environment=settings.environment,
-            merchant_id=_masked_identifier(settings.merchant_id),
-            health="healthy",
-            credential_source=settings.credential_source,
-            configuration=_configuration_diagnostic(settings),
+        installation, _ = _active_credential(
+            session, settings, organization_id=tenant.organization_id
         )
+        session.commit()
+    else:
+        installation = None
     try:
-        installation = session.scalar(
-            select(CloverInstallation).where(
-                CloverInstallation.merchant_id == settings.merchant_id,
-                CloverInstallation.environment == settings.environment,
-                CloverInstallation.app_id == settings.app_id,
+        if installation is None:
+            installation = session.scalar(
+                select(CloverInstallation).where(
+                    CloverInstallation.organization_id == tenant.organization_id,
+                    CloverInstallation.environment == settings.environment,
+                )
             )
-        )
     except SQLAlchemyError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -395,33 +429,51 @@ def connection_status(
         ) from error
     return CloverConnectionResponse(
         configured=True,
-        connected=installation is not None,
+        connected=(
+            installation is not None
+            and bool(settings.ecommerce_private_token or installation.access_token_encrypted)
+        ),
         environment=settings.environment,
-        merchant_id=_masked_identifier(settings.merchant_id),
-        health=_installation_health(installation),
+        merchant_id=_masked_identifier(
+            installation.merchant_id if installation is not None else None
+        ),
+        health=(
+            _installation_health(installation)
+            if installation is not None
+            and bool(settings.ecommerce_private_token or installation.access_token_encrypted)
+            else "disconnected"
+        ),
         credential_source=settings.credential_source,
         access_token_expires_at=(
-            installation.access_token_expires_at if installation else None
+            installation.access_token_expires_at
+            if installation and installation.access_token_encrypted
+            else None
         ),
         refresh_token_expires_at=(
-            installation.refresh_token_expires_at if installation else None
+            installation.refresh_token_expires_at
+            if installation and installation.access_token_encrypted
+            else None
         ),
-        configuration=_configuration_diagnostic(settings),
+        configuration=_configuration_diagnostic(settings, installation),
     )
 
 
 def _active_credential(
     session: Session,
     settings: CloverSettings,
-) -> tuple[str, str]:
-    if settings.ecommerce_private_token:
-        return settings.merchant_id, settings.ecommerce_private_token
+    *,
+    organization_id: UUID,
+    installation_id: UUID | None = None,
+) -> tuple[CloverInstallation, str]:
 
     installation_query = select(CloverInstallation).where(
-        CloverInstallation.merchant_id == settings.merchant_id,
+        CloverInstallation.organization_id == organization_id,
         CloverInstallation.environment == settings.environment,
-        CloverInstallation.app_id == settings.app_id,
     )
+    if installation_id is not None:
+        installation_query = installation_query.where(
+            CloverInstallation.id == installation_id
+        )
     try:
         installation = session.scalar(installation_query)
     except SQLAlchemyError as error:
@@ -430,10 +482,47 @@ def _active_credential(
             detail={"code": "clover_connection_unavailable"},
         ) from error
     if installation is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "clover_not_connected", "message": "Connect Clover before checkout."},
+        legacy_organization = session.scalar(
+            select(Organization).where(
+                Organization.id == organization_id,
+                Organization.slug == "the-guest-house",
+            )
         )
+        if settings.ecommerce_private_token and legacy_organization is not None:
+            installation = CloverInstallation(
+                id=uuid4(),
+                organization_id=organization_id,
+                merchant_id=settings.merchant_id,
+                environment=settings.environment,
+                app_id=settings.app_id,
+                access_token_encrypted="",
+                refresh_token_encrypted="",
+                access_token_expires_at=datetime.max.replace(tzinfo=timezone.utc),
+                connection_state="connected",
+                page_config_uuid=settings.page_config_uuid,
+            )
+            session.add(installation)
+            try:
+                session.flush()
+            except SQLAlchemyError as error:
+                session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={"code": "clover_connection_unavailable"},
+                ) from error
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "clover_not_connected", "message": "Connect Clover before checkout."},
+            )
+
+    if settings.ecommerce_private_token:
+        if installation.merchant_id != settings.merchant_id:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "clover_legacy_credential_mismatch"},
+            )
+        return installation, settings.ecommerce_private_token
 
     health = _installation_health(installation)
     if health == "reconnect_required":
@@ -446,7 +535,7 @@ def _active_credential(
     refresh_cutoff = datetime.now(timezone.utc) + timedelta(minutes=2)
     if installation.access_token_expires_at > refresh_cutoff:
         try:
-            return settings.merchant_id, cipher.decrypt(
+            return installation, cipher.decrypt(
                 installation.access_token_encrypted
             )
         except ValueError as error:
@@ -521,7 +610,7 @@ def _active_credential(
             ) from error
 
     try:
-        return settings.merchant_id, cipher.decrypt(
+        return installation, cipher.decrypt(
             installation.access_token_encrypted
         )
     except ValueError as error:
@@ -531,7 +620,12 @@ def _active_credential(
         ) from error
 
 
-def _checkout_payload(order: Order, settings: CloverSettings) -> dict:
+def _checkout_payload(
+    order: Order,
+    settings: CloverSettings,
+    *,
+    page_config_uuid: str | None = None,
+) -> dict:
     if settings.environment == "production" and order.currency != "CAD":
         raise ValueError("Production Clover checkout requires a CAD order.")
     name_parts = order.guest_name.split(maxsplit=1)
@@ -601,8 +695,8 @@ def _checkout_payload(order: Order, settings: CloverSettings) -> dict:
         },
         "shoppingCart": {"lineItems": line_items},
     }
-    if settings.page_config_uuid:
-        payload["pageConfigUuid"] = settings.page_config_uuid
+    if page_config_uuid:
+        payload["pageConfigUuid"] = page_config_uuid
     return payload
 
 
@@ -612,6 +706,7 @@ def debug_clover_tax_rates(
     session: Session = Depends(get_db_session),
     settings: CloverSettings = Depends(get_settings),
     _: object = Depends(require_read_permission("integrations.manage")),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
 ) -> dict:
     """Temporary authenticated diagnostic for Clover merchant tax rates."""
     if settings.environment != "sandbox":
@@ -629,9 +724,8 @@ def debug_clover_tax_rates(
     stored_expiration_before = None
     installation = session.scalar(
         select(CloverInstallation).where(
-            CloverInstallation.merchant_id == settings.merchant_id,
+            CloverInstallation.organization_id == tenant.organization_id,
             CloverInstallation.environment == settings.environment,
-            CloverInstallation.app_id == settings.app_id,
         )
     )
     persisted_installation_app_id = (
@@ -640,16 +734,18 @@ def debug_clover_tax_rates(
     if credential_source == "OAuth installation" and installation is not None:
         stored_expiration_before = installation.access_token_expires_at
 
-    merchant_id, access_token = _active_credential(session, settings)
+    installation, access_token = _active_credential(
+        session, settings, organization_id=tenant.organization_id
+    )
+    merchant_id = installation.merchant_id
     stored_expiration = stored_expiration_before
     token_refreshed = False
     if credential_source == "OAuth installation":
         installation = session.scalar(
             select(CloverInstallation)
             .where(
-                CloverInstallation.merchant_id == settings.merchant_id,
+                CloverInstallation.organization_id == tenant.organization_id,
                 CloverInstallation.environment == settings.environment,
-                CloverInstallation.app_id == settings.app_id,
             )
             .execution_options(populate_existing=True)
         )
@@ -753,7 +849,6 @@ def create_hosted_checkout(
     tenant: TenantContext = Depends(ladels_compatibility_tenant),
 ) -> CloverCheckoutResponse:
     response.headers["Cache-Control"] = "no-store"
-    merchant_id, access_token = _active_credential(session, settings)
     now = datetime.now(timezone.utc)
     try:
         order = session.scalar(
@@ -773,6 +868,13 @@ def create_hosted_checkout(
         ) from error
     if order is None:
         raise HTTPException(status_code=404, detail={"code": "order_not_found"})
+    installation, access_token = _active_credential(
+        session,
+        settings,
+        organization_id=order.organization_id,
+        installation_id=order.clover_installation_id,
+    )
+    merchant_id = installation.merchant_id
     if order.status == OrderStatus.PAID:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -799,8 +901,14 @@ def create_hosted_checkout(
         result = CloverClient(settings).create_checkout(
             access_token=access_token,
             merchant_id=merchant_id,
-            payload=_checkout_payload(order, settings),
+            payload=_checkout_payload(
+                order,
+                settings,
+                page_config_uuid=installation.page_config_uuid,
+            ),
         )
+        order.clover_installation_id = installation.id
+        order.clover_environment = installation.environment
         order.clover_merchant_id = merchant_id
         order.clover_checkout_session_id = result["checkoutSessionId"]
         order.clover_checkout_url = result["href"]
@@ -944,21 +1052,6 @@ async def hosted_checkout_webhook(
         "Clover Hosted Checkout webhook received: %s",
         json.dumps(webhook_diagnostic, default=str, sort_keys=True),
     )
-    if merchant_id != settings.merchant_id:
-        logger.warning(
-            "Clover Hosted Checkout webhook ignored: %s",
-            json.dumps(
-                {
-                    **webhook_diagnostic,
-                    "matching_order_found": False,
-                    "order_status_changed": False,
-                    "reason": "merchant_id_does_not_match_configured_merchant",
-                },
-                default=str,
-                sort_keys=True,
-            ),
-        )
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
     if (
         event_type != "PAYMENT"
         or not isinstance(checkout_session_id, str)
@@ -985,6 +1078,35 @@ async def hosted_checkout_webhook(
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    try:
+        installation = session.scalar(
+            select(CloverInstallation).where(
+                CloverInstallation.environment == settings.environment,
+                CloverInstallation.merchant_id == merchant_id,
+                CloverInstallation.connection_state != "disconnected",
+            )
+        )
+    except SQLAlchemyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "webhook_persistence_failed"},
+        ) from error
+    if installation is None:
+        logger.warning(
+            "Clover Hosted Checkout webhook ignored: %s",
+            json.dumps(
+                {
+                    **webhook_diagnostic,
+                    "matching_order_found": False,
+                    "order_status_changed": False,
+                    "reason": "unknown_clover_installation",
+                },
+                default=str,
+                sort_keys=True,
+            ),
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     verified_payment: dict | None = None
     if (
         settings.environment == "production"
@@ -997,10 +1119,15 @@ async def hosted_checkout_webhook(
             )
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         try:
-            credential_merchant_id, access_token = _active_credential(session, settings)
+            credential_installation, access_token = _active_credential(
+                session,
+                settings,
+                organization_id=installation.organization_id,
+                installation_id=installation.id,
+            )
             verified_payment = CloverClient(settings).get_payment(
                 access_token=access_token,
-                merchant_id=credential_merchant_id,
+                merchant_id=credential_installation.merchant_id,
                 payment_id=payment_id,
             )
         except (CloverApiError, HTTPException) as error:
@@ -1015,13 +1142,14 @@ async def hosted_checkout_webhook(
             ) from error
 
     try:
-        tenant = resolve_internal_ladels_compatibility_context(session)
         order = session.scalar(
             select(Order)
             .where(
                 Order.clover_checkout_session_id == checkout_session_id,
                 Order.clover_merchant_id == merchant_id,
-                Order.organization_id == tenant.organization_id,
+                Order.clover_installation_id == installation.id,
+                Order.clover_environment == installation.environment,
+                Order.organization_id == installation.organization_id,
             )
             .with_for_update()
         )
@@ -1066,7 +1194,7 @@ async def hosted_checkout_webhook(
         except ValueError as error:
             _record_payment_event(
                 session,
-                settings=settings,
+                installation=installation,
                 payment_id=payment_id,
                 checkout_session_id=checkout_session_id,
                 order=order,
@@ -1089,7 +1217,7 @@ async def hosted_checkout_webhook(
     event_payment_id = payment_id or f"webhook:{payload_hash}"
     event = _record_payment_event(
         session,
-        settings=settings,
+        installation=installation,
         payment_id=event_payment_id,
         checkout_session_id=checkout_session_id,
         order=order,
@@ -1199,12 +1327,27 @@ def reconcile_hosted_checkout_payment(
         )
     if order.status == OrderStatus.PAID:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    if not order.clover_checkout_session_id or order.clover_merchant_id != settings.merchant_id:
+    if (
+        not order.clover_checkout_session_id
+        or order.clover_installation_id is None
+        or order.clover_environment != settings.environment
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "clover_checkout_identity_missing"},
         )
-    merchant_id, access_token = _active_credential(session, settings)
+    installation, access_token = _active_credential(
+        session,
+        settings,
+        organization_id=tenant.organization_id,
+        installation_id=order.clover_installation_id,
+    )
+    merchant_id = installation.merchant_id
+    if order.clover_merchant_id != merchant_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "clover_checkout_identity_missing"},
+        )
     order = session.scalar(
         select(Order).where(Order.public_access_token == public_token, Order.organization_id == tenant.organization_id).with_for_update()
     )
@@ -1235,7 +1378,7 @@ def reconcile_hosted_checkout_payment(
 
     event = _record_payment_event(
         session,
-        settings=settings,
+        installation=installation,
         payment_id=request_body.payment_id,
         checkout_session_id=checkout_session_id,
         order=order,

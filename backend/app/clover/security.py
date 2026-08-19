@@ -16,11 +16,22 @@ class InvalidWebhookSignature(ValueError):
     pass
 
 
-def create_oauth_state(secret: str, *, now: int | None = None) -> str:
+def create_oauth_state(
+    secret: str, *, organization_id: str | None = None,
+    membership_id: str | None = None, environment: str | None = None,
+    app_id: str | None = None, now: int | None = None,
+) -> str:
     payload = {
         "iat": int(time.time() if now is None else now),
         "nonce": secrets.token_urlsafe(24),
     }
+    if organization_id is not None:
+        payload.update({
+            "organization_id": organization_id,
+            "membership_id": membership_id,
+            "environment": environment,
+            "app_id": app_id,
+        })
     encoded = base64.urlsafe_b64encode(
         json.dumps(payload, separators=(",", ":")).encode()
     ).decode().rstrip("=")
@@ -37,7 +48,7 @@ def verify_oauth_state(
     *,
     max_age_seconds: int = 600,
     now: int | None = None,
-) -> None:
+) -> dict[str, object]:
     try:
         encoded, supplied_signature = state.split(".", 1)
         expected = hmac.new(
@@ -60,6 +71,13 @@ def verify_oauth_state(
     current_time = int(time.time() if now is None else now)
     if issued_at > current_time + 30 or current_time - issued_at > max_age_seconds:
         raise InvalidOAuthState("OAuth state has expired.")
+    return payload
+
+
+def oauth_nonce_hash(nonce: object) -> str:
+    if not isinstance(nonce, str) or not nonce:
+        raise InvalidOAuthState("OAuth state nonce is invalid.")
+    return hashlib.sha256(nonce.encode()).hexdigest()
 
 
 class TokenCipher:

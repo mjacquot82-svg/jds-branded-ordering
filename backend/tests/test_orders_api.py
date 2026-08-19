@@ -559,14 +559,27 @@ def test_production_webhook_requires_verified_cad_payment_evidence(
 ) -> None:
     client, engine, ids = orders_api
     key = Fernet.generate_key().decode()
-    sandbox_settings = CloverSettings(
-        app_id="sandbox-app", app_secret="sandbox-secret",
-        token_encryption_key=key, state_secret="s" * 48,
-        webhook_secret="w" * 48, public_app_url="https://api.example.test",
+    production_settings = CloverSettings(
+        app_id="production-app", app_secret="production-secret",
+        token_encryption_key=key, state_secret="p" * 48,
+        webhook_secret="q" * 48, public_app_url="https://api.example.test",
         frontend_url="https://shop.example.test", merchant_id="merchant-id",
-        environment="sandbox", ecommerce_private_token="sandbox-private-token",
+        environment="production",
     )
-    client.app.dependency_overrides[get_settings] = lambda: sandbox_settings
+    cipher = TokenCipher(key)
+    with Session(engine) as session:
+        session.add(CloverInstallation(
+            organization_id=LADELS_ORGANIZATION_ID,
+            merchant_id="merchant-id", environment="production",
+            app_id="production-app",
+            access_token_encrypted=cipher.encrypt("production-access"),
+            refresh_token_encrypted=cipher.encrypt("production-refresh"),
+            access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
+            refresh_token_expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            connection_state="connected",
+        ))
+        session.commit()
+    client.app.dependency_overrides[get_settings] = lambda: production_settings
     created = client.post("/api/v1/orders", json=order_payload(ids)).json()
     with Session(engine) as session:
         order = session.scalar(select(Order).where(Order.public_access_token == created["public_token"]))
@@ -585,27 +598,6 @@ def test_production_webhook_requires_verified_cad_payment_evidence(
     assert client.post(
         f"/api/v1/clover/orders/{created['public_token']}/checkout"
     ).status_code == 200
-
-    production_settings = CloverSettings(
-        app_id="production-app", app_secret="production-secret",
-        token_encryption_key=key, state_secret="p" * 48,
-        webhook_secret="q" * 48, public_app_url="https://api.example.test",
-        frontend_url="https://shop.example.test", merchant_id="merchant-id",
-        environment="production",
-    )
-    cipher = TokenCipher(key)
-    with Session(engine) as session:
-        session.add(CloverInstallation(
-            merchant_id="merchant-id", environment="production",
-            app_id="production-app",
-            access_token_encrypted=cipher.encrypt("production-access"),
-            refresh_token_encrypted=cipher.encrypt("production-refresh"),
-            access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
-            refresh_token_expires_at=datetime.now(timezone.utc) + timedelta(days=30),
-            connection_state="connected",
-        ))
-        session.commit()
-    client.app.dependency_overrides[get_settings] = lambda: production_settings
 
     payment = {
         "id": "production-payment-id",
@@ -660,6 +652,7 @@ def test_oauth_refresh_rotation_is_serialized_and_environment_scoped(
     with Session(engine) as session:
         session.add_all([
             CloverInstallation(
+                organization_id=LADELS_ORGANIZATION_ID,
                 merchant_id="merchant-id", environment="sandbox",
                 app_id="sandbox-oauth-app",
                 access_token_encrypted=cipher.encrypt("expired-access"),
@@ -669,6 +662,7 @@ def test_oauth_refresh_rotation_is_serialized_and_environment_scoped(
                 connection_state="connected",
             ),
             CloverInstallation(
+                organization_id=LADELS_ORGANIZATION_ID,
                 merchant_id="merchant-id", environment="production",
                 app_id="production-app",
                 access_token_encrypted=cipher.encrypt("production-access"),
@@ -697,16 +691,20 @@ def test_oauth_refresh_rotation_is_serialized_and_environment_scoped(
 
     monkeypatch.setattr(CloverClient, "refresh_access_token", refresh)
 
-    def active() -> tuple[str, str]:
+    def active() -> tuple[CloverInstallation, str]:
         with Session(engine) as session:
-            return _active_credential(session, config)
+            return _active_credential(
+                session, config, organization_id=LADELS_ORGANIZATION_ID
+            )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: active(), range(2)))
 
-    assert results == [
-        ("merchant-id", "rotated-access"),
-        ("merchant-id", "rotated-access"),
+    assert [result[0].merchant_id for result in results] == [
+        "merchant-id", "merchant-id"
+    ]
+    assert [result[1] for result in results] == [
+        "rotated-access", "rotated-access"
     ]
     assert calls == 1
     with Session(engine) as session:

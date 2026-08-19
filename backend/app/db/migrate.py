@@ -64,6 +64,8 @@ MANAGED_TABLE_NAMES = CATALOG_TABLE_NAMES | LATER_MANAGED_TABLE_NAMES
 ORDER_CLOVER_COLUMN_NAMES = frozenset(
     {
         "clover_merchant_id",
+        "clover_installation_id",
+        "clover_environment",
         "clover_checkout_session_id",
         "clover_checkout_url",
         "clover_checkout_expires_at",
