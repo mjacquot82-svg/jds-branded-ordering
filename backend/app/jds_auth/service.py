@@ -12,7 +12,6 @@ from app.jds_auth.models import ExternalIdentity, JdsApplication, JdsUser, Membe
 from app.jds_auth.provider import IdentityProvider, ProviderAuthentication, ProviderIdentity
 from app.jds_auth.repository import AuthRepository
 from app.jds_auth.security import create_secret, hash_secret, secret_matches
-from app.customers.models import CustomerProfile
 from app.platform.models import CustomerRelationship
 
 
@@ -228,8 +227,6 @@ class AuthenticationService:
             )
             self._repo.add(user)
             self._session.flush()
-            if organization.slug == "the-guest-house":
-                self._repo.add(CustomerProfile(user_id=user.id, phone=phone))
             self._repo.add(CustomerRelationship(organization_id=organization.id, user_id=user.id, display_name=display_name.strip(), phone=phone))
             self.registration_stage = "external_identity_creation"
             self._repo.add(ExternalIdentity(

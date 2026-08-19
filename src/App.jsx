@@ -23,6 +23,7 @@ import LoyaltyPage from "./admin/LoyaltyPage.jsx";
 import DesignStudioPage from "./admin/DesignStudioPage.jsx";
 import OnboardingPage from "./admin/OnboardingPage.jsx";
 import PlatformAdminPage from "./admin/PlatformAdminPage.jsx";
+import DesignPreviewPage from "./admin/DesignPreviewPage.jsx";
 
 export default function App() {
   return (
@@ -51,6 +52,7 @@ export default function App() {
             <Route path="communications" element={<CommunicationsPage />} />
             <Route path="loyalty" element={<LoyaltyPage />} />
             <Route path="design" element={<DesignStudioPage />} />
+            <Route path="design/preview" element={<DesignPreviewPage />} />
             <Route path="setup" element={<OnboardingPage />} />
             <Route path="platform" element={<PlatformAdminPage />} />
             <Route path="staff" element={<StaffPage />} />

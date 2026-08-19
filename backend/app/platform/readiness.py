@@ -67,3 +67,16 @@ def synchronize_public_readiness(session: Session, organization_id: UUID) -> Rea
     if onboarding is not None:
         onboarding.public_ready = result.public_ready
     return result
+
+
+def evaluate_publish_readiness(session: Session, organization_id: UUID) -> ReadinessResult:
+    """Requirements that must exist before the first immutable publication.
+
+    Hostname activation, lifecycle activation, and the published pointer are final
+    launch outcomes, so they cannot be prerequisites of the first publication.
+    """
+    launch = evaluate_storefront_readiness(session, organization_id)
+    return ReadinessResult(checks={
+        key: value for key, value in launch.checks.items()
+        if key in {"business_profile", "fulfillment", "hours", "catalog", "clover"}
+    })

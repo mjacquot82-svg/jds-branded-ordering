@@ -15,8 +15,8 @@ from app.jds_auth.service import AuthPrincipal
 from app.platform.config import default_plan_key, hosted_storefront_hostname
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
 from app.platform.models import BillingPlan, BusinessProfile, DesignMediaReference, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
-from app.platform.media import MediaValidationError, local_media_path, persist_local_image
-from app.platform.readiness import evaluate_storefront_readiness, synchronize_public_readiness
+from app.platform.media import MediaStorage, MediaValidationError, default_media_storage
+from app.platform.readiness import evaluate_publish_readiness, evaluate_storefront_readiness, synchronize_public_readiness
 from app.tenancy.context import TenantContext
 
 router = APIRouter(tags=["platform"])
@@ -48,6 +48,9 @@ class StorefrontSlugInput(Strict):
 
 def design_payload(workspace: DesignWorkspace) -> dict:
     return {"revision": workspace.revision, "config": workspace.draft_config, "published_version_id": str(workspace.published_version_id) if workspace.published_version_id else None}
+
+def media_storage(request: Request) -> MediaStorage:
+    return getattr(request.app.state, "media_storage", None) or default_media_storage()
 
 @router.get("/storefront/bootstrap")
 def storefront_bootstrap(response: Response, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -85,8 +88,13 @@ def save_design(payload: DraftInput, principal: AuthPrincipal = Depends(csrf_pri
 
 @router.post("/owner/design/publish")
 def publish_design(principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    readiness = evaluate_publish_readiness(session, tenant.organization_id)
+    if not readiness.public_ready:
+        raise HTTPException(409, detail={"code":"storefront_not_ready","message":"Complete required commerce setup before publishing.","checks":readiness.checks})
     try:
-        item = DesignService(session, tenant).publish(principal.user_id); return {"id":str(item.id),"version":item.version_number}
+        item = DesignService(session, tenant).publish(principal.user_id)
+        synchronize_public_readiness(session,tenant.organization_id);session.commit()
+        return {"id":str(item.id),"version":item.version_number}
     except DesignValidationError as error: raise HTTPException(422, detail={"code":"design_invalid","message":str(error)}) from error
 
 @router.post("/owner/design/revert")
@@ -94,6 +102,13 @@ def revert_design(payload: RevertInput, principal: AuthPrincipal = Depends(csrf_
     try:
         item = DesignService(session, tenant).revert(payload.version_id, principal.user_id); return {"id":str(item.id),"version":item.version_number}
     except DesignValidationError as error: raise HTTPException(404, detail={"code":"version_not_found","message":str(error)}) from error
+
+@router.get("/owner/design/preview")
+def design_preview(response: Response, tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    response.headers["Cache-Control"]="private, no-store"
+    workspace=DesignService(session,tenant).workspace();profile=session.get(BusinessProfile,tenant.organization_id)
+    assets=session.scalars(select(MediaAsset).where(MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active")).all()
+    return {"tenant":{"id":str(tenant.organization_id),"slug":tenant.organization_slug},"business":business_payload(profile) if profile else None,"design":workspace.draft_config,"draftRevision":workspace.revision,"checkoutEnabled":False,"media":[{"id":str(asset.id),"url":f"/api/v1/owner/media/{asset.id}/content","altText":asset.alt_text} for asset in assets]}
 
 @router.get("/owner/businesses")
 def businesses(principal: AuthPrincipal = Depends(current_principal), session: Session = Depends(get_catalog_session)) -> list[dict]:
@@ -188,26 +203,38 @@ def entitlements(tenant: TenantContext = Depends(authenticated_owner_tenant), se
 @router.get("/owner/media")
 def list_media(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> list[dict]:
     rows=session.scalars(select(MediaAsset).where(MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active").order_by(MediaAsset.created_at.desc())).all()
-    return [{"id":str(item.id),"storageKey":item.storage_key,"mediaType":item.media_type,"altText":item.alt_text,"byteSize":item.byte_size,"url":f"/api/v1/storefront/media/{item.id}"} for item in rows]
+    return [{"id":str(item.id),"storageKey":item.storage_key,"mediaType":item.media_type,"altText":item.alt_text,"byteSize":item.byte_size,"url":f"/api/v1/storefront/media/{item.id}","ownerUrl":f"/api/v1/owner/media/{item.id}/content"} for item in rows]
 
 @router.post("/owner/media/upload", status_code=201)
 async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session), content_type: str = Header(alias="Content-Type"), alt_text: str = Header(default="",alias="X-Media-Alt")) -> dict:
     if len(alt_text) > 300: raise HTTPException(422,detail="Alternative text is too long.")
     data=await request.body(); media_id=uuid4(); item=MediaAsset(id=media_id,organization_id=tenant.organization_id,created_by_user_id=principal.user_id,storage_key="pending",media_type=content_type.split(";",1)[0].lower(),alt_text=alt_text.strip(),byte_size=len(data),checksum="0"*64)
     try:
-        storage_key,checksum=persist_local_image(tenant.organization_id,media_id,data,item.media_type)
+        storage=media_storage(request);storage_key,checksum=storage.put(tenant.organization_id,media_id,data,item.media_type)
     except MediaValidationError as error: raise HTTPException(422,detail=str(error)) from error
-    item.storage_key=storage_key;item.checksum=checksum;session.add(item);session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.uploaded",target_type="media_asset",target_id=str(item.id),outcome="success",metadata_json={"mediaType":item.media_type,"byteSize":item.byte_size}));session.commit()
-    return {"id":str(item.id),"mediaType":item.media_type,"altText":item.alt_text,"byteSize":item.byte_size,"url":f"/api/v1/storefront/media/{item.id}"}
+    try:
+        item.storage_key=storage_key;item.checksum=checksum;session.add(item);session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.uploaded",target_type="media_asset",target_id=str(item.id),outcome="success",metadata_json={"mediaType":item.media_type,"byteSize":item.byte_size}));session.commit()
+    except Exception:
+        session.rollback();storage.delete(storage_key);raise
+    return {"id":str(item.id),"mediaType":item.media_type,"altText":item.alt_text,"byteSize":item.byte_size,"url":f"/api/v1/storefront/media/{item.id}","ownerUrl":f"/api/v1/owner/media/{item.id}/content"}
 
 @router.get("/storefront/media/{media_id}")
-def storefront_media(media_id: UUID, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> FileResponse:
+def storefront_media(media_id: UUID, request: Request, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> FileResponse:
     item=session.scalar(select(MediaAsset).where(MediaAsset.id==media_id,MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active"))
     if item is None: raise HTTPException(404,detail="Media not found.")
-    try: path=local_media_path(item.storage_key)
+    try: path=media_storage(request).local_path(item.storage_key)
     except MediaValidationError as error: raise HTTPException(404,detail="Media not found.") from error
     if not path.is_file(): raise HTTPException(404,detail="Media not found.")
     return FileResponse(path,media_type=item.media_type,headers={"Cache-Control":"public, max-age=31536000, immutable","Vary":"Host"})
+
+@router.get("/owner/media/{media_id}/content")
+def owner_media(media_id: UUID, request: Request, tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> FileResponse:
+    item=session.scalar(select(MediaAsset).where(MediaAsset.id==media_id,MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active"))
+    if item is None: raise HTTPException(404,detail="Media not found.")
+    try: path=media_storage(request).local_path(item.storage_key)
+    except MediaValidationError as error: raise HTTPException(404,detail="Media not found.") from error
+    if not path.is_file(): raise HTTPException(404,detail="Media not found.")
+    return FileResponse(path,media_type=item.media_type,headers={"Cache-Control":"private, no-store"})
 
 @router.post("/owner/media", status_code=201)
 def create_media(payload: MediaInput, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:

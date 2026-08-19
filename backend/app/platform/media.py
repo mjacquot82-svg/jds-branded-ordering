@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 import hashlib
 import os
 from pathlib import Path
@@ -11,12 +12,6 @@ class MediaValidationError(ValueError):
 
 
 _EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
-
-
-def media_root() -> Path:
-    root = Path(os.getenv("JDS_LOCAL_MEDIA_ROOT", "/tmp/jds-local-media")).resolve()
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return root
 
 
 def validate_image(data: bytes, media_type: str) -> None:
@@ -31,21 +26,69 @@ def validate_image(data: bytes, media_type: str) -> None:
         raise MediaValidationError("Image content does not match its declared file type.")
 
 
+class MediaStorage(ABC):
+    """Storage port; tenant authorization remains in the application layer."""
+
+    @abstractmethod
+    def put(self, organization_id: UUID, media_id: UUID, data: bytes, media_type: str) -> tuple[str, str]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def local_path(self, storage_key: str) -> Path:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete(self, storage_key: str) -> None:
+        raise NotImplementedError
+
+
+class LocalMediaStorage(MediaStorage):
+    def __init__(self, root: Path) -> None:
+        self.root = root.resolve()
+        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    def _safe_path(self, storage_key: str) -> Path:
+        candidate = (self.root / storage_key).resolve()
+        if self.root not in candidate.parents:
+            raise MediaValidationError("Invalid media storage key.")
+        return candidate
+
+    def put(self, organization_id: UUID, media_id: UUID, data: bytes, media_type: str) -> tuple[str, str]:
+        validate_image(data, media_type)
+        extension = _EXTENSIONS.get(media_type)
+        if extension is None:
+            raise MediaValidationError("Use a PNG, JPEG, or WebP image.")
+        relative = Path(str(organization_id)) / f"{media_id}.{extension}"
+        destination = self._safe_path(relative.as_posix())
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = destination.with_suffix(f"{destination.suffix}.uploading")
+        temporary.write_bytes(data)
+        temporary.replace(destination)
+        return relative.as_posix(), hashlib.sha256(data).hexdigest()
+
+    def local_path(self, storage_key: str) -> Path:
+        return self._safe_path(storage_key)
+
+    def delete(self, storage_key: str) -> None:
+        path = self._safe_path(storage_key)
+        path.unlink(missing_ok=True)
+        try:
+            path.parent.rmdir()
+        except OSError:
+            pass
+
+
+def media_root() -> Path:
+    return Path(os.getenv("JDS_LOCAL_MEDIA_ROOT", "/tmp/jds-local-media")).resolve()
+
+
+def default_media_storage() -> MediaStorage:
+    return LocalMediaStorage(media_root())
+
+
 def persist_local_image(organization_id: UUID, media_id: UUID, data: bytes, media_type: str) -> tuple[str, str]:
-    validate_image(data, media_type)
-    extension = _EXTENSIONS.get(media_type)
-    if extension is None:
-        raise MediaValidationError("Use a PNG, JPEG, or WebP image.")
-    relative = Path(str(organization_id)) / f"{media_id}.{extension}"
-    destination = media_root() / relative
-    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    destination.write_bytes(data)
-    return relative.as_posix(), hashlib.sha256(data).hexdigest()
+    return default_media_storage().put(organization_id, media_id, data, media_type)
 
 
 def local_media_path(storage_key: str) -> Path:
-    root = media_root()
-    candidate = (root / storage_key).resolve()
-    if root not in candidate.parents:
-        raise MediaValidationError("Invalid media storage key.")
-    return candidate
+    return default_media_storage().local_path(storage_key)

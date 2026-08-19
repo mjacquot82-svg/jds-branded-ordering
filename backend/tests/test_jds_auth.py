@@ -39,6 +39,7 @@ from app.catalog.seed import seed_catalog
 from app.availability.models import BusinessClosure, BusinessHour, BusinessSettings, ProductAvailability
 from app.orders.models import Order, OrderItem, OrderItemModifier
 from app.customers.models import CustomerProfile
+from app.platform.models import CustomerRelationship
 from app.clover.client import CloverClient
 from tests.test_migrations import make_alembic_config
 from tests.test_order_service import local_datetime, seed_order_dependencies
@@ -1477,8 +1478,10 @@ async def test_customer_registration_verification_profile_and_role_isolation(
     ]
     with Session(auth_engine) as session:
         registered_profile = session.scalar(select(CustomerProfile))
-        assert registered_profile is not None
-        assert registered_profile.phone == "+15198816869"
+        assert registered_profile is None
+        relationship = session.scalar(select(CustomerRelationship))
+        assert relationship is not None
+        assert relationship.phone == "+15198816869"
     resent = await auth_client.post(
         "/api/v1/customer/auth/verification/resend",
         headers={"Origin": "http://test"},
@@ -1563,8 +1566,7 @@ async def test_customer_registration_verification_profile_and_role_isolation(
         customer = session.scalar(select(JdsUser).where(JdsUser.primary_email == "customer@example.com"))
         assert customer is not None
         registered_profile = session.get(CustomerProfile, customer.id)
-        assert registered_profile is not None
-        session.delete(registered_profile)
+        assert registered_profile is None
         legacy_now = datetime.now(timezone.utc)
         legacy_order = Order(
             organization_id=session.scalar(
@@ -1605,8 +1607,10 @@ async def test_customer_registration_verification_profile_and_role_isolation(
         customer = session.scalar(select(JdsUser).where(JdsUser.primary_email == "customer@example.com"))
         assert customer is not None
         reconciled_profile = session.get(CustomerProfile, customer.id)
-        assert reconciled_profile is not None
-        assert reconciled_profile.phone == "+15198816869"
+        assert reconciled_profile is None
+        relationship = session.scalar(select(CustomerRelationship).where(CustomerRelationship.user_id == customer.id))
+        assert relationship is not None
+        assert relationship.phone == "+15198816869"
         session.delete(session.get(Order, legacy_order_id))
     updated = await auth_client.put(
         "/api/v1/customer/profile",

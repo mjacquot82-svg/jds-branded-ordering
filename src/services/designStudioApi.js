@@ -6,6 +6,7 @@ async function request(path, options = {}) {
 }
 export const fetchDesignDraft = () => request("/owner/design");
 export const fetchDesignVersions = () => request("/owner/design/versions");
+export const fetchDesignPreview = () => request("/owner/design/preview");
 export const saveDesignDraft = (value, csrf) => request("/owner/design", { method: "PUT", headers: { "X-CSRF-Token": csrf }, body: JSON.stringify(value) });
 export const publishDesign = (csrf) => request("/owner/design/publish", { method: "POST", headers: { "X-CSRF-Token": csrf } });
 export const revertDesign = (versionId, csrf) => request("/owner/design/revert", { method: "POST", headers: { "X-CSRF-Token": csrf }, body: JSON.stringify({ version_id: versionId }) });

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchDesignDraft, fetchDesignVersions, fetchMedia, publishDesign, revertDesign, saveDesignDraft, uploadMedia } from "../services/designStudioApi.js";
 import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
 import { useCatalogProducts } from "../stores/catalogStore.js";
+import { Link } from "react-router-dom";
 
 const templates = [
   { id: "modern", name: "Modern", note: "Bold hero, horizontal categories, crisp product grid" },
@@ -25,9 +26,9 @@ export default function DesignStudioPage() {
   async function revert(item){ if (!globalThis.confirm?.(`Restore version ${item.version}? Your menu and orders will not change.`)) return; try{setStatus("publishing");const value=await revertDesign(item.id,session.csrf_token);const [nextDraft]=await Promise.all([fetchDesignDraft(),refreshVersions()]);setDraft(nextDraft);setMessage(`Version ${value.version} is live, restored from version ${item.version}.`);setStatus("ready");}catch(error){setMessage(error.message);setStatus("error");} }
   async function upload(event){const file=event.target.files?.[0];if(!file)return;try{setUploading(true);const asset=await uploadMedia(file,`${config.displayName} brand image`,session.csrf_token);setMedia((items)=>[asset,...items]);setMessage("Image uploaded to your private media library.");}catch(error){setMessage(error.message);}finally{setUploading(false);event.target.value="";}}
   const moveSection=(index,direction)=>{const sections=[...config.sections];const target=index+direction;if(target<0||target>=sections.length)return;[sections[index],sections[target]]=[sections[target],sections[index]];update({sections});};
-  const mediaUrl=(id)=>id?`/api/v1/storefront/media/${id}`:null;
+  const mediaUrl=(id)=>media.find((asset)=>asset.id===id)?.ownerUrl||null;
   return <section className="design-studio">
-    <header className="design-studio-header"><div><p className="eyebrow">Your storefront</p><h1>Design Studio</h1><p>Customize a guided template. Menu, prices, and availability always stay live.</p></div><div className="design-actions"><button className="secondary-button" disabled={status!=="ready"} onClick={save}>Save draft</button><button className="primary-button" disabled={status!=="ready"} onClick={publish}>Publish</button></div></header>
+    <header className="design-studio-header"><div><p className="eyebrow">Your storefront</p><h1>Design Studio</h1><p>Customize a guided template. Menu, prices, and availability always stay live.</p></div><div className="design-actions"><Link className="secondary-button" to="/admin/design/preview">Full preview</Link><button className="secondary-button" disabled={status!=="ready"} onClick={save}>Save draft</button><button className="primary-button" disabled={status!=="ready"} onClick={publish}>Publish</button></div></header>
     {message ? <p className="owner-page-message" aria-live="polite">{message}</p> : null}
     <div className="studio-workspace"><aside className="studio-controls" aria-label="Design controls">
       <fieldset><legend>Template</legend>{templates.map((item)=><label className="template-choice" key={item.id}><input type="radio" name="template" checked={config.template===item.id} onChange={()=>update({template:item.id})}/><span><strong>{item.name}</strong><small>{item.note}</small></span></label>)}</fieldset>

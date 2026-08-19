@@ -31,7 +31,7 @@ export function canEditProducts(session) {
 }
 
 export function canAccessOwnerPath(session, pathname) {
-  if (["/admin/design", "/admin/setup"].includes(pathname)) return isOperationsAdministrator(session);
+  if (["/admin/design", "/admin/design/preview", "/admin/setup"].includes(pathname)) return isOperationsAdministrator(session);
   if (pathname === "/admin/platform") return hasPlatformCapability(session, "platform.organizations.read");
   if (pathname === "/admin/loyalty") return hasPermission(session, "loyalty.manage");
   if (pathname === "/admin/staff") return hasPermission(session, "members.manage");

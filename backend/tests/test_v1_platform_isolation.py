@@ -66,6 +66,24 @@ def test_verified_hostname_resolution_is_exact_and_unknown_hosts_fail_closed(pla
 
 
 @pytest.mark.postgresql
+def test_verified_hostname_never_bypasses_authoritative_readiness(platform_db):
+    engine, (a, _, _, alpha_host, _) = platform_db
+    with Session(engine) as session:
+        onboarding = session.get(OnboardingState, a)
+        onboarding.public_ready = False
+        session.commit()
+        with pytest.raises(TenantResolutionError, match="not ready"):
+            resolve_storefront_context(session, host=alpha_host)
+
+        onboarding.public_ready = True
+        organization = session.get(Organization, a)
+        organization.lifecycle_status = "suspended"
+        session.commit()
+        with pytest.raises(TenantResolutionError, match="not ready"):
+            resolve_storefront_context(session, host=alpha_host)
+
+
+@pytest.mark.postgresql
 def test_customer_relationship_and_media_identifiers_are_tenant_scoped(platform_db):
     engine, (a, b, _, _, _) = platform_db
     with Session(engine) as session:
