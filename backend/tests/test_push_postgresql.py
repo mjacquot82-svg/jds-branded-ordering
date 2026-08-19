@@ -14,6 +14,7 @@ from app.api.v1.owner_auth import csrf_principal, current_principal
 from app.catalog.models import Category, Product
 from app.communications.service import CommunicationCenterService
 from app.jds_auth.models import JdsUser, Organization
+from app.platform.models import CustomerRelationship
 from app.push.config import PushSettings
 from app.push.dispatcher import PushDispatcher
 from app.push.models import CustomerNotificationPreference, PushAnnouncement, PushDeliveryAttempt, WebPushSubscription
@@ -44,6 +45,7 @@ def test_lunch_send_rereads_and_freezes_authoritative_product_price_and_recipien
     with Session(engine) as session:
         organization=session.scalar(select(Organization).order_by(Organization.created_at))
         actor=add_user(session,f"actor-{uuid4()}@example.com");enabled=add_user(session,f"enabled-{uuid4()}@example.com");disabled=add_user(session,f"disabled-{uuid4()}@example.com")
+        session.add_all([CustomerRelationship(organization_id=organization.id,user_id=user.id,display_name=user.display_name) for user in (enabled,disabled)])
         product=session.scalar(select(Product).order_by(Product.id));category=session.get(Category,product.category_id)
         product.is_lunch_special=True;product.slug="buffalo-chickpea-bowl";product.name="Authoritative Bowl";product.base_price_cents=1375;product.is_published=True;category.is_published=True;product.availability.default_available=True
         session.add_all([CustomerNotificationPreference(organization_id=organization.id,customer_user_id=enabled.id,notification_kind="lunch_special",enabled=True),CustomerNotificationPreference(organization_id=organization.id,customer_user_id=disabled.id,notification_kind="lunch_special",enabled=False)])
@@ -114,7 +116,7 @@ def test_current_device_revoke_is_owned_and_idempotent(owner_orders_api):
     _,engine=owner_orders_api;settings=active_settings();crypt=SubscriptionProtector(settings.encryption_key);endpoint=f"https://push.example/owned-{uuid4()}"
     with Session(engine) as session:
         owner=add_user(session,f"device-owner-{uuid4()}@example.com");other=add_user(session,f"other-{uuid4()}@example.com")
-        organization=session.scalar(select(Organization).order_by(Organization.created_at));subscription=WebPushSubscription(organization_id=organization.id,customer_user_id=owner.id,endpoint_ciphertext=crypt.encrypt(endpoint),endpoint_fingerprint=endpoint_fingerprint(endpoint),p256dh_ciphertext=crypt.encrypt("p256dh"),auth_ciphertext=crypt.encrypt("auth"));session.add(subscription);session.commit()
+        organization=session.scalar(select(Organization).order_by(Organization.created_at));session.add(CustomerRelationship(organization_id=organization.id,user_id=owner.id,display_name=owner.display_name));subscription=WebPushSubscription(organization_id=organization.id,customer_user_id=owner.id,endpoint_ciphertext=crypt.encrypt(endpoint),endpoint_fingerprint=endpoint_fingerprint(endpoint),p256dh_ciphertext=crypt.encrypt("p256dh"),auth_ciphertext=crypt.encrypt("auth"));session.add(subscription);session.commit()
         revoke_current(EndpointInput(endpoint=endpoint),SimpleNamespace(user_id=other.id,organization_id=organization.id),session)
         assert subscription.revoked_at is None
         revoke_current(EndpointInput(endpoint=endpoint),SimpleNamespace(user_id=owner.id,organization_id=organization.id),session)
@@ -136,6 +138,7 @@ def queued_general(session, settings, *, suffix):
     organization=Organization(slug=f"dispatch-{suffix}-{uuid4()}",name="Dispatch Test")
     user=add_user(session,f"dispatch-{suffix}-{uuid4()}@example.com")
     session.add(organization);session.flush()
+    session.add(CustomerRelationship(organization_id=organization.id,user_id=user.id,display_name=user.display_name));session.flush()
     preference=CustomerNotificationPreference(organization_id=organization.id,customer_user_id=user.id,notification_kind="lunch_special",enabled=True)
     endpoint=f"https://push.example/{suffix}-{uuid4()}"
     subscription=WebPushSubscription(organization_id=organization.id,customer_user_id=user.id,endpoint_ciphertext=crypt.encrypt(endpoint),endpoint_fingerprint=endpoint_fingerprint(endpoint),p256dh_ciphertext=crypt.encrypt("p256dh"),auth_ciphertext=crypt.encrypt("auth"))

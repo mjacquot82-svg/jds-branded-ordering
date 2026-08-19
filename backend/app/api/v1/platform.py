@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
-from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from uuid import UUID, uuid4
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import String, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.v1.catalog import get_catalog_session, ladels_compatibility_tenant
@@ -11,8 +12,11 @@ from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.jds_auth.models import JdsApplication, JdsUser, Membership, Organization, Role
 from app.clover.models import CloverInstallation
 from app.jds_auth.service import AuthPrincipal
+from app.platform.config import default_plan_key, hosted_storefront_hostname
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
-from app.platform.models import BillingPlan, BusinessProfile, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
+from app.platform.models import BillingPlan, BusinessProfile, DesignMediaReference, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
+from app.platform.media import MediaValidationError, local_media_path, persist_local_image
+from app.platform.readiness import evaluate_storefront_readiness, synchronize_public_readiness
 from app.tenancy.context import TenantContext
 
 router = APIRouter(tags=["platform"])
@@ -39,6 +43,8 @@ class ProvisionOrganizationInput(Strict):
     slug: str = Field(min_length=3,max_length=63,pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     display_name: str = Field(min_length=1,max_length=200)
     owner_email: str = Field(min_length=3,max_length=320)
+class StorefrontSlugInput(Strict):
+    slug: str = Field(min_length=3,max_length=63,pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 def design_payload(workspace: DesignWorkspace) -> dict:
     return {"revision": workspace.revision, "config": workspace.draft_config, "published_version_id": str(workspace.published_version_id) if workspace.published_version_id else None}
@@ -54,10 +60,12 @@ def storefront_bootstrap(response: Response, tenant: TenantContext = Depends(lad
     return {"tenant": {"id": str(tenant.organization_id), "slug": tenant.organization_slug, "canonicalHost": host.hostname if host else None}, "business": {"displayName": profile.display_name if profile else tenant.organization_slug, "timezone": profile.timezone if profile else "America/Toronto", "currency": profile.currency if profile else "CAD", "pickupInstructions": profile.pickup_instructions if profile else ""}, "design": version.config if version else DEFAULT_CONFIG, "designVersion": version.version_number if version else 0}
 
 @router.get("/storefront/manifest.webmanifest")
-def manifest(tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+def manifest(response: Response, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     workspace = session.get(DesignWorkspace, tenant.organization_id); version = session.get(DesignVersion, workspace.published_version_id) if workspace and workspace.published_version_id else None
     config = version.config if version else DEFAULT_CONFIG; pwa = config.get("pwa", {})
-    return {"id": f"/{tenant.organization_slug}", "name": config.get("displayName", "Order ahead"), "short_name": pwa.get("shortName", "Order"), "start_url": "/", "scope": "/", "display": "standalone", "theme_color": pwa.get("themeColor", "#6f7d5f"), "background_color": pwa.get("backgroundColor", "#f7f0e6")}
+    version_key=version.version_number if version else 0; cache_key=f"tenant={tenant.organization_id}&v={version_key}"
+    response.headers["Cache-Control"]="public, max-age=60" if version else "no-store";response.headers["Vary"]="Host"
+    return {"id": f"/{tenant.organization_slug}", "name": config.get("displayName", "Order ahead"), "short_name": pwa.get("shortName", "Order"), "start_url": "/", "scope": "/", "display": "standalone", "theme_color": pwa.get("themeColor", "#6f7d5f"), "background_color": pwa.get("backgroundColor", "#f7f0e6"), "icons":[{"src":f"/icon-192.png?{cache_key}","sizes":"192x192","type":"image/png","purpose":"any"},{"src":f"/icon-512.png?{cache_key}","sizes":"512x512","type":"image/png","purpose":"any"},{"src":f"/icon-maskable-192.png?{cache_key}","sizes":"192x192","type":"image/png","purpose":"maskable"},{"src":f"/icon-maskable-512.png?{cache_key}","sizes":"512x512","type":"image/png","purpose":"maskable"}]}
 
 @router.get("/owner/design")
 def get_design(response: Response, tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -98,6 +106,36 @@ def onboarding(tenant: TenantContext = Depends(authenticated_owner_tenant), sess
     if item not in session: session.add(item); session.commit()
     return {"state":item.state,"currentStep":item.current_step,"completedSteps":item.completed_steps,"publicReady":item.public_ready,"revision":item.revision}
 
+@router.get("/owner/readiness")
+def readiness(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    result = evaluate_storefront_readiness(session, tenant.organization_id)
+    return {"publicReady": result.public_ready, "checks": result.checks}
+
+@router.post("/owner/readiness/recheck")
+def recheck_readiness(principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    result=synchronize_public_readiness(session,tenant.organization_id)
+    session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="storefront.readiness_checked",target_type="organization",target_id=str(tenant.organization_id),outcome="ready" if result.public_ready else "incomplete",metadata_json={"checks":result.checks}));session.commit()
+    return {"publicReady":result.public_ready,"checks":result.checks}
+
+@router.get("/owner/storefront")
+def owner_storefront(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    rows=session.scalars(select(StorefrontHostname).where(StorefrontHostname.organization_id==tenant.organization_id).order_by(StorefrontHostname.created_at.desc())).all()
+    return {"slug":tenant.organization_slug,"hostnames":[{"id":str(row.id),"hostname":row.hostname,"status":row.status,"canonical":row.is_canonical} for row in rows]}
+
+@router.put("/owner/storefront")
+def choose_storefront(payload: StorefrontSlugInput, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    hostname=hosted_storefront_hostname(payload.slug)
+    if not hostname: raise HTTPException(503,detail="Hosted storefront domains are not configured in this environment.")
+    conflict=session.scalar(select(Organization.id).where(Organization.slug==payload.slug,Organization.id!=tenant.organization_id))
+    if conflict or session.scalar(select(StorefrontHostname.id).where(StorefrontHostname.hostname==hostname,StorefrontHostname.organization_id!=tenant.organization_id)):
+        raise HTTPException(409,detail="That storefront name is unavailable.")
+    organization=session.get(Organization,tenant.organization_id);organization.slug=payload.slug
+    item=session.scalar(select(StorefrontHostname).where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.hostname==hostname))
+    if item is None:
+        item=StorefrontHostname(organization_id=tenant.organization_id,hostname=hostname,status="pending",is_canonical=False);session.add(item)
+    session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="storefront.hostname_requested",target_type="storefront_hostname",target_id=str(item.id),outcome="success",metadata_json={"hostname":hostname}));session.commit()
+    return {"id":str(item.id),"slug":payload.slug,"hostname":hostname,"status":item.status}
+
 def business_payload(item: BusinessProfile) -> dict:
     return {"display_name":item.display_name,"legal_name":item.legal_name,"contact_email":item.contact_email,"phone":item.phone,"timezone":item.timezone,"currency":item.currency,"pickup_instructions":item.pickup_instructions,"fulfillment_wording":item.fulfillment_wording}
 
@@ -133,8 +171,11 @@ def save_onboarding(payload: OnboardingInput, _: AuthPrincipal = Depends(csrf_pr
     allowed={"business","storefront","hours","fulfillment","design","catalog","clover"}
     if not set(payload.completed_steps)<=allowed or payload.current_step not in allowed|{"complete"}: raise HTTPException(422,detail="Invalid onboarding checkpoint.")
     item.completed_steps=payload.completed_steps; item.current_step=payload.current_step; item.revision+=1
-    # Readiness remains server-derived: completion alone cannot expose commerce.
-    item.state="complete" if allowed<=set(payload.completed_steps) else "in_progress"; item.public_ready=False
+    # Checklist state is progress UX only; public availability is authoritative data.
+    item.state="complete" if allowed<=set(payload.completed_steps) else "in_progress"
+    organization=session.get(Organization,tenant.organization_id)
+    if organization and item.state=="complete" and organization.lifecycle_status=="onboarding": organization.lifecycle_status="active"
+    synchronize_public_readiness(session, tenant.organization_id)
     session.commit(); return {"state":item.state,"currentStep":item.current_step,"completedSteps":item.completed_steps,"publicReady":item.public_ready,"revision":item.revision}
 
 @router.get("/owner/entitlements")
@@ -147,7 +188,26 @@ def entitlements(tenant: TenantContext = Depends(authenticated_owner_tenant), se
 @router.get("/owner/media")
 def list_media(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> list[dict]:
     rows=session.scalars(select(MediaAsset).where(MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active").order_by(MediaAsset.created_at.desc())).all()
-    return [{"id":str(item.id),"storageKey":item.storage_key,"mediaType":item.media_type,"altText":item.alt_text,"byteSize":item.byte_size} for item in rows]
+    return [{"id":str(item.id),"storageKey":item.storage_key,"mediaType":item.media_type,"altText":item.alt_text,"byteSize":item.byte_size,"url":f"/api/v1/storefront/media/{item.id}"} for item in rows]
+
+@router.post("/owner/media/upload", status_code=201)
+async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session), content_type: str = Header(alias="Content-Type"), alt_text: str = Header(default="",alias="X-Media-Alt")) -> dict:
+    if len(alt_text) > 300: raise HTTPException(422,detail="Alternative text is too long.")
+    data=await request.body(); media_id=uuid4(); item=MediaAsset(id=media_id,organization_id=tenant.organization_id,created_by_user_id=principal.user_id,storage_key="pending",media_type=content_type.split(";",1)[0].lower(),alt_text=alt_text.strip(),byte_size=len(data),checksum="0"*64)
+    try:
+        storage_key,checksum=persist_local_image(tenant.organization_id,media_id,data,item.media_type)
+    except MediaValidationError as error: raise HTTPException(422,detail=str(error)) from error
+    item.storage_key=storage_key;item.checksum=checksum;session.add(item);session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.uploaded",target_type="media_asset",target_id=str(item.id),outcome="success",metadata_json={"mediaType":item.media_type,"byteSize":item.byte_size}));session.commit()
+    return {"id":str(item.id),"mediaType":item.media_type,"altText":item.alt_text,"byteSize":item.byte_size,"url":f"/api/v1/storefront/media/{item.id}"}
+
+@router.get("/storefront/media/{media_id}")
+def storefront_media(media_id: UUID, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> FileResponse:
+    item=session.scalar(select(MediaAsset).where(MediaAsset.id==media_id,MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active"))
+    if item is None: raise HTTPException(404,detail="Media not found.")
+    try: path=local_media_path(item.storage_key)
+    except MediaValidationError as error: raise HTTPException(404,detail="Media not found.") from error
+    if not path.is_file(): raise HTTPException(404,detail="Media not found.")
+    return FileResponse(path,media_type=item.media_type,headers={"Cache-Control":"public, max-age=31536000, immutable","Vary":"Host"})
 
 @router.post("/owner/media", status_code=201)
 def create_media(payload: MediaInput, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -160,7 +220,7 @@ def create_media(payload: MediaInput, principal: AuthPrincipal = Depends(csrf_pr
 def archive_media(media_id: UUID, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> Response:
     item=session.scalar(select(MediaAsset).where(MediaAsset.id==media_id,MediaAsset.organization_id==tenant.organization_id))
     if item is None: raise HTTPException(404,detail="Media not found.")
-    referenced=session.scalar(select(DesignVersion.id).where(DesignVersion.organization_id==tenant.organization_id,DesignVersion.config.cast(String).contains(str(media_id))).limit(1))
+    referenced=session.scalar(select(DesignMediaReference.id).where(DesignMediaReference.organization_id==tenant.organization_id,DesignMediaReference.media_asset_id==media_id).limit(1))
     if referenced is not None: raise HTTPException(409,detail="This image is used by a published design.")
     item.status="archived";session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.archived",target_type="media_asset",target_id=str(item.id),outcome="success"));session.commit();return Response(status_code=204)
 
@@ -178,6 +238,14 @@ def platform_organizations(principal: AuthPrincipal = Depends(current_principal)
         result.append({"id":str(org.id),"name":org.name,"slug":org.slug,"status":org.lifecycle_status,"onboarding":onboarding.state if onboarding else "not_started","publicReady":bool(onboarding and onboarding.public_ready),"canonicalHost":hostname,"ownerMemberships":owners or 0,"cloverHealth":sorted(set(clover)) or ["not_connected"],"publishedVersionId":str(design.published_version_id) if design and design.published_version_id else None,"subscription":subscription.state if subscription else "none"})
     return result
 
+@router.get("/owner/platform-capabilities")
+def platform_capabilities(principal: AuthPrincipal = Depends(current_principal), session: Session = Depends(get_catalog_session)) -> dict:
+    capabilities = session.scalars(select(PlatformGrant.capability).where(
+        PlatformGrant.user_id == principal.user_id,
+        PlatformGrant.is_active.is_(True),
+    ).order_by(PlatformGrant.capability)).all()
+    return {"capabilities": capabilities}
+
 @router.post("/platform/admin/organizations", status_code=201)
 def provision_organization(payload: ProvisionOrganizationInput, principal: AuthPrincipal = Depends(csrf_principal), session: Session = Depends(get_catalog_session)) -> dict:
     grant=session.scalar(select(PlatformGrant.id).where(PlatformGrant.user_id==principal.user_id,PlatformGrant.capability=="platform.organizations.write",PlatformGrant.is_active.is_(True)))
@@ -189,12 +257,29 @@ def provision_organization(payload: ProvisionOrganizationInput, principal: AuthP
     role=session.scalar(select(Role).where(Role.application_id==application.id,Role.key=="owner")) if application else None
     if owner is None or application is None or role is None: raise HTTPException(422,detail={"code":"owner_unavailable","message":"Provision an active owner identity before creating the business."})
     item=Organization(slug=payload.slug,name=payload.display_name.strip(),lifecycle_status="onboarding",is_active=True);session.add(item);session.flush()
-    session.add_all([
+    hostname = hosted_storefront_hostname(payload.slug)
+    records = [
         Membership(organization_id=item.id,application_id=application.id,user_id=owner.id,role_id=role.id,status="active",joined_at=datetime.now(timezone.utc)),
         BusinessProfile(organization_id=item.id,display_name=payload.display_name.strip()),
-        StorefrontHostname(organization_id=item.id,hostname=f"{payload.slug}.jdsstudio.ca",is_canonical=True,status="pending"),
         OnboardingState(organization_id=item.id,state="in_progress",current_step="business",public_ready=False),
-        OrganizationSubscription(organization_id=item.id,plan_key="core",state="trialing",provider="local"),
         OperationalAuditEvent(organization_id=item.id,scope="platform",actor_user_id=principal.user_id,action="platform.organization_provisioned",target_type="organization",target_id=str(item.id),outcome="success"),
-    ]);session.commit()
-    return {"id":str(item.id),"slug":item.slug,"hostname":f"{item.slug}.jdsstudio.ca","status":item.lifecycle_status,"publicReady":False}
+    ]
+    if hostname:
+        records.append(StorefrontHostname(organization_id=item.id,hostname=hostname,is_canonical=True,status="pending"))
+    plan_key = default_plan_key()
+    if plan_key and session.get(BillingPlan, plan_key):
+        records.append(OrganizationSubscription(organization_id=item.id,plan_key=plan_key,state="trialing",provider="unconfigured"))
+    session.add_all(records);session.commit()
+    return {"id":str(item.id),"slug":item.slug,"hostname":hostname,"status":item.lifecycle_status,"publicReady":False}
+
+@router.post("/platform/admin/hostnames/{hostname_id}/verify")
+def verify_hostname(hostname_id: UUID, principal: AuthPrincipal = Depends(csrf_principal), session: Session = Depends(get_catalog_session)) -> dict:
+    grant=session.scalar(select(PlatformGrant.id).where(PlatformGrant.user_id==principal.user_id,PlatformGrant.capability=="platform.organizations.write",PlatformGrant.is_active.is_(True)))
+    if grant is None: raise HTTPException(403,detail={"code":"platform_access_required","message":"Platform hostname verification is not authorized."})
+    item=session.get(StorefrontHostname,hostname_id)
+    if item is None or item.status=="disabled": raise HTTPException(404,detail="Hostname not found.")
+    session.execute(StorefrontHostname.__table__.update().where(StorefrontHostname.organization_id==item.organization_id,StorefrontHostname.id!=item.id).values(is_canonical=False))
+    item.status="verified";item.is_canonical=True;item.verified_at=datetime.now(timezone.utc)
+    result=synchronize_public_readiness(session,item.organization_id)
+    session.add(OperationalAuditEvent(organization_id=item.organization_id,scope="platform",actor_user_id=principal.user_id,action="storefront.hostname_verified",target_type="storefront_hostname",target_id=str(item.id),outcome="success",metadata_json={"hostname":item.hostname}));session.commit()
+    return {"id":str(item.id),"hostname":item.hostname,"status":item.status,"canonical":True,"publicReady":result.public_ready}

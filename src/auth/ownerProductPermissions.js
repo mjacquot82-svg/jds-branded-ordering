@@ -21,13 +21,18 @@ export function isOperationsAdministrator(session) {
   return ["owner", "manager"].includes(session?.role);
 }
 
+export function hasPlatformCapability(session, capability) {
+  return session?.platform_capabilities?.includes(capability) === true;
+}
+
 export function canEditProducts(session) {
   const permissions = new Set(session?.permissions || []);
   return catalogEditingPermissions.every((permission) => permissions.has(permission));
 }
 
 export function canAccessOwnerPath(session, pathname) {
-  if (["/admin/design", "/admin/setup", "/admin/platform"].includes(pathname)) return isOperationsAdministrator(session);
+  if (["/admin/design", "/admin/setup"].includes(pathname)) return isOperationsAdministrator(session);
+  if (pathname === "/admin/platform") return hasPlatformCapability(session, "platform.organizations.read");
   if (pathname === "/admin/loyalty") return hasPermission(session, "loyalty.manage");
   if (pathname === "/admin/staff") return hasPermission(session, "members.manage");
   if (isOperationsAdministrator(session)) return true;
@@ -63,5 +68,6 @@ export function operationsLinks(session) {
   }
   if (hasPermission(session, "loyalty.manage")) links.push({ label: "Loyalty", to: "/admin/loyalty" });
   if (hasPermission(session, "members.manage")) links.push({ label: "Staff", to: "/admin/staff" });
+  if (hasPlatformCapability(session, "platform.organizations.read")) links.push({ label: "Platform", to: "/admin/platform" });
   return links;
 }

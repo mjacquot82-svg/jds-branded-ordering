@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -62,6 +62,7 @@ class MediaAsset(Base):
     __tablename__ = "media_assets"
     __table_args__ = (
         UniqueConstraint("organization_id", "storage_key", name="uq_media_assets_org_storage_key"),
+        UniqueConstraint("organization_id", "id", name="uq_media_assets_org_id"),
         CheckConstraint("status IN ('active','archived')", name="ck_media_assets_status"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -78,6 +79,15 @@ class MediaAsset(Base):
 
 class DesignWorkspace(Base):
     __tablename__ = "design_workspaces"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "published_version_id"],
+            ["design_versions.organization_id", "design_versions.id"],
+            name="fk_design_workspaces_org_published_version",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
+    )
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
     revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     draft_config: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
@@ -88,7 +98,17 @@ class DesignWorkspace(Base):
 
 class DesignVersion(Base):
     __tablename__ = "design_versions"
-    __table_args__ = (UniqueConstraint("organization_id", "version_number", name="uq_design_versions_org_number"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "version_number", name="uq_design_versions_org_number"),
+        UniqueConstraint("organization_id", "id", name="uq_design_versions_org_id"),
+        ForeignKeyConstraint(
+            ["organization_id", "source_version_id"],
+            ["design_versions.organization_id", "design_versions.id"],
+            name="fk_design_versions_org_source_version",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     version_number: Mapped[int] = mapped_column(Integer)
@@ -101,12 +121,61 @@ class DesignVersion(Base):
 
 class DesignPublication(Base):
     __tablename__ = "design_publications"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "version_id"],
+            ["design_versions.organization_id", "design_versions.id"],
+            name="fk_design_publications_org_version",
+            ondelete="RESTRICT",
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     version_id: Mapped[UUID] = mapped_column(ForeignKey("design_versions.id", ondelete="RESTRICT"), index=True)
     action: Mapped[str] = mapped_column(String(20))
     actor_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("jds_users.id", ondelete="SET NULL"))
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DesignMediaReference(Base):
+    """Normalized media reachability for safe draft and published lifecycle checks."""
+
+    __tablename__ = "design_media_references"
+    __table_args__ = (
+        CheckConstraint("scope IN ('draft','published')", name="ck_design_media_references_scope"),
+        CheckConstraint(
+            "(scope = 'draft' AND design_version_id IS NULL) OR "
+            "(scope = 'published' AND design_version_id IS NOT NULL)",
+            name="ck_design_media_references_scope_version",
+        ),
+        UniqueConstraint(
+            "organization_id", "scope", "design_version_id", "slot",
+            name="uq_design_media_references_scope_slot",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "media_asset_id"],
+            ["media_assets.organization_id", "media_assets.id"],
+            name="fk_design_media_references_org_media",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "design_version_id"],
+            ["design_versions.organization_id", "design_versions.id"],
+            name="fk_design_media_references_org_version",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "uq_design_media_references_active_draft_slot", "organization_id", "slot",
+            unique=True, postgresql_where=text("scope = 'draft'"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    media_asset_id: Mapped[UUID] = mapped_column(index=True)
+    scope: Mapped[str] = mapped_column(String(20))
+    slot: Mapped[str] = mapped_column(String(40))
+    design_version_id: Mapped[UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class OnboardingState(Base):
@@ -145,7 +214,7 @@ class OrganizationSubscription(Base):
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
     plan_key: Mapped[str] = mapped_column(ForeignKey("billing_plans.key", ondelete="RESTRICT"), index=True)
     state: Mapped[str] = mapped_column(String(20), default="trialing", server_default="trialing")
-    provider: Mapped[str] = mapped_column(String(30), default="local", server_default="local")
+    provider: Mapped[str] = mapped_column(String(30), default="unconfigured", server_default="unconfigured")
     provider_customer_ref: Mapped[str | None] = mapped_column(String(200))
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     grace_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

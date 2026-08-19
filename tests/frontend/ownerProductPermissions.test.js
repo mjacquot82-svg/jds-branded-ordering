@@ -35,6 +35,15 @@ test("existing Owner and Manager routing remains unchanged", () => {
   assert.equal(canAccessOwnerPath({ role: "owner", permissions: ["members.manage"] }, "/admin/staff"), true);
 });
 
+test("tenant ownership never grants platform administration", () => {
+  const owner = { role: "owner", permissions: [], platform_capabilities: [] };
+  assert.equal(canAccessOwnerPath(owner, "/admin/platform"), false);
+  assert.equal(operationsLinks(owner).some(({ to }) => to === "/admin/platform"), false);
+  const platformOperator = { ...owner, platform_capabilities: ["platform.organizations.read"] };
+  assert.equal(canAccessOwnerPath(platformOperator, "/admin/platform"), true);
+  assert.equal(operationsLinks(platformOperator).some(({ to }) => to === "/admin/platform"), true);
+});
+
 test("operational navigation follows capabilities without exposing dead ends", () => {
   const session = {
     role: "staff",

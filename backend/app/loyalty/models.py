@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -11,6 +11,7 @@ class LoyaltyProgram(Base):
     __tablename__ = "loyalty_programs"
     __table_args__ = (
         UniqueConstraint("organization_id", "slug", name="uq_loyalty_programs_organization_slug"),
+        UniqueConstraint("organization_id", "id", name="uq_loyalty_programs_organization_id"),
         CheckConstraint("stamps_required > 0", name="stamps_required_positive"),
         CheckConstraint("earning_rule = 'one_per_completed_qualifying_order'", name="earning_rule_valid"),
         CheckConstraint("reward_type = 'free_qualifying_product'", name="reward_type_valid"),
@@ -34,6 +35,18 @@ class LoyaltyProgramProduct(Base):
     __table_args__ = (
         UniqueConstraint("loyalty_program_id", "product_id", name="uq_loyalty_program_products_program_product"),
         CheckConstraint("earning_eligible OR reward_eligible", name="some_eligibility_required"),
+        ForeignKeyConstraint(
+            ["organization_id", "loyalty_program_id"],
+            ["loyalty_programs.organization_id", "loyalty_programs.id"],
+            name="fk_loyalty_program_products_org_program",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "product_id"],
+            ["products.organization_id", "products.id"],
+            name="fk_loyalty_program_products_org_product",
+            ondelete="RESTRICT",
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
@@ -56,6 +69,24 @@ class CustomerLoyaltyEvent(Base):
         CheckConstraint("event_type <> 'reward_redeemed' OR quantity > 0", name="reward_redeemed_quantity_positive"),
         CheckConstraint("event_type = 'reward_earned' OR threshold_snapshot IS NULL", name="threshold_snapshot_event_valid"),
         Index("uq_loyalty_order_stamp", "loyalty_program_id", "related_order_id", unique=True, postgresql_where=text("event_type = 'stamp_earned' AND related_order_id IS NOT NULL")),
+        ForeignKeyConstraint(
+            ["organization_id", "loyalty_program_id"],
+            ["loyalty_programs.organization_id", "loyalty_programs.id"],
+            name="fk_customer_loyalty_events_org_program",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "related_order_id"],
+            ["orders.organization_id", "orders.id"],
+            name="fk_customer_loyalty_events_org_order",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "customer_user_id"],
+            ["organization_customers.organization_id", "organization_customers.user_id"],
+            name="fk_customer_loyalty_events_org_customer",
+            ondelete="RESTRICT",
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)

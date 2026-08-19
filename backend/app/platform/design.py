@@ -4,10 +4,11 @@ import re
 from copy import deepcopy
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.platform.models import DesignPublication, DesignVersion, DesignWorkspace, MediaAsset, OperationalAuditEvent
+from app.jds_auth.models import Organization
+from app.platform.models import DesignMediaReference, DesignPublication, DesignVersion, DesignWorkspace, MediaAsset, OperationalAuditEvent
 from app.tenancy.context import TenantContext
 
 TEMPLATES = frozenset({"modern", "minimal", "cozy"})
@@ -21,6 +22,7 @@ DEFAULT_CONFIG = {
     "hero": {"mode": "color", "mediaId": None}, "categoryPresentation": "cards",
     "productCardPresentation": "comfortable", "navigation": "tabs",
     "sections": ["hero", "announcement", "categories", "quickOrder"],
+    "announcement": {"enabled": False, "text": ""},
     "pwa": {"shortName": "Order", "themeColor": "#6f7d5f", "backgroundColor": "#f7f0e6"},
 }
 
@@ -40,10 +42,31 @@ def validate_design(session: Session, tenant: TenantContext, candidate: dict) ->
     colors = config.get("colors")
     if not isinstance(colors, dict) or set(colors) != set(DEFAULT_CONFIG["colors"]) or not all(isinstance(v, str) and HEX.fullmatch(v) for v in colors.values()):
         raise DesignValidationError("Design colors are invalid.")
+    def luminance(value: str) -> float:
+        channels=[]
+        for index in (1,3,5):
+            channel=int(value[index:index+2],16)/255
+            channels.append(channel/12.92 if channel<=.04045 else ((channel+.055)/1.055)**2.4)
+        return .2126*channels[0]+.7152*channels[1]+.0722*channels[2]
+    def contrast(a: str,b: str) -> float:
+        high,low=sorted((luminance(a),luminance(b)),reverse=True)
+        return (high+.05)/(low+.05)
+    if contrast(colors["text"],colors["background"]) < 4.5 or contrast(colors["text"],colors["surface"]) < 4.5:
+        raise DesignValidationError("Text and background colors need stronger contrast.")
     sections = config.get("sections")
     allowed_sections = set(DEFAULT_CONFIG["sections"])
     if not isinstance(sections, list) or len(sections) != len(set(sections)) or not set(sections) <= allowed_sections:
         raise DesignValidationError("Homepage sections are invalid.")
+    hero=config.get("hero")
+    if not isinstance(hero,dict) or set(hero)!={"mode","mediaId"} or hero.get("mode") not in {"color","image"}:
+        raise DesignValidationError("Hero configuration is invalid.")
+    announcement=config.get("announcement",DEFAULT_CONFIG["announcement"])
+    if not isinstance(announcement,dict) or set(announcement)!={"enabled","text"} or not isinstance(announcement.get("enabled"),bool) or not isinstance(announcement.get("text"),str) or len(announcement["text"])>180:
+        raise DesignValidationError("Announcement configuration is invalid.")
+    config["announcement"]=announcement
+    pwa=config.get("pwa")
+    if not isinstance(pwa,dict) or set(pwa)!=set(DEFAULT_CONFIG["pwa"]) or not (1<=len(str(pwa.get("shortName","")))<=30) or not HEX.fullmatch(str(pwa.get("themeColor",""))) or not HEX.fullmatch(str(pwa.get("backgroundColor",""))):
+        raise DesignValidationError("PWA appearance is invalid.")
     media_ids = [config.get("logoMediaId"), (config.get("hero") or {}).get("mediaId")]
     for raw_id in filter(None, media_ids):
         try: media_id = UUID(str(raw_id))
@@ -51,6 +74,18 @@ def validate_design(session: Session, tenant: TenantContext, candidate: dict) ->
         if session.scalar(select(MediaAsset.id).where(MediaAsset.id == media_id, MediaAsset.organization_id == tenant.organization_id, MediaAsset.status == "active")) is None:
             raise DesignValidationError("Media reference is unavailable.")
     return config
+
+
+def media_slots(config: dict) -> dict[str, UUID]:
+    """Return normalized media slots after design validation has accepted IDs."""
+    result: dict[str, UUID] = {}
+    for slot, raw_id in (
+        ("logo", config.get("logoMediaId")),
+        ("hero", (config.get("hero") or {}).get("mediaId")),
+    ):
+        if raw_id:
+            result[slot] = UUID(str(raw_id))
+    return result
 
 
 class DesignService:
@@ -71,29 +106,66 @@ class DesignService:
         if item.revision != expected_revision: raise DesignValidationError("Draft changed in another session.")
         item.draft_config = validate_design(self.session, self.tenant, config)
         item.revision += 1; item.updated_by_user_id = actor
+        self._replace_media_references(item.draft_config, scope="draft")
         self._audit("design.draft_saved", actor, "workspace", str(item.revision)); self.session.commit()
         return item
 
     def publish(self, actor: UUID) -> DesignVersion:
+        self._lock_tenant()
         item = self.workspace(lock=True)
         config = validate_design(self.session, self.tenant, item.draft_config)
         number = (self.session.scalar(select(func.coalesce(func.max(DesignVersion.version_number), 0)).where(DesignVersion.organization_id == self.tenant.organization_id)) or 0) + 1
         version = DesignVersion(organization_id=self.tenant.organization_id, version_number=number, source_revision=item.revision, config=deepcopy(config), published_by_user_id=actor)
         self.session.add(version); self.session.flush(); item.published_version_id = version.id
+        self._replace_media_references(config, scope="published", version_id=version.id)
         self.session.add(DesignPublication(organization_id=self.tenant.organization_id, version_id=version.id, action="publish", actor_user_id=actor))
         self._audit("design.published", actor, "design_version", str(version.id)); self.session.commit()
         return version
 
     def revert(self, version_id: UUID, actor: UUID) -> DesignVersion:
+        self._lock_tenant()
         source = self.session.scalar(select(DesignVersion).where(DesignVersion.id == version_id, DesignVersion.organization_id == self.tenant.organization_id))
         if source is None: raise DesignValidationError("Design version not found.")
         item = self.workspace(lock=True); item.draft_config = deepcopy(source.config); item.revision += 1
         number = (self.session.scalar(select(func.max(DesignVersion.version_number)).where(DesignVersion.organization_id == self.tenant.organization_id)) or 0) + 1
         version = DesignVersion(organization_id=self.tenant.organization_id, version_number=number, source_revision=item.revision, config=deepcopy(source.config), published_by_user_id=actor, source_version_id=source.id)
         self.session.add(version); self.session.flush(); item.published_version_id = version.id
+        self._replace_media_references(source.config, scope="draft")
+        self._replace_media_references(source.config, scope="published", version_id=version.id)
         self.session.add(DesignPublication(organization_id=self.tenant.organization_id, version_id=version.id, action="revert", actor_user_id=actor))
         self._audit("design.reverted", actor, "design_version", str(source.id)); self.session.commit()
         return version
 
     def _audit(self, action: str, actor: UUID, target_type: str, target_id: str) -> None:
         self.session.add(OperationalAuditEvent(organization_id=self.tenant.organization_id, scope="tenant", actor_user_id=actor, action=action, target_type=target_type, target_id=target_id, outcome="success"))
+
+    def _lock_tenant(self) -> None:
+        # The organization row is the stable per-tenant serialization point.
+        self.session.scalar(
+            select(Organization.id).where(
+                Organization.id == self.tenant.organization_id
+            ).with_for_update()
+        )
+
+    def _replace_media_references(
+        self, config: dict, *, scope: str, version_id: UUID | None = None,
+    ) -> None:
+        predicate = [
+            DesignMediaReference.organization_id == self.tenant.organization_id,
+            DesignMediaReference.scope == scope,
+        ]
+        if scope == "draft":
+            predicate.append(DesignMediaReference.design_version_id.is_(None))
+        else:
+            predicate.append(DesignMediaReference.design_version_id == version_id)
+        self.session.execute(delete(DesignMediaReference).where(*predicate))
+        self.session.add_all([
+            DesignMediaReference(
+                organization_id=self.tenant.organization_id,
+                media_asset_id=media_id,
+                scope=scope,
+                slot=slot,
+                design_version_id=version_id,
+            )
+            for slot, media_id in media_slots(config).items()
+        ])

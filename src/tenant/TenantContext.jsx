@@ -21,6 +21,10 @@ export function TenantProvider({ children }) {
         document.documentElement.dataset.tenantTemplate = value.design?.template || "cozy";
         document.documentElement.dataset.tenantTypography = value.design?.typography || "classic";
         document.documentElement.dataset.tenantButtons = value.design?.buttonStyle || "rounded";
+        const theme = document.querySelector('meta[name="theme-color"]');
+        if (theme) theme.setAttribute("content", value.design?.pwa?.themeColor || colors.primary || "#6f7d5f");
+        const touchIcon = document.querySelector('link[rel="apple-touch-icon"]');
+        if (touchIcon) touchIcon.setAttribute("href", value.design?.logoMediaId ? `/api/v1/storefront/media/${value.design.logoMediaId}` : `/apple-touch-icon.png?tenant=${encodeURIComponent(value.tenant.id)}&v=${value.designVersion || 0}`);
         document.title = `${value.business?.displayName || "Order ahead"} · Order online`;
         setState({ status: "ready", value });
       })

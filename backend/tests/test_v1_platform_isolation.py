@@ -1,4 +1,6 @@
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from uuid import UUID, uuid4
 
 import pytest
@@ -9,10 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.jds_auth.models import JdsApplication, JdsUser, Organization, Role
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
-from app.api.v1.platform import ProvisionOrganizationInput, entitlements, platform_organizations, provision_organization
+from app.api.v1.platform import OnboardingInput, ProvisionOrganizationInput, entitlements, platform_organizations, provision_organization, save_onboarding
 from app.jds_auth.service import AuthPrincipal
 from app.loyalty.models import CustomerLoyaltyEvent, LoyaltyProgram
-from app.platform.models import CustomerRelationship, DesignVersion, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
+from app.platform.models import BillingPlan, CustomerRelationship, DesignMediaReference, DesignVersion, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
+from app.platform.media import local_media_path, persist_local_image
 from app.push.models import CustomerNotificationPreference, WebPushSubscription
 from app.tenancy.context import TenantContext, TenantResolutionSource
 from app.tenancy.resolver import TenantResolutionError, resolve_storefront_context
@@ -31,11 +34,17 @@ def platform_db(postgresql_url):
         b = Organization(slug=f"beta-{uuid4()}", name="Beta Café", lifecycle_status="active")
         actor = JdsUser(primary_email=f"platform-{uuid4()}@example.com", display_name="Owner")
         session.add_all([a, b, actor]); session.flush()
+        if session.get(BillingPlan,"core-test") is None:
+            session.add(BillingPlan(key="core-test",name="Core test fixture",entitlements={"designStudio":True}))
+        if session.get(BillingPlan,"engagement-test") is None:
+            session.add(BillingPlan(key="engagement-test",name="Engagement test fixture",entitlements={"designStudio":True,"notifications":True,"loyalty":True}))
         session.add_all([
             OnboardingState(organization_id=a.id, state="complete", public_ready=True, current_step="complete"),
             OnboardingState(organization_id=b.id, state="complete", public_ready=True, current_step="complete"),
             StorefrontHostname(organization_id=a.id, hostname=alpha_host, status="verified", is_canonical=True),
             StorefrontHostname(organization_id=b.id, hostname=beta_host, status="verified", is_canonical=True),
+            CustomerRelationship(organization_id=a.id,user_id=actor.id,display_name="Owner A"),
+            CustomerRelationship(organization_id=b.id,user_id=actor.id,display_name="Owner B"),
         ])
         session.commit(); ids = a.id, b.id, actor.id, alpha_host, beta_host
     yield engine, ids
@@ -142,12 +151,86 @@ def test_entitlements_are_resolved_only_for_the_selected_business(platform_db):
     engine, (a, b, _, _, _) = platform_db
     with Session(engine) as session:
         session.add_all([
-            OrganizationSubscription(organization_id=a,plan_key="engagement",state="active"),
-            OrganizationSubscription(organization_id=b,plan_key="core",state="past_due"),
+            OrganizationSubscription(organization_id=a,plan_key="engagement-test",state="active"),
+            OrganizationSubscription(organization_id=b,plan_key="core-test",state="past_due"),
         ]);session.commit()
         assert entitlements(context(a,"alpha"),session)["features"]["loyalty"] is True
         beta = entitlements(context(b,"beta"),session)
         assert beta["state"] == "past_due" and beta["features"] == {}
+
+
+@pytest.mark.postgresql
+def test_onboarding_checklist_cannot_override_server_readiness(platform_db):
+    engine, (a, _, actor, _, _) = platform_db
+    principal = AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="owner@example.com",display_name="Owner",role="owner",permissions=frozenset(),assurance_level="password")
+    with Session(engine) as session:
+        item = session.get(OnboardingState, a)
+        item.state = "in_progress"; item.public_ready = False; item.completed_steps = []; item.current_step = "business"
+        session.commit()
+        result = save_onboarding(OnboardingInput(revision=item.revision,current_step="complete",completed_steps=["business","storefront","hours","fulfillment","design","catalog","clover"]),principal,context(a,"alpha"),session)
+        assert result["state"] == "complete"
+        assert result["publicReady"] is False
+        assert session.get(OnboardingState,a).public_ready is False
+
+
+def test_local_media_storage_keys_are_tenant_and_asset_scoped(tmp_path, monkeypatch):
+    monkeypatch.setenv("JDS_LOCAL_MEDIA_ROOT", str(tmp_path))
+    tenant_a, tenant_b, asset = uuid4(), uuid4(), uuid4()
+    image = b"\x89PNG\r\n\x1a\nlocal-test-image"
+    key_a, checksum_a = persist_local_image(tenant_a, asset, image, "image/png")
+    key_b, checksum_b = persist_local_image(tenant_b, asset, image, "image/png")
+    assert key_a != key_b and key_a.startswith(f"{tenant_a}/") and key_b.startswith(f"{tenant_b}/")
+    assert checksum_a == checksum_b
+    assert local_media_path(key_a).read_bytes() == image
+
+
+@pytest.mark.postgresql
+def test_database_rejects_cross_tenant_loyalty_and_design_relationships(platform_db):
+    engine, (a, b, actor, _, _) = platform_db
+    from sqlalchemy.exc import IntegrityError
+    from app.platform.models import DesignPublication
+    with Session(engine) as session:
+        program=LoyaltyProgram(organization_id=a,slug="cross",name="Cross",description="test",enabled=True,stamps_required=6,reward_description="Free",earning_rule="one_per_completed_qualifying_order",reward_type="free_qualifying_product")
+        session.add(program);session.flush()
+        session.add(CustomerLoyaltyEvent(organization_id=b,customer_user_id=actor,loyalty_program_id=program.id,event_type="manual_adjustment",quantity=1,actor_user_id=actor,reason="reject",program_name_snapshot="Cross"))
+        with pytest.raises(IntegrityError): session.commit()
+        session.rollback()
+        version=DesignService(session,context(a,"alpha")).publish(actor)
+        session.add(DesignPublication(organization_id=b,version_id=version.id,action="publish",actor_user_id=actor))
+        with pytest.raises(IntegrityError): session.commit()
+
+
+@pytest.mark.postgresql
+def test_active_draft_media_reference_prevents_archive_and_is_tenant_bound(platform_db):
+    engine, (a, b, actor, _, _) = platform_db
+    from app.api.v1.platform import archive_media
+    with Session(engine) as session:
+        media=MediaAsset(organization_id=a,storage_key="brand/draft.webp",media_type="image/webp",byte_size=100,checksum="d"*64)
+        session.add(media);session.commit()
+        service=DesignService(session,context(a,"alpha")); workspace=service.workspace();session.commit()
+        config=deepcopy(DEFAULT_CONFIG);config["logoMediaId"]=str(media.id)
+        service.save(config,workspace.revision,actor)
+        assert session.scalar(select(DesignMediaReference.id).where(DesignMediaReference.organization_id==a,DesignMediaReference.media_asset_id==media.id))
+        with pytest.raises(HTTPException) as used: archive_media(media.id,AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="a@example.com",display_name="A",role="owner",permissions=frozenset(),assurance_level="password"),context(a,"alpha"),session)
+        assert used.value.status_code == 409
+        with pytest.raises(HTTPException) as foreign: archive_media(media.id,AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=b,application_id=uuid4(),session_id=uuid4(),email="b@example.com",display_name="B",role="owner",permissions=frozenset(),assurance_level="password"),context(b,"beta"),session)
+        assert foreign.value.status_code == 404
+
+
+@pytest.mark.postgresql
+def test_concurrent_design_publish_allocates_unique_serial_versions(platform_db):
+    engine, (a, _, actor, _, _) = platform_db
+    with Session(engine) as session:
+        DesignService(session,context(a,"alpha")).workspace();session.commit()
+    barrier=Barrier(2)
+    def publish_once():
+        with Session(engine) as session:
+            barrier.wait()
+            return DesignService(session,context(a,"alpha")).publish(actor).version_number
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures=[pool.submit(publish_once) for _ in range(2)]
+        versions=sorted([future.result() for future in futures])
+    assert versions == [1,2]
 
 
 @pytest.mark.postgresql

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, UniqueConstraint, func, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, LargeBinary, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
@@ -11,6 +11,11 @@ class CustomerNotificationPreference(Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "customer_user_id", "notification_kind", name="uq_customer_notification_preference"),
         CheckConstraint("notification_kind = 'lunch_special'", name="ck_customer_notification_preferences_kind_valid"),
+        ForeignKeyConstraint(
+            ["organization_id", "customer_user_id"],
+            ["organization_customers.organization_id", "organization_customers.user_id"],
+            name="fk_customer_notification_preferences_org_customer", ondelete="CASCADE",
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
@@ -28,6 +33,12 @@ class WebPushSubscription(Base):
         CheckConstraint("content_encoding = 'aes128gcm'", name="ck_web_push_subscriptions_encoding_valid"),
         CheckConstraint("failure_count >= 0", name="ck_web_push_subscriptions_failure_count_nonnegative"),
         UniqueConstraint("organization_id", "endpoint_fingerprint", name="uq_web_push_subscription_org_endpoint"),
+        UniqueConstraint("organization_id", "id", name="uq_web_push_subscriptions_org_id"),
+        ForeignKeyConstraint(
+            ["organization_id", "customer_user_id"],
+            ["organization_customers.organization_id", "organization_customers.user_id"],
+            name="fk_web_push_subscriptions_org_customer", ondelete="CASCADE",
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
@@ -51,6 +62,7 @@ class PushAnnouncement(Base):
     __tablename__ = "push_announcements"
     __table_args__ = (
         UniqueConstraint("organization_id", "idempotency_key", name="uq_push_announcement_idempotency"),
+        UniqueConstraint("organization_id", "id", name="uq_push_announcements_org_id"),
         Index("uq_push_lunch_day_standard", "organization_id", "cafe_day", unique=True, postgresql_where=text("kind = 'lunch_special' AND is_override IS FALSE")),
         CheckConstraint("kind IN ('lunch_special', 'general')", name="ck_push_announcements_kind_valid"),
         CheckConstraint("status IN ('queued', 'attempting', 'completed')", name="ck_push_announcements_status_valid"),
@@ -89,6 +101,16 @@ class PushDeliveryAttempt(Base):
         UniqueConstraint("announcement_id", "subscription_id", name="uq_push_delivery_announcement_subscription"),
         CheckConstraint("status IN ('queued', 'claimed', 'retry', 'accepted', 'failed', 'expired', 'suppressed')", name="ck_push_delivery_attempts_status_valid"),
         CheckConstraint("attempt_count >= 0", name="ck_push_delivery_attempts_attempt_count_nonnegative"),
+        ForeignKeyConstraint(
+            ["organization_id", "announcement_id"],
+            ["push_announcements.organization_id", "push_announcements.id"],
+            name="fk_push_delivery_attempts_org_announcement", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "subscription_id"],
+            ["web_push_subscriptions.organization_id", "web_push_subscriptions.id"],
+            name="fk_push_delivery_attempts_org_subscription", ondelete="CASCADE",
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)

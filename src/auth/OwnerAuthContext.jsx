@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { fetchAuthorizedOrganizations, fetchOwnerSession, loginOwner, loginStaff, logoutOwner, selectAuthorizedOrganization } from "../services/ownerAuthApi.js";
+import { fetchPlatformCapabilities } from "../services/designStudioApi.js";
 
 const OwnerAuthContext = createContext(null);
 
@@ -14,9 +15,10 @@ export function OwnerAuthProvider({ children }) {
     setStatus("loading");
     pendingSession.current = fetchOwnerSession()
       .then((nextSession) => {
-        setSession(nextSession);
+        setSession({ ...nextSession, platform_capabilities: [] });
         setStatus("authenticated");
         fetchAuthorizedOrganizations().then(setBusinesses).catch(() => setBusinesses([]));
+        fetchPlatformCapabilities().then(({ capabilities }) => setSession((current) => current ? ({ ...current, platform_capabilities: capabilities }) : current)).catch(() => {});
         return nextSession;
       })
       .catch((error) => {
@@ -32,14 +34,15 @@ export function OwnerAuthProvider({ children }) {
 
   const login = useCallback(async (email, password) => {
     const nextSession = await loginOwner(email, password);
-    setSession(nextSession);
+    setSession({ ...nextSession, platform_capabilities: [] });
     setStatus("authenticated");
+    fetchPlatformCapabilities().then(({ capabilities }) => setSession((current) => current ? ({ ...current, platform_capabilities: capabilities }) : current)).catch(() => {});
     return nextSession;
   }, []);
 
   const staffLogin = useCallback(async (staffId, pin) => {
     const nextSession = await loginStaff(staffId, pin);
-    setSession(nextSession);
+    setSession({ ...nextSession, platform_capabilities: [] });
     setStatus("authenticated");
     return nextSession;
   }, []);
@@ -57,7 +60,7 @@ export function OwnerAuthProvider({ children }) {
 
   const selectBusiness = useCallback(async (membershipId) => {
     const nextSession = await selectAuthorizedOrganization(membershipId, session.csrf_token);
-    setSession(nextSession);
+    setSession({ ...nextSession, platform_capabilities: session.platform_capabilities || [] });
     globalThis.location?.reload?.();
     return nextSession;
   }, [session]);
