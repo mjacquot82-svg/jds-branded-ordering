@@ -24,6 +24,7 @@ import DesignStudioPage from "./admin/DesignStudioPage.jsx";
 import OnboardingPage from "./admin/OnboardingPage.jsx";
 import PlatformAdminPage from "./admin/PlatformAdminPage.jsx";
 import DesignPreviewPage from "./admin/DesignPreviewPage.jsx";
+import CustomersPage from "./admin/CustomersPage.jsx";
 
 export default function App() {
   return (
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="admin" element={<RequireOwner />}>
             <Route index element={<AdminDashboard />} />
             <Route path="orders" element={<OrdersPage />} />
+            <Route path="customers" element={<CustomersPage />} />
             <Route path="products" element={<ProductsPage />} />
             <Route path="scheduling" element={<SchedulingPage />} />
             <Route path="communications" element={<CommunicationsPage />} />

@@ -1,10 +1,9 @@
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 
-from app.api.v1.owner_catalog import require_catalog_organization, require_modifier_manager
+from app.api.v1.owner_catalog import require_modifier_manager
 from app.catalog.schemas import OwnerModifierGroupWrite, OwnerModifierOptionWrite
 from app.catalog.service import CatalogService
 from app.jds_auth.service import AuthPrincipal
@@ -20,25 +19,11 @@ def principal(*permissions: str, organization_id=None, role="owner") -> AuthPrin
 
 
 def test_modifier_permission_allows_owner_capability_and_denies_staff() -> None:
-    organization_id = uuid4()
-    service = SimpleNamespace(_session=SimpleNamespace(scalar=lambda _: organization_id))
-    settings = SimpleNamespace(organization_slug="the-guest-house")
-    owner = principal("modifiers.manage", organization_id=organization_id)
-    assert require_modifier_manager(owner, service, settings) is owner
+    owner = principal("modifiers.manage")
+    assert require_modifier_manager(owner) is owner
     with pytest.raises(HTTPException) as denied:
-        require_modifier_manager(principal("catalog.read", organization_id=organization_id, role="staff"), service, settings)
+        require_modifier_manager(principal("catalog.read", role="staff"))
     assert denied.value.status_code == 403
-
-
-def test_catalog_organization_is_server_derived() -> None:
-    organization_id = uuid4()
-    service = SimpleNamespace(_session=SimpleNamespace(scalar=lambda _: organization_id))
-    settings = SimpleNamespace(organization_slug="the-guest-house")
-    require_catalog_organization(principal("modifiers.manage", organization_id=organization_id), service, settings)
-    with pytest.raises(HTTPException) as denied:
-        require_catalog_organization(principal("modifiers.manage"), service, settings)
-    assert denied.value.status_code == 403
-    assert denied.value.detail["code"] == "organization_denied"
 
 
 @pytest.mark.parametrize("payload,message", [

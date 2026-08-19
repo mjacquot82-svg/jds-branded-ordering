@@ -52,11 +52,13 @@ test("operational navigation follows capabilities without exposing dead ends", (
   assert.deepEqual(operationsLinks(session).map(({ to }) => to), [
     "/admin",
     "/admin/orders",
+    "/admin/customers",
     "/admin/products",
     "/admin/communications",
   ]);
   assert.equal(canAccessOwnerPath(session, "/admin"), true);
   assert.equal(canAccessOwnerPath(session, "/admin/orders"), true);
+  assert.equal(canAccessOwnerPath(session, "/admin/customers"), true);
   assert.equal(canAccessOwnerPath(session, "/admin/communications"), true);
   assert.equal(canAccessOwnerPath(session, "/admin/scheduling"), false);
   assert.equal(canManageLunchSpecial(session), true);

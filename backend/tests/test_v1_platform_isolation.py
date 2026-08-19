@@ -1,5 +1,6 @@
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, time, timedelta, timezone
 from threading import Barrier
 from uuid import UUID, uuid4
 
@@ -10,6 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.jds_auth.models import JdsApplication, JdsUser, Organization, Role
+from app.availability.models import BusinessHour, BusinessSettings
+from app.catalog.models import Category, Product
+from app.clover.models import CloverInstallation
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
 from app.api.v1.platform import (
     OnboardingInput,
@@ -24,9 +28,10 @@ from app.api.v1.platform import (
 )
 from app.jds_auth.service import AuthPrincipal
 from app.loyalty.models import CustomerLoyaltyEvent, LoyaltyProgram
-from app.platform.models import BillingPlan, CustomerRelationship, DesignMediaReference, DesignVersion, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
+from app.platform.models import BillingPlan, BusinessProfile, CustomerRelationship, DesignMediaReference, DesignVersion, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
 from app.platform.media import local_media_path, persist_local_image
 from app.platform.entitlements import enforce_entitlement
+from app.platform.readiness import synchronize_public_readiness
 from app.platform.assets import launch_qr_svg, tenant_icon_png
 from app.push.models import CustomerNotificationPreference, WebPushSubscription
 from app.tenancy.context import TenantContext, TenantResolutionSource
@@ -284,6 +289,140 @@ def test_hostname_retry_disable_and_launch_assets_are_tenant_bound(
         disable_storefront(alpha.id, principal, context(a, "alpha"), session)
         assert session.get(StorefrontHostname, alpha.id).status == "disabled"
         assert session.get(OnboardingState, a).public_ready is False
+
+
+@pytest.mark.postgresql
+def test_two_complete_cafes_activate_with_overlapping_business_identifiers_without_leakage(
+    platform_db,
+):
+    engine, (a, b, actor, alpha_host, beta_host) = platform_db
+    with Session(engine) as session:
+        for organization_id, prefix, template in (
+            (a, "Alpha", "cozy"),
+            (b, "Beta", "minimal"),
+        ):
+            settings = BusinessSettings(
+                organization_id=organization_id,
+                timezone="America/Toronto",
+                ordering_enabled=True,
+            )
+            session.add(settings)
+            session.flush()
+            session.add_all(
+                BusinessHour(
+                    organization_id=organization_id,
+                    business_settings_id=settings.id,
+                    weekday=weekday,
+                    is_closed=False,
+                    opens_at=time(8),
+                    closes_at=time(16),
+                )
+                for weekday in range(7)
+            )
+            category = Category(
+                organization_id=organization_id,
+                slug="coffee",
+                name=f"{prefix} Coffee",
+                is_published=True,
+            )
+            session.add(category)
+            session.flush()
+            session.add_all(
+                [
+                    Product(
+                        organization_id=organization_id,
+                        category_id=category.id,
+                        slug="latte",
+                        name=f"{prefix} Latte",
+                        base_price_cents=500,
+                        is_published=True,
+                    ),
+                    BusinessProfile(
+                        organization_id=organization_id,
+                        display_name=f"{prefix} Café",
+                        timezone="America/Toronto",
+                        currency="CAD",
+                        pickup_instructions=f"Pick up at the {prefix} counter.",
+                    ),
+                    CloverInstallation(
+                        organization_id=organization_id,
+                        merchant_id=f"merchant-{prefix.lower()}",
+                        environment="sandbox",
+                        app_id="fixture-app",
+                        access_token_encrypted=f"{prefix}-access-fixture",
+                        refresh_token_encrypted=f"{prefix}-refresh-fixture",
+                        access_token_expires_at=datetime.now(timezone.utc)
+                        + timedelta(hours=1),
+                        connection_state="connected",
+                    ),
+                    LoyaltyProgram(
+                        organization_id=organization_id,
+                        slug="coffee-club",
+                        name=f"{prefix} Coffee Club",
+                        description=f"{prefix} rewards",
+                        enabled=True,
+                        stamps_required=6,
+                        reward_description="Free drink",
+                        earning_rule="one_per_completed_qualifying_order",
+                        reward_type="free_qualifying_product",
+                    ),
+                    CustomerNotificationPreference(
+                        organization_id=organization_id,
+                        customer_user_id=actor,
+                        notification_kind="lunch_special",
+                        enabled=organization_id == b,
+                    ),
+                ]
+            )
+            session.flush()
+            service = DesignService(session, context(organization_id, prefix.lower()))
+            workspace = service.workspace()
+            session.commit()
+            config = deepcopy(DEFAULT_CONFIG)
+            config.update(
+                {
+                    "displayName": f"{prefix} Café",
+                    "template": template,
+                    "tagline": f"{prefix} made fresh",
+                }
+            )
+            service.save(config, workspace.revision, actor)
+            service.publish(actor)
+            result = synchronize_public_readiness(session, organization_id)
+            session.commit()
+            assert result.public_ready is True
+
+        assert resolve_storefront_context(session, host=alpha_host).organization_id == a
+        assert resolve_storefront_context(session, host=beta_host).organization_id == b
+        assert session.scalar(
+            select(Product.name).where(Product.organization_id == a, Product.slug == "latte")
+        ) == "Alpha Latte"
+        assert session.scalar(
+            select(Product.name).where(Product.organization_id == b, Product.slug == "latte")
+        ) == "Beta Latte"
+        assert session.scalar(
+            select(LoyaltyProgram.name).where(
+                LoyaltyProgram.organization_id == a,
+                LoyaltyProgram.slug == "coffee-club",
+            )
+        ) == "Alpha Coffee Club"
+        assert session.scalar(
+            select(CustomerNotificationPreference.enabled).where(
+                CustomerNotificationPreference.organization_id == a,
+                CustomerNotificationPreference.customer_user_id == actor,
+            )
+        ) is False
+        assert session.scalar(
+            select(CustomerNotificationPreference.enabled).where(
+                CustomerNotificationPreference.organization_id == b,
+                CustomerNotificationPreference.customer_user_id == actor,
+            )
+        ) is True
+        assert session.scalar(
+            select(DesignVersion.config["template"].as_string()).where(
+                DesignVersion.organization_id == b
+            )
+        ) == "minimal"
 
 
 @pytest.mark.postgresql

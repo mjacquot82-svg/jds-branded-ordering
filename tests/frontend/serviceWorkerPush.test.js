@@ -21,7 +21,9 @@ test("push worker has no fetch interception and rejects malformed payloads",asyn
 test("customer consent clearly covers Lunch Special and occasional café updates",()=>{
   const settings=readFileSync(new URL("../../src/components/NotificationSettings.jsx",import.meta.url),"utf8");
   assert.match(settings,/Café notifications/);
-  assert.match(settings,/Get today’s Lunch Special and occasional updates from The Guest House\./);
+  assert.match(settings,/useTenant/);
+  assert.match(settings,/Get today’s Lunch Special and occasional updates from \{businessName\}\./);
+  assert.doesNotMatch(settings,/updates from The Guest House/);
 });
 
 test("push worker replaces external destinations and opens only same-origin routes",async()=>{

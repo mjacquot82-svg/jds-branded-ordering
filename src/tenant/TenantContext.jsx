@@ -24,7 +24,9 @@ export function TenantProvider({ children }) {
         const theme = document.querySelector('meta[name="theme-color"]');
         if (theme) theme.setAttribute("content", value.design?.pwa?.themeColor || colors.primary || "#6f7d5f");
         const touchIcon = document.querySelector('link[rel="apple-touch-icon"]');
-        if (touchIcon) touchIcon.setAttribute("href", `/api/v1/storefront/icon/192.png?tenant=${encodeURIComponent(value.tenant.id)}&v=${value.designVersion || 0}`);
+        const iconUrl = `/api/v1/storefront/icon/192.png?tenant=${encodeURIComponent(value.tenant.id)}&v=${value.designVersion || 0}`;
+        if (touchIcon) touchIcon.setAttribute("href", iconUrl);
+        document.querySelectorAll('link[rel="icon"],link[rel="shortcut icon"]').forEach((icon) => icon.setAttribute("href", iconUrl));
         document.title = `${value.business?.displayName || "Order ahead"} · Order online`;
         setState({ status: "ready", value });
       })
@@ -37,5 +39,5 @@ export function TenantProvider({ children }) {
   return <TenantContext.Provider value={context}>{children}</TenantContext.Provider>;
 }
 export function useTenant() {
-  return useContext(TenantContext) || { status: "ready", value: { tenant: { id: "local-ladels", slug: "the-guest-house" }, design: { displayName: "The Guest House", tagline: "Café & Pantry" } }, storageKey: (key) => tenantStorageKey("local-ladels", key) };
+  return useContext(TenantContext) || { status: "ready", value: { tenant: { id: "local-ladels", slug: "the-guest-house" }, business: { displayName: "The Guest House" }, design: { displayName: "The Guest House", tagline: "Café & Pantry" } }, storageKey: (key) => tenantStorageKey("local-ladels", key) };
 }

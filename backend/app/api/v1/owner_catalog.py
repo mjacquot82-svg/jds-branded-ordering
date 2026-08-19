@@ -2,16 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1.catalog import get_catalog_session
-from app.api.v1.owner_auth import csrf_principal, current_principal, get_auth_service, get_auth_settings, require_permission
+from app.api.v1.owner_auth import csrf_principal, current_principal, require_permission
 from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.catalog.repository import CatalogRepository
 from app.catalog.schemas import LunchSpecialSelectionWrite, OwnerCatalogResponse, OwnerModifierGroupResponse, OwnerModifierGroupWrite, OwnerModifierOptionResponse, OwnerModifierOptionWrite, OwnerProductAvailabilityWrite, OwnerProductResponse, OwnerProductWrite
 from app.catalog.service import CatalogService
 from app.jds_auth.service import AuthPrincipal
-from app.jds_auth.service import AuthenticationService
-from app.jds_auth.config import AuthSettings
-from app.jds_auth.models import Organization
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.tenancy.context import TenantContext
 
@@ -19,27 +15,9 @@ from app.tenancy.context import TenantContext
 router = APIRouter(prefix="/owner/catalog", tags=["owner-catalog"])
 
 
-def require_catalog_organization(
-    principal: AuthPrincipal,
-    service: AuthenticationService,
-    settings: AuthSettings,
-) -> None:
-    organization_id = service._session.scalar(
-        select(Organization.id).where(Organization.slug == settings.organization_slug)
-    )
-    if organization_id is None or principal.organization_id != organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "organization_denied", "message": "This catalog belongs to another organization."},
-        )
-
-
 def require_catalog_reader(
     principal: AuthPrincipal = Depends(current_principal),
-    service: AuthenticationService = Depends(get_auth_service),
-    settings: AuthSettings = Depends(get_auth_settings),
 ) -> AuthPrincipal:
-    require_catalog_organization(principal, service, settings)
     if "catalog.read" not in principal.permissions:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -62,11 +40,8 @@ def require_full_catalog_manager(
 
 def require_catalog_editor(
     principal: AuthPrincipal = Depends(require_full_catalog_manager),
-    service: AuthenticationService = Depends(get_auth_service),
-    settings: AuthSettings = Depends(get_auth_settings),
 ) -> AuthPrincipal:
     require_full_catalog_manager(principal)
-    require_catalog_organization(principal, service, settings)
     return principal
 
 
@@ -83,11 +58,8 @@ def require_modifier_capability(
 
 def require_modifier_manager(
     principal: AuthPrincipal = Depends(require_modifier_capability),
-    service: AuthenticationService = Depends(get_auth_service),
-    settings: AuthSettings = Depends(get_auth_settings),
 ) -> AuthPrincipal:
     require_modifier_capability(principal)
-    require_catalog_organization(principal, service, settings)
     return principal
 
 

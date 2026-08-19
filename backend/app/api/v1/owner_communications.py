@@ -150,7 +150,7 @@ def send_general(payload:GeneralSend, request:Request,background_tasks:Backgroun
     enforce_push_limit(request,session,principal,now)
     title=payload.title.strip(); body=payload.body.strip(); route=payload.target_route
     if not (1<=len(title)<=80 and 1<=len(body)<=280): raise HTTPException(422,detail={"code":"content_invalid","message":"Title and message are required and too long."})
-    if not route.startswith("/") or route.startswith("//") or ":" in route or route.split("?",1)[0] not in {"/","/menu","/account","/orders"}: raise HTTPException(422,detail={"code":"route_invalid","message":"Choose an approved Ladel’s destination."})
+    if not route.startswith("/") or route.startswith("//") or ":" in route or route.split("?",1)[0] not in {"/","/menu","/account","/orders"}: raise HTTPException(422,detail={"code":"route_invalid","message":"Choose an approved storefront destination."})
     try:
         item = CommunicationCenterService(session,request.app.state.push_settings).create_general(organization_id=principal.organization_id,actor_user_id=principal.user_id,actor_name=principal.display_name,idempotency_key=key(idempotency_key),title=title,body=body,route=route)
         background_tasks.add_task(drain_push_outbox, request.app.state.db_session_factory, request.app.state.push_settings)

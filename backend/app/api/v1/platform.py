@@ -324,7 +324,9 @@ def platform_organization_detail(organization_id: UUID, principal: AuthPrincipal
     readiness=evaluate_storefront_readiness(session,organization_id)
     hostnames=session.scalars(select(StorefrontHostname).where(StorefrontHostname.organization_id==organization_id).order_by(StorefrontHostname.created_at.desc())).all()
     audits=session.scalars(select(OperationalAuditEvent).where(OperationalAuditEvent.organization_id==organization_id).order_by(OperationalAuditEvent.occurred_at.desc()).limit(50)).all()
-    return {"id":str(organization.id),"name":organization.name,"slug":organization.slug,"status":organization.lifecycle_status,"readiness":{"publicReady":readiness.public_ready,"checks":readiness.checks},"hostnames":[{"id":str(item.id),"hostname":item.hostname,"status":item.status,"canonical":item.is_canonical} for item in hostnames],"audit":[{"action":item.action,"outcome":item.outcome,"targetType":item.target_type,"targetId":item.target_id,"occurredAt":item.occurred_at} for item in audits]}
+    result={"id":str(organization.id),"name":organization.name,"slug":organization.slug,"status":organization.lifecycle_status,"readiness":{"publicReady":readiness.public_ready,"checks":readiness.checks},"hostnames":[{"id":str(item.id),"hostname":item.hostname,"status":item.status,"canonical":item.is_canonical} for item in hostnames],"audit":[{"action":item.action,"outcome":item.outcome,"targetType":item.target_type,"targetId":item.target_id,"occurredAt":item.occurred_at} for item in audits]}
+    session.add(OperationalAuditEvent(scope="platform",actor_user_id=principal.user_id,action="platform.organization_viewed",target_type="organization",target_id=str(organization_id),outcome="success"));session.commit()
+    return result
 
 @router.get("/owner/platform-capabilities")
 def platform_capabilities(principal: AuthPrincipal = Depends(current_principal), session: Session = Depends(get_catalog_session)) -> dict:

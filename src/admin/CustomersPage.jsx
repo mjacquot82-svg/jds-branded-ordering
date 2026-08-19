@@ -1,0 +1,8 @@
+import { useEffect, useState } from "react";
+import { fetchOwnerCustomers } from "../services/ownerCustomersApi.js";
+
+export default function CustomersPage() {
+  const [query,setQuery]=useState("");const [state,setState]=useState({status:"loading",items:[],message:""});
+  useEffect(()=>{const controller=new AbortController();const timer=setTimeout(()=>{setState((current)=>({...current,status:"loading",message:""}));fetchOwnerCustomers(query,{signal:controller.signal}).then((items)=>setState({status:"ready",items,message:""})).catch((error)=>{if(error.name!=="AbortError")setState({status:"error",items:[],message:error.message});});},200);return()=>{clearTimeout(timer);controller.abort();};},[query]);
+  return <section className="page-section"><div className="page-heading"><p className="eyebrow">Tenant-owned relationships</p><h1>Customers</h1><p>Profiles and order counts for the current business only.</p></div><label>Search customers<input type="search" value={query} onChange={(event)=>setQuery(event.target.value)} placeholder="Name, email, or phone"/></label>{state.status==="loading"?<p>Loading customers…</p>:state.status==="error"?<p role="alert">{state.message}</p>:state.items.length?<div className="owner-customer-list">{state.items.map((item)=><article className="operations-panel" key={item.id}><div><h2>{item.displayName}</h2><p>{item.email}{item.phone?` · ${item.phone}`:""}</p></div><strong>{item.orderCount} {item.orderCount===1?"order":"orders"}</strong></article>)}</div>:<div className="operations-panel"><h2>No customers found</h2><p>Customer relationships appear after account creation or ordering for this business.</p></div>}</section>;
+}

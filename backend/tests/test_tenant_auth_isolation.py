@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -6,10 +7,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.jds_auth.models import JdsApplication, JdsUser, Membership, Organization, OwnerInvitation, Role, StaffPinCredential
+from app.catalog.models import Category, Product
+from app.orders.models import Order
+from app.platform.design import DEFAULT_CONFIG, DesignService
+from app.platform.models import BusinessProfile
 from app.jds_auth.security import hash_pin
 from app.jds_auth.provider import ProviderIdentity
 from app.platform.models import CustomerRelationship, OnboardingState, StorefrontHostname
+from app.tenancy.resolver import resolve_owner_tenant_context
 from tests.test_jds_auth import auth_client, auth_engine, auth_settings, fake_provider  # noqa: F401
+from tests.test_tenant_order_isolation import order_for
 
 
 async def _login(client):
@@ -86,6 +93,107 @@ async def test_inactive_or_arbitrary_tenant_selection_fails_closed(auth_client, 
     assert denied.status_code == 403
     assert (await auth_client.get("/api/v1/owner/auth/session", headers={"X-Organization-Id": login["organization_id"]})).status_code == 403
     assert (await auth_client.get("/api/v1/owner/auth/session?tenant_id=" + login["organization_id"])).status_code == 403
+
+
+@pytest.mark.anyio
+@pytest.mark.postgresql
+async def test_multi_business_switch_changes_catalog_profile_orders_and_design_without_leakage(
+    auth_client, auth_engine
+):
+    login_a = await _login(auth_client)
+    membership_b, organization_b = _add_membership(
+        auth_engine, user_email="owner@example.com", slug="switch-tenant-b"
+    )
+    organization_a = UUID(login_a["organization_id"])
+    with Session(auth_engine) as session:
+        actor = session.scalar(
+            select(JdsUser).where(JdsUser.primary_email == "owner@example.com")
+        )
+        for organization_id, prefix in (
+            (organization_a, "Alpha"),
+            (organization_b, "Beta"),
+        ):
+            category = Category(
+                organization_id=organization_id,
+                slug="coffee",
+                name=f"{prefix} Coffee",
+                is_published=True,
+            )
+            session.add(category)
+            session.flush()
+            session.add_all(
+                [
+                    Product(
+                        organization_id=organization_id,
+                        category_id=category.id,
+                        slug="latte",
+                        name=f"{prefix} Latte",
+                        base_price_cents=500,
+                        is_published=True,
+                    ),
+                    BusinessProfile(
+                        organization_id=organization_id,
+                        display_name=f"{prefix} Café",
+                        pickup_instructions=f"{prefix} counter",
+                    ),
+                    CustomerRelationship(
+                        organization_id=organization_id,
+                        user_id=actor.id,
+                        display_name=f"{prefix} Customer",
+                        phone=f"+15195550{'101' if prefix == 'Alpha' else '202'}",
+                    ),
+                    order_for(organization_id, key=f"{prefix.lower()}-order"),
+                ]
+            )
+            session.flush()
+            tenant = resolve_owner_tenant_context(
+                session, principal_organization_id=organization_id
+            )
+            workspace = DesignService(session, tenant).workspace()
+            session.commit()
+            config = deepcopy(DEFAULT_CONFIG)
+            config["displayName"] = f"{prefix} Café"
+            DesignService(session, tenant).save(config, workspace.revision, actor.id)
+
+    async def selected_data():
+        catalog = await auth_client.get("/api/v1/owner/catalog")
+        profile = await auth_client.get("/api/v1/owner/business-profile")
+        orders = await auth_client.get("/api/v1/owner/orders/active")
+        design = await auth_client.get("/api/v1/owner/design")
+        customers = await auth_client.get("/api/v1/owner/customers")
+        assert {response.status_code for response in (catalog, profile, orders, design, customers)} == {200}
+        return (
+            {item["name"] for item in catalog.json()["products"]},
+            profile.json()["display_name"],
+            {item["customer_name"] for item in orders.json()},
+            design.json()["config"]["displayName"],
+            {item["displayName"] for item in customers.json()["customers"]},
+        )
+
+    alpha = await selected_data()
+    assert alpha == ({"Alpha Latte"}, "Alpha Café", {"Guest"}, "Alpha Café", {"Alpha Customer"})
+    selected_b = await auth_client.post(
+        f"/api/v1/owner/auth/organizations/{membership_b}/select",
+        headers={"Origin": "http://test", "X-CSRF-Token": login_a["csrf_token"]},
+    )
+    assert selected_b.status_code == 200
+    beta = await selected_data()
+    assert beta == ({"Beta Latte"}, "Beta Café", {"Guest"}, "Beta Café", {"Beta Customer"})
+    organizations = (await auth_client.get("/api/v1/owner/auth/organizations")).json()
+    membership_a = next(
+        item["membership_id"]
+        for item in organizations
+        if item["organization_id"] == str(organization_a)
+    )
+    selected_a = await auth_client.post(
+        f"/api/v1/owner/auth/organizations/{membership_a}/select",
+        headers={
+            "Origin": "http://test",
+            "X-CSRF-Token": selected_b.json()["csrf_token"],
+        },
+    )
+    assert selected_a.status_code == 200
+    assert await selected_data() == alpha
 
 
 @pytest.mark.anyio

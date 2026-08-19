@@ -6,8 +6,10 @@ import { registerCustomer, resendCustomerVerification } from "../services/custom
 import { getCustomerErrorMessage } from "../services/customerMessages.js";
 import { formatCustomerPhone, isCompleteCustomerPhone, normalizeCustomerPhone } from "../services/customerPhone.js";
 import { clearCustomerReturn, customerAuthHref, customerReturnFrom } from "../services/customerAuthReturn.js";
+import { useTenant } from "../tenant/TenantContext.jsx";
 
 export default function CustomerAuthPage({ mode }) {
+  const { value: tenant } = useTenant();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const returnTo = customerReturnFrom(params);
@@ -70,7 +72,7 @@ export default function CustomerAuthPage({ mode }) {
       <div className="operations-panel">
         <p className="eyebrow">Customer account</p>
         <h1>{creating ? "Create Account" : "Sign In"}</h1>
-        <p>{creating ? "Save your details for faster checkout and order history." : "Welcome back to The Guest House."}</p>
+        <p>{creating ? "Save your details for faster checkout and order history." : `Welcome back to ${tenant.business?.displayName || tenant.design?.displayName || "your café"}.`}</p>
         <form className="product-form" aria-busy={isSubmitting || isResending} onSubmit={submit}>
           {creating ? <label><span>Name</span><input autoComplete="name" disabled={isSubmitting} required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label> : null}
           <label><span>Email</span><input autoComplete="email" disabled={isSubmitting || isResending} required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
