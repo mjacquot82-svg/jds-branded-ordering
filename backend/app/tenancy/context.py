@@ -15,3 +15,6 @@ class TenantContext:
     organization_id: UUID
     organization_slug: str
     source: TenantResolutionSource
+    principal_user_id: UUID | None = None
+    membership_id: UUID | None = None
+    permissions: frozenset[str] = frozenset()

@@ -46,7 +46,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     config = make_alembic_config(postgresql_url)
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260820_23"]
+    assert script.get_heads() == ["20260821_24"]
 
     command.downgrade(config, "base")
     command.upgrade(config, "head")
@@ -55,7 +55,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     try:
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260820_23"
+            assert context.get_current_revision() == "20260821_24"
 
         assert set(inspect(engine).get_table_names()) >= {
             "alembic_version",
@@ -318,7 +318,7 @@ def test_tenant_availability_migration_backfills_and_enforces_ownership(
         command.upgrade(config, "head")
         inspector = inspect(engine)
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "20260820_23"
+            assert MigrationContext.configure(connection).get_current_revision() == "20260821_24"
             for table_name in (
                 "business_hours",
                 "business_closures",
@@ -429,7 +429,7 @@ def test_tenant_order_migration_backfills_constraints_and_refuses_unsafe_downgra
                 text("SELECT organization_id FROM orders WHERE id = :id"),
                 {"id": order_id},
             ) == organization_id
-            assert MigrationContext.configure(connection).get_current_revision() == "20260820_23"
+            assert MigrationContext.configure(connection).get_current_revision() == "20260821_24"
         assert {c["name"] for c in inspector.get_unique_constraints("orders")} >= {
             "uq_orders_organization_idempotency_key",
             "uq_orders_organization_public_access_token",
@@ -478,6 +478,46 @@ def test_tenant_order_migration_backfills_constraints_and_refuses_unsafe_downgra
 
 
 @pytest.mark.postgresql
+def test_auth_tenant_migration_binds_staff_credentials_and_refuses_unsafe_downgrade(
+    postgresql_url: str,
+) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260820_23")
+    engine = create_engine(postgresql_url)
+    user_id = uuid4()
+    with engine.begin() as connection:
+        organization_id = connection.scalar(text("SELECT id FROM organizations WHERE slug = 'the-guest-house'"))
+        application_id = uuid4()
+        role_id = uuid4()
+        connection.execute(text("INSERT INTO jds_applications (id, key, name) VALUES (:id, 'jds-commerce', 'JDS Commerce')"), {"id": application_id})
+        connection.execute(text("INSERT INTO auth_roles (id, application_id, key, name) VALUES (:id, :app, 'staff', 'Staff')"), {"id": role_id, "app": application_id})
+        membership_id = uuid4()
+        connection.execute(text("INSERT INTO jds_users (id, primary_email, display_name) VALUES (:id, :email, 'Staff')"), {"id": user_id, "email": f"{user_id}@staff.invalid"})
+        connection.execute(text("INSERT INTO organization_memberships (id, organization_id, application_id, user_id, role_id, status, joined_at) VALUES (:id, :org, :app, :user, :role, 'active', now())"), {"id": membership_id, "org": organization_id, "app": application_id, "user": user_id, "role": role_id})
+        connection.execute(text("INSERT INTO staff_pin_credentials (user_id, verifier, changed_at) VALUES (:user, 'verifier', now())"), {"user": user_id})
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT membership_id FROM staff_pin_credentials WHERE user_id = :user"), {"user": user_id}) == membership_id
+
+    with engine.begin() as connection:
+        tenant_b = uuid4()
+        membership_b = uuid4()
+        connection.execute(text("INSERT INTO organizations (id, slug, name) VALUES (:id, 'auth-tenant-b', 'Auth Tenant B')"), {"id": tenant_b})
+        connection.execute(text("INSERT INTO organization_memberships (id, organization_id, application_id, user_id, role_id, status, joined_at) VALUES (:id, :org, :app, :user, :role, 'active', now())"), {"id": membership_b, "org": tenant_b, "app": application_id, "user": user_id, "role": role_id})
+        connection.execute(text("INSERT INTO staff_pin_credentials (membership_id, user_id, verifier, changed_at) VALUES (:membership, :user, 'other', now())"), {"membership": membership_b, "user": user_id})
+    with pytest.raises(SQLAlchemyError, match="cannot safely downgrade multi-membership staff PIN credentials"):
+        command.downgrade(config, "20260820_23")
+    with engine.begin() as connection:
+        connection.execute(text("DELETE FROM staff_pin_credentials WHERE membership_id = :id"), {"id": membership_b})
+        connection.execute(text("DELETE FROM organization_memberships WHERE id = :id"), {"id": membership_b})
+        connection.execute(text("DELETE FROM organizations WHERE id = :id"), {"id": tenant_b})
+    command.downgrade(config, "20260820_23")
+    engine.dispose()
+    command.upgrade(config, "head")
+
+
+@pytest.mark.postgresql
 def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
     postgresql_url: str,
 ) -> None:
@@ -501,7 +541,7 @@ def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260820_23"
+            assert context.get_current_revision() == "20260821_24"
             assert connection.scalar(
                 text(
                     "SELECT name FROM categories "
@@ -558,7 +598,7 @@ def test_migration_bootstrap_reconciles_catalog_and_orders_without_data_loss(
         inspector = inspect(engine)
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260820_23"
+            assert context.get_current_revision() == "20260821_24"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "
@@ -638,7 +678,7 @@ def test_migration_bootstrap_resumes_interrupted_order_reconciliation(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260820_23"
+            assert context.get_current_revision() == "20260821_24"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "

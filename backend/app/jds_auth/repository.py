@@ -43,6 +43,21 @@ class AuthRepository:
     def active_membership(self, user_id: UUID, application_id: UUID, organization_id: UUID) -> Membership | None:
         return self.session.scalar(select(Membership).where(Membership.user_id == user_id, Membership.application_id == application_id, Membership.organization_id == organization_id, Membership.status == "active"))
 
+    def active_workforce_memberships(self, user_id: UUID, application_id: UUID) -> list[Membership]:
+        return list(self.session.scalars(
+            select(Membership)
+            .join(Role, Role.id == Membership.role_id)
+            .join(Organization, Organization.id == Membership.organization_id)
+            .where(
+                Membership.user_id == user_id,
+                Membership.application_id == application_id,
+                Membership.status == "active",
+                Role.key.in_(("owner", "manager", "staff")),
+                Organization.is_active.is_(True),
+            )
+            .order_by(Organization.name, Membership.id)
+        ))
+
     def invitation_for_update(self, invitation_id: UUID) -> OwnerInvitation | None:
         return self.session.scalar(
             select(OwnerInvitation)

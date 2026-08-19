@@ -10,6 +10,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.api.v1.owner_auth import csrf_principal, current_principal
+from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.jds_auth.models import Organization
 from app.jds_auth.service import AuthPrincipal
 from app.main import create_app
@@ -105,6 +106,10 @@ def owner_orders_api(postgresql_url: str) -> Iterator[tuple[TestClient, Engine]]
     )
     app.dependency_overrides[current_principal] = lambda: owner
     app.dependency_overrides[csrf_principal] = lambda: owner
+    def tenant_override():
+        with Session(engine) as tenant_session:
+            return resolve_internal_ladels_compatibility_context(tenant_session)
+    app.dependency_overrides[authenticated_owner_tenant] = tenant_override
     with TestClient(app) as client:
         yield client, engine
     engine.dispose()

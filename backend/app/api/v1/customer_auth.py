@@ -22,6 +22,7 @@ from app.jds_auth.service import (
     EmailVerificationRequired, MembershipInactive, SessionInvalid, utc_now,
 )
 from app.db.session import get_db_session
+from app.tenancy.resolver import TenantResolutionError, resolve_ladels_compatibility_context
 
 router = APIRouter(prefix="/customer/auth", tags=["customer-auth"])
 logger = logging.getLogger(__name__)
@@ -68,11 +69,18 @@ def current_customer(
         auth_error(401, "unauthenticated", "Authentication is required.")
     try:
         principal = service.resolve(token, now=now)
+        storefront = resolve_ladels_compatibility_context(
+            service._session, host=request.headers.get("host"),
+            frontend_url=settings.frontend_url, headers=request.headers,
+            query_params=request.query_params,
+        )
+        if storefront.organization_id != principal.organization_id:
+            raise SessionInvalid("Customer session does not belong to this storefront.")
         if principal.role not in CUSTOMER_EXPERIENCE_ROLES:
             auth_error(403, "customer_required", "A customer account is required.")
         service._session.commit()
         return principal
-    except SessionInvalid:
+    except (SessionInvalid, TenantResolutionError):
         service._session.rollback()
         auth_error(401, "session_expired", "The customer session is invalid or expired.")
 
@@ -101,11 +109,18 @@ def optional_customer(
     service = AuthenticationService(session, provider, settings)
     try:
         principal = service.resolve(token, now=now)
+        storefront = resolve_ladels_compatibility_context(
+            service._session, host=request.headers.get("host"),
+            frontend_url=settings.frontend_url, headers=request.headers,
+            query_params=request.query_params,
+        )
+        if storefront.organization_id != principal.organization_id:
+            return None
         if principal.role not in CUSTOMER_EXPERIENCE_ROLES:
             return None
         service._session.commit()
         return principal
-    except SessionInvalid:
+    except (SessionInvalid, TenantResolutionError):
         service._session.rollback()
         return None
 
@@ -214,10 +229,17 @@ def read_session(request: Request, service: AuthenticationService = Depends(get_
         auth_error(401, "unauthenticated", "Authentication is required.")
     try:
         principal, csrf = service.rotate_csrf(token, now=now)
+        storefront = resolve_ladels_compatibility_context(
+            service._session, host=request.headers.get("host"),
+            frontend_url=settings.frontend_url, headers=request.headers,
+            query_params=request.query_params,
+        )
+        if storefront.organization_id != principal.organization_id:
+            raise SessionInvalid("Customer session does not belong to this storefront.")
         if principal.role not in CUSTOMER_EXPERIENCE_ROLES:
             auth_error(403, "customer_required", "A customer account is required.")
         return session_response(principal, csrf)
-    except SessionInvalid:
+    except (SessionInvalid, TenantResolutionError):
         auth_error(401, "session_expired", "The customer session is invalid or expired.")
 
 

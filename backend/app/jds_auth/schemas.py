@@ -86,6 +86,14 @@ class SessionResponse(AuthSchema):
     csrf_token: str
 
 
+class AuthorizedOrganizationResponse(AuthSchema):
+    membership_id: UUID
+    organization_id: UUID
+    organization_slug: str
+    organization_name: str
+    role: str
+
+
 class MessageResponse(AuthSchema):
     message: str
 

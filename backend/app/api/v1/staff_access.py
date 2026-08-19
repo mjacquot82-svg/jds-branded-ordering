@@ -40,7 +40,7 @@ def _staff_rows(session: Session, settings: AuthSettings, *, active_only: bool =
         select(JdsUser, Membership, StaffPinCredential)
         .join(Membership, Membership.user_id == JdsUser.id)
         .join(Role, Role.id == Membership.role_id)
-        .join(StaffPinCredential, StaffPinCredential.user_id == JdsUser.id)
+        .join(StaffPinCredential, StaffPinCredential.membership_id == Membership.id)
         .where(Role.key == "staff", Membership.status == "active")
         .order_by(JdsUser.display_name, JdsUser.id)
     )
@@ -77,8 +77,15 @@ def staff_login(
                 select(JdsUser, Membership, Role, StaffPinCredential)
                 .join(Membership, Membership.user_id == JdsUser.id)
                 .join(Role, Role.id == Membership.role_id)
-                .join(StaffPinCredential, StaffPinCredential.user_id == JdsUser.id)
-                .where(JdsUser.id == payload.staff_id)
+                .join(StaffPinCredential, StaffPinCredential.membership_id == Membership.id)
+                .join(JdsApplication, JdsApplication.id == Membership.application_id)
+                .join(Organization, Organization.id == Membership.organization_id)
+                .where(
+                    JdsUser.id == payload.staff_id,
+                    JdsApplication.key == settings.application_key,
+                    Organization.slug == settings.organization_slug,
+                    Organization.is_active.is_(True),
+                )
                 .with_for_update()
             ).first()
             if (
@@ -125,8 +132,10 @@ def create_staff(
         user_id = uuid4()
         user = JdsUser(id=user_id, primary_email=f"{user_id}@staff.invalid", display_name=payload.display_name, status="active", email_verified_at=now)
         membership = Membership(organization_id=principal.organization_id, application_id=principal.application_id, user_id=user_id, role_id=role.id, status="active", joined_at=now)
-        credential = StaffPinCredential(user_id=user_id, verifier=hash_pin(payload.pin, settings.session_pepper), changed_at=now)
-        session.add_all([user, membership, credential])
+        session.add_all([user, membership])
+        session.flush()
+        credential = StaffPinCredential(membership_id=membership.id, user_id=user_id, verifier=hash_pin(payload.pin, settings.session_pepper), changed_at=now)
+        session.add(credential)
         DatabaseSecurityAuditWriter(session).record("staff.access_created", "success", organization_id=principal.organization_id, actor_user_id=principal.user_id, session_id=principal.session_id, target_type="user", target_id=str(user_id))
     return _account_response(user, credential)
 
@@ -136,7 +145,7 @@ def _managed_staff(session: Session, principal: AuthPrincipal, staff_id: UUID):
         select(JdsUser, Membership, Role, StaffPinCredential)
         .join(Membership, Membership.user_id == JdsUser.id)
         .join(Role, Role.id == Membership.role_id)
-        .join(StaffPinCredential, StaffPinCredential.user_id == JdsUser.id)
+        .join(StaffPinCredential, StaffPinCredential.membership_id == Membership.id)
         .where(JdsUser.id == staff_id, Membership.organization_id == principal.organization_id, Membership.application_id == principal.application_id, Role.key == "staff")
         .with_for_update()
     ).first()

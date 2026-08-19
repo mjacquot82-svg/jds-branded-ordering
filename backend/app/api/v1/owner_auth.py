@@ -1,6 +1,7 @@
 from collections.abc import Generator
 from datetime import datetime
 from typing import Annotated, Callable
+from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.exc import SQLAlchemyError
@@ -25,7 +26,7 @@ from app.jds_auth.rate_limit import (
     RateLimitExceeded,
 )
 from app.jds_auth.schemas import (
-    InvitationAcceptRequest,
+    AuthorizedOrganizationResponse, InvitationAcceptRequest,
     InvitationCreateRequest,
     LoginRequest,
     MessageResponse,
@@ -45,6 +46,15 @@ from app.jds_auth.service import (
 )
 
 router = APIRouter(prefix="/owner/auth", tags=["owner-auth"])
+_TENANT_HEADERS = ("x-tenant-id", "x-organization-id", "x-tenant-slug", "x-organization-slug")
+_TENANT_QUERY = ("tenant_id", "organization_id", "tenant_slug", "organization_slug")
+
+
+def reject_client_tenant_context(request: Request) -> None:
+    if any(key in request.headers for key in _TENANT_HEADERS) or any(
+        key in request.query_params for key in _TENANT_QUERY
+    ):
+        auth_error(403, "tenant_context_invalid", "Client-supplied tenant context is not allowed.")
 
 
 def auth_error(status_code: int, code: str, message: str) -> None:
@@ -94,6 +104,7 @@ def current_principal(
     service: AuthenticationService = Depends(get_auth_service),
     now: datetime = Depends(utc_now),
 ) -> AuthPrincipal:
+    reject_client_tenant_context(request)
     settings = get_auth_settings(request)
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
@@ -164,6 +175,7 @@ def login(payload: LoginRequest, response: Response, request: Request, _: None =
 
 @router.get("/session", response_model=SessionResponse)
 def read_session(request: Request, service: AuthenticationService = Depends(get_auth_service), settings: AuthSettings = Depends(get_auth_settings), now: datetime = Depends(utc_now)) -> SessionResponse:
+    reject_client_tenant_context(request)
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
         auth_error(401, "unauthenticated", "Authentication is required.")
@@ -172,6 +184,45 @@ def read_session(request: Request, service: AuthenticationService = Depends(get_
         return session_response(principal, csrf)
     except SessionInvalid:
         auth_error(401, "session_expired", "The owner session is invalid or expired.")
+
+
+@router.get("/organizations", response_model=list[AuthorizedOrganizationResponse])
+def authorized_organizations(
+    principal: AuthPrincipal = Depends(current_principal),
+    service: AuthenticationService = Depends(get_auth_service),
+) -> list[AuthorizedOrganizationResponse]:
+    return [
+        AuthorizedOrganizationResponse(
+            membership_id=membership.id,
+            organization_id=organization.id,
+            organization_slug=organization.slug,
+            organization_name=organization.name,
+            role=role.key,
+        )
+        for membership, organization, role in service.workforce_organizations(principal)
+    ]
+
+
+@router.post("/organizations/{membership_id}/select", response_model=SessionResponse)
+def select_organization(
+    membership_id: UUID,
+    response: Response,
+    request: Request,
+    principal: AuthPrincipal = Depends(csrf_principal),
+    service: AuthenticationService = Depends(get_auth_service),
+    settings: AuthSettings = Depends(get_auth_settings),
+    now: datetime = Depends(utc_now),
+) -> SessionResponse:
+    try:
+        issued = service.switch_membership(
+            principal, membership_id, now=now,
+            user_agent=request.headers.get("user-agent"),
+        )
+    except MembershipInactive:
+        auth_error(403, "membership_inactive", "The selected organization is not authorized.")
+    response.set_cookie(settings.session_cookie_name, issued.token, max_age=settings.session_absolute_hours * 3600, secure=settings.secure_cookies, httponly=True, samesite="lax", path="/")
+    response.headers["Cache-Control"] = "no-store"
+    return session_response(issued.principal, issued.csrf_token)
 
 
 @router.post("/logout", response_model=MessageResponse)

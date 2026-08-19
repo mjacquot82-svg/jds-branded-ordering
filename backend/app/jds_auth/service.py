@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.jds_auth.audit import DatabaseSecurityAuditWriter
 from app.jds_auth.config import AuthSettings
-from app.jds_auth.models import ExternalIdentity, JdsUser, Membership, OwnerInvitation, OwnerSession, Role
-from app.jds_auth.provider import IdentityProvider, ProviderAuthentication
+from app.jds_auth.models import ExternalIdentity, JdsApplication, JdsUser, Membership, Organization, OwnerInvitation, OwnerSession, Role
+from app.jds_auth.provider import IdentityProvider, ProviderAuthentication, ProviderIdentity
 from app.jds_auth.repository import AuthRepository
 from app.jds_auth.security import create_secret, hash_secret, secret_matches
 from app.customers.models import CustomerProfile
@@ -318,11 +318,16 @@ class AuthenticationService:
             or identity_user.credential_state != "active"
             or membership is None
             or membership.status != "active"
+            or membership.user_id != owner_session.user_id
+            or membership.organization_id != owner_session.organization_id
+            or membership.application_id != owner_session.application_id
             or owner_session.security_version != identity_user.security_version
         ):
             raise SessionInvalid("Session is no longer authorized.")
         role = self._session.get(Role, membership.role_id)
-        if role is None:
+        organization = self._session.get(Organization, membership.organization_id)
+        application = self._session.get(JdsApplication, membership.application_id)
+        if role is None or organization is None or not organization.is_active or application is None or not application.is_active:
             raise SessionInvalid("Session is no longer authorized.")
         if touch:
             owner_session.last_seen_at = now
@@ -475,11 +480,57 @@ class AuthenticationService:
                 session_id=principal.session_id,
             )
 
+    def workforce_organizations(self, principal: AuthPrincipal) -> list[tuple[Membership, Organization, Role]]:
+        rows: list[tuple[Membership, Organization, Role]] = []
+        for membership in self._repo.active_workforce_memberships(principal.user_id, principal.application_id):
+            organization = self._session.get(Organization, membership.organization_id)
+            role = self._session.get(Role, membership.role_id)
+            if organization is not None and role is not None:
+                rows.append((membership, organization, role))
+        return rows
+
+    def switch_membership(self, principal: AuthPrincipal, membership_id: UUID, *, now: datetime, user_agent: str | None) -> IssuedSession:
+        with self._session.begin():
+            membership = next(
+                (item for item in self._repo.active_workforce_memberships(principal.user_id, principal.application_id) if item.id == membership_id),
+                None,
+            )
+            user = self._session.get(JdsUser, principal.user_id)
+            current = self._session.get(OwnerSession, principal.session_id, with_for_update=True)
+            if membership is None or user is None or current is None or current.revoked_at is not None:
+                raise MembershipInactive("The selected organization membership is unavailable.")
+            authentication = ProviderAuthentication(
+                ProviderIdentity(
+                    "jds-session", str(user.id), user.primary_email, True,
+                    principal.assurance_level, user.display_name,
+                ),
+                "",
+            )
+            issued = self._issue(user, membership, authentication, now, user_agent, False)
+            current.revoked_at = now
+            current.revocation_reason = "membership_switched"
+            self._audit.record("auth.membership_selected", "success", organization_id=membership.organization_id, actor_user_id=user.id, session_id=issued.principal.session_id, target_type="membership", target_id=str(membership.id))
+            return issued
+
     def create_invitation(self, email: str, role_key: str, *, now: datetime, invited_by: AuthPrincipal | None) -> OwnerInvitation:
         normalized = email.strip().lower()
         invitation_secret = create_secret()
         with self._session.begin():
-            application, organization = self._scope()
+            if invited_by is None:
+                application, organization = self._scope()
+            else:
+                membership = self._repo.active_membership(
+                    invited_by.user_id, invited_by.application_id,
+                    invited_by.organization_id,
+                )
+                application = self._session.get(JdsApplication, invited_by.application_id)
+                organization = self._session.get(Organization, invited_by.organization_id)
+                if (
+                    membership is None or membership.id != invited_by.membership_id
+                    or application is None or not application.is_active
+                    or organization is None or not organization.is_active
+                ):
+                    raise MembershipInactive("The inviting membership is unavailable.")
             role = self._repo.role_by_key(application.id, role_key)
             if role is None:
                 raise ValueError("Unknown role.")

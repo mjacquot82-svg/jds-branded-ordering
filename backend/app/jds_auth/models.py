@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -61,9 +61,10 @@ class ExternalIdentity(Timestamped, Base):
 
 class StaffPinCredential(Timestamped, Base):
     __tablename__ = "staff_pin_credentials"
-    user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("jds_users.id", ondelete="CASCADE"), primary_key=True
+    membership_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organization_memberships.id", ondelete="CASCADE"), primary_key=True
     )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("jds_users.id", ondelete="CASCADE"), index=True)
     verifier: Mapped[str] = mapped_column(String(255))
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -97,6 +98,7 @@ class Membership(Timestamped, Base):
     __tablename__ = "organization_memberships"
     __table_args__ = (
         UniqueConstraint("organization_id", "application_id", "user_id", name="uq_memberships_org_app_user"),
+        UniqueConstraint("id", "user_id", "organization_id", "application_id", name="uq_memberships_id_user_org_app"),
         CheckConstraint("status IN ('invited', 'active', 'suspended', 'revoked')", name="status_valid"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -110,11 +112,18 @@ class Membership(Timestamped, Base):
 
 class OwnerSession(Timestamped, Base):
     __tablename__ = "owner_sessions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["membership_id", "user_id", "organization_id", "application_id"],
+            ["organization_memberships.id", "organization_memberships.user_id", "organization_memberships.organization_id", "organization_memberships.application_id"],
+            name="fk_owner_sessions_membership_scope", ondelete="CASCADE",
+        ),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     csrf_token_hash: Mapped[str] = mapped_column(String(64))
     user_id: Mapped[UUID] = mapped_column(ForeignKey("jds_users.id", ondelete="CASCADE"), index=True)
-    membership_id: Mapped[UUID] = mapped_column(ForeignKey("organization_memberships.id", ondelete="CASCADE"), index=True)
+    membership_id: Mapped[UUID] = mapped_column(index=True)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     application_id: Mapped[UUID] = mapped_column(ForeignKey("jds_applications.id", ondelete="CASCADE"), index=True)
     assurance_level: Mapped[str] = mapped_column(String(20), default="aal1", server_default="aal1")

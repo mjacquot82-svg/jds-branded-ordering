@@ -8,6 +8,9 @@ from app.tenancy.resolver import (
     resolve_owner_tenant_context,
 )
 
+_TENANT_HEADERS = ("x-tenant-id", "x-organization-id", "x-tenant-slug", "x-organization-slug")
+_TENANT_QUERY = ("tenant_id", "organization_id", "tenant_slug", "organization_slug")
+
 
 def _resolution_error(error: TenantResolutionError) -> None:
     raise HTTPException(
@@ -27,10 +30,18 @@ async def authenticated_owner_tenant(
             detail="Catalog database is unavailable.",
         )
     try:
+        if any(key in request.headers for key in _TENANT_HEADERS) or any(
+            key in request.query_params for key in _TENANT_QUERY
+        ):
+            raise TenantResolutionError("Client-supplied tenant context is not allowed.")
         with session_factory() as session:
             return resolve_owner_tenant_context(
                 session,
                 principal_organization_id=principal.organization_id,
+                principal_user_id=principal.user_id,
+                principal_membership_id=principal.membership_id,
+                principal_application_id=principal.application_id,
+                permissions=principal.permissions,
             )
     except TenantResolutionError as error:
         _resolution_error(error)

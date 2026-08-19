@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.jds_auth.models import Organization
+from app.jds_auth.models import Membership, Organization
 from app.tenancy.context import TenantContext, TenantResolutionSource
 
 LADELS_ORGANIZATION_ID = UUID("cd802008-80c6-5719-81ef-9b2310b16512")
@@ -92,16 +92,33 @@ def resolve_owner_tenant_context(
     session: Session,
     *,
     principal_organization_id: UUID,
+    principal_user_id: UUID | None = None,
+    principal_membership_id: UUID | None = None,
+    principal_application_id: UUID | None = None,
+    permissions: frozenset[str] = frozenset(),
 ) -> TenantContext:
     """Resolve catalog scope from an authenticated membership, never request data."""
 
-    organization = session.scalar(
-        select(Organization).where(Organization.id == principal_organization_id)
-    )
+    organization = session.scalar(select(Organization).where(Organization.id == principal_organization_id))
     if organization is None or not organization.is_active:
         raise TenantResolutionError("The authenticated organization is not available here.")
+    if principal_membership_id is not None:
+        membership = session.scalar(
+            select(Membership).where(
+                Membership.id == principal_membership_id,
+                Membership.organization_id == principal_organization_id,
+                Membership.user_id == principal_user_id,
+                Membership.application_id == principal_application_id,
+                Membership.status == "active",
+            )
+        )
+        if membership is None:
+            raise TenantResolutionError("The authenticated membership is not active for this organization.")
     return TenantContext(
         organization_id=organization.id,
         organization_slug=organization.slug,
         source=TenantResolutionSource.AUTHENTICATED_MEMBERSHIP,
+        principal_user_id=principal_user_id,
+        membership_id=principal_membership_id,
+        permissions=permissions,
     )
