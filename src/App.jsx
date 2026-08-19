@@ -20,6 +20,9 @@ import CommunicationsPage from "./admin/CommunicationsPage.jsx";
 import StaffPage from "./admin/StaffPage.jsx";
 import StaffLoginPage from "./admin/StaffLoginPage.jsx";
 import LoyaltyPage from "./admin/LoyaltyPage.jsx";
+import DesignStudioPage from "./admin/DesignStudioPage.jsx";
+import OnboardingPage from "./admin/OnboardingPage.jsx";
+import PlatformAdminPage from "./admin/PlatformAdminPage.jsx";
 
 export default function App() {
   return (
@@ -47,6 +50,9 @@ export default function App() {
             <Route path="scheduling" element={<SchedulingPage />} />
             <Route path="communications" element={<CommunicationsPage />} />
             <Route path="loyalty" element={<LoyaltyPage />} />
+            <Route path="design" element={<DesignStudioPage />} />
+            <Route path="setup" element={<OnboardingPage />} />
+            <Route path="platform" element={<PlatformAdminPage />} />
             <Route path="staff" element={<StaffPage />} />
             <Route path="*" element={<Navigate replace to="/admin" />} />
           </Route>

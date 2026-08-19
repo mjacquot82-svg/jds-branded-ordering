@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useRef, useState } from "react";
-import { fetchOwnerSession, loginOwner, loginStaff, logoutOwner } from "../services/ownerAuthApi.js";
+import { fetchAuthorizedOrganizations, fetchOwnerSession, loginOwner, loginStaff, logoutOwner, selectAuthorizedOrganization } from "../services/ownerAuthApi.js";
 
 const OwnerAuthContext = createContext(null);
 
 export function OwnerAuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [status, setStatus] = useState("idle");
+  const [businesses, setBusinesses] = useState([]);
   const pendingSession = useRef(null);
 
   const refreshSession = useCallback(async () => {
@@ -15,6 +16,7 @@ export function OwnerAuthProvider({ children }) {
       .then((nextSession) => {
         setSession(nextSession);
         setStatus("authenticated");
+        fetchAuthorizedOrganizations().then(setBusinesses).catch(() => setBusinesses([]));
         return nextSession;
       })
       .catch((error) => {
@@ -49,11 +51,19 @@ export function OwnerAuthProvider({ children }) {
     } finally {
       setSession(null);
       setStatus("anonymous");
+      setBusinesses([]);
     }
   }, [session]);
 
+  const selectBusiness = useCallback(async (membershipId) => {
+    const nextSession = await selectAuthorizedOrganization(membershipId, session.csrf_token);
+    setSession(nextSession);
+    globalThis.location?.reload?.();
+    return nextSession;
+  }, [session]);
+
   return (
-    <OwnerAuthContext.Provider value={{ login, staffLogin, logout, refreshSession, session, status }}>
+    <OwnerAuthContext.Provider value={{ businesses, login, staffLogin, logout, refreshSession, selectBusiness, session, status }}>
       {children}
     </OwnerAuthContext.Provider>
   );

@@ -27,6 +27,7 @@ export function canEditProducts(session) {
 }
 
 export function canAccessOwnerPath(session, pathname) {
+  if (["/admin/design", "/admin/setup", "/admin/platform"].includes(pathname)) return isOperationsAdministrator(session);
   if (pathname === "/admin/loyalty") return hasPermission(session, "loyalty.manage");
   if (pathname === "/admin/staff") return hasPermission(session, "members.manage");
   if (isOperationsAdministrator(session)) return true;
@@ -54,6 +55,8 @@ export function operationsLinks(session) {
   }
   if (isOperationsAdministrator(session)) {
     links.push({ label: "Scheduling", to: "/admin/scheduling" });
+    links.push({ label: "Design", to: "/admin/design" });
+    links.push({ label: "Setup", to: "/admin/setup" });
   }
   if (isOperationsAdministrator(session) || hasPermission(session, "communications.announce")) {
     links.push({ label: "Communications", to: "/admin/communications" });

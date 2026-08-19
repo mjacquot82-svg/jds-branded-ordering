@@ -103,7 +103,7 @@ class CommunicationCenterService:
             if prior.kind != "lunch_special" or prior.is_override != override:
                 raise ValueError("idempotency_conflict")
             return prior
-        product = self._session.scalar(select(Product).where(Product.is_lunch_special.is_(True), Product.archived_at.is_(None)).limit(1))
+        product = self._session.scalar(select(Product).where(Product.organization_id==organization_id, Product.is_lunch_special.is_(True), Product.archived_at.is_(None)).limit(1))
         if product is None: raise ValueError("lunch_special_missing")
         details=self._lunch_special(product, at=datetime.now(timezone.utc))
         if not details["orderable"]: raise ValueError("lunch_special_not_orderable")
@@ -131,11 +131,11 @@ class CommunicationCenterService:
     def _queue(self, announcement: PushAnnouncement, *, require_lunch_preference: bool) -> PushAnnouncement:
         try:
             self._session.add(announcement); self._session.flush()
-            query=select(WebPushSubscription).where(WebPushSubscription.revoked_at.is_(None),WebPushSubscription.expired_at.is_(None))
+            query=select(WebPushSubscription).where(WebPushSubscription.organization_id==announcement.organization_id,WebPushSubscription.revoked_at.is_(None),WebPushSubscription.expired_at.is_(None))
             if require_lunch_preference:
-                query=query.join(CustomerNotificationPreference,CustomerNotificationPreference.customer_user_id==WebPushSubscription.customer_user_id).where(CustomerNotificationPreference.notification_kind=="lunch_special",CustomerNotificationPreference.enabled.is_(True))
+                query=query.join(CustomerNotificationPreference,(CustomerNotificationPreference.organization_id==WebPushSubscription.organization_id) & (CustomerNotificationPreference.customer_user_id==WebPushSubscription.customer_user_id)).where(CustomerNotificationPreference.organization_id==announcement.organization_id,CustomerNotificationPreference.notification_kind=="lunch_special",CustomerNotificationPreference.enabled.is_(True))
             eligible=self._session.scalars(query).all()
-            self._session.add_all([PushDeliveryAttempt(announcement_id=announcement.id,subscription_id=item.id) for item in eligible])
+            self._session.add_all([PushDeliveryAttempt(organization_id=announcement.organization_id,announcement_id=announcement.id,subscription_id=item.id) for item in eligible])
             if not eligible: announcement.status="completed"; announcement.completed_at=datetime.now(timezone.utc)
             self._session.commit(); return announcement
         except IntegrityError:

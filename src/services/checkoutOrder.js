@@ -1,6 +1,7 @@
 import { OrderApiError } from "./orderApi.js";
 import { CloverCheckoutError } from "./cloverService.js";
 import { normalizeCustomerPhone } from "./customerPhone.js";
+import { tenantBrowserKey } from "./tenantBrowserState.js";
 
 const PENDING_ORDER_SUBMISSION_KEY = "guesthouse-pending-order-submission";
 
@@ -161,7 +162,7 @@ export async function prepareOrderSubmission(
   let storedSubmission;
   try {
     storedSubmission = JSON.parse(
-      storage.getItem(PENDING_ORDER_SUBMISSION_KEY)
+      storage.getItem(tenantBrowserKey(PENDING_ORDER_SUBMISSION_KEY))
     );
   } catch {
     storedSubmission = null;
@@ -179,7 +180,7 @@ export async function prepareOrderSubmission(
       : payload.requested_pickup_at;
 
   storage.setItem(
-    PENDING_ORDER_SUBMISSION_KEY,
+    tenantBrowserKey(PENDING_ORDER_SUBMISSION_KEY),
     JSON.stringify({
       fingerprint,
       idempotencyKey,
@@ -196,7 +197,7 @@ export async function prepareOrderSubmission(
 export function clearOrderSubmission(
   storage = globalThis.sessionStorage,
 ) {
-  storage?.removeItem(PENDING_ORDER_SUBMISSION_KEY);
+  storage?.removeItem(tenantBrowserKey(PENDING_ORDER_SUBMISSION_KEY));
 }
 
 export function getOrderErrorMessage(error) {

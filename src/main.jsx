@@ -5,9 +5,10 @@ import App from "./App.jsx";
 import { CustomerAuthProvider } from "./auth/CustomerAuthContext.jsx";
 import AppErrorBoundary from "./components/AppErrorBoundary.jsx";
 import "./style.css";
+import { TenantProvider } from "./tenant/TenantContext.jsx";
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("/service-worker.js", { scope: "/", updateViaCache: "none" }).catch((error) => {
+  window.addEventListener("load", () => navigator.serviceWorker.register(`/service-worker.js?tenant=${encodeURIComponent(location.hostname)}`, { scope: "/", updateViaCache: "none" }).catch((error) => {
     console.warn("Push notification service worker registration failed.", error?.name || "RegistrationError");
   }));
 }
@@ -15,11 +16,7 @@ if ("serviceWorker" in navigator) {
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>
-      <CustomerAuthProvider>
-        <AppErrorBoundary>
-          <App />
-        </AppErrorBoundary>
-      </CustomerAuthProvider>
+      <TenantProvider><CustomerAuthProvider><AppErrorBoundary><App /></AppErrorBoundary></CustomerAuthProvider></TenantProvider>
     </BrowserRouter>
   </React.StrictMode>
 );

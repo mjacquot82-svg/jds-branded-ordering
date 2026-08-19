@@ -12,7 +12,7 @@ from app.catalog.service import CatalogService
 from app.availability.repository import AvailabilityRepository
 from app.orders.pricing import DEFAULT_TAX_NAME, DEFAULT_TAX_RATE_MILLIONTHS
 from app.tenancy.context import TenantContext
-from app.tenancy.resolver import TenantResolutionError, resolve_ladels_compatibility_context
+from app.tenancy.resolver import TenantResolutionError, resolve_storefront_context
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ def ladels_compatibility_tenant(
     settings = request.app.state.auth_settings
     frontend_url = settings.frontend_url if settings is not None else os.getenv("FRONTEND_URL")
     try:
-        return resolve_ladels_compatibility_context(
+        return resolve_storefront_context(
             session,
             host=request.url.hostname,
             frontend_url=frontend_url,

@@ -14,6 +14,7 @@ import {
   resolveMenuCategory,
 } from "../services/menuCatalog.js";
 import { useCustomerCatalog } from "../stores/customerCatalogStore.js";
+import { readTenantLocalStorage, writeTenantLocalStorage } from "../services/tenantBrowserState.js";
 
 function formatPrice(price) {
   return new Intl.NumberFormat("en-CA", {
@@ -24,14 +25,14 @@ function formatPrice(price) {
 
 function getStoredCart() {
   try {
-    return JSON.parse(window.localStorage.getItem("cafe-cart")) || [];
+    return JSON.parse(readTenantLocalStorage("cafe-cart")) || [];
   } catch {
     return [];
   }
 }
 
 function storeCart(cart) {
-  window.localStorage.setItem("cafe-cart", JSON.stringify(cart));
+  writeTenantLocalStorage("cafe-cart", JSON.stringify(cart));
 }
 
 function ProductModifiers({ product, selections, onChange }) {

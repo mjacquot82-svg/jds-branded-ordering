@@ -9,10 +9,11 @@ from app.db.base import Base
 class CustomerNotificationPreference(Base):
     __tablename__ = "customer_notification_preferences"
     __table_args__ = (
-        UniqueConstraint("customer_user_id", "notification_kind", name="uq_customer_notification_preference"),
+        UniqueConstraint("organization_id", "customer_user_id", "notification_kind", name="uq_customer_notification_preference"),
         CheckConstraint("notification_kind = 'lunch_special'", name="ck_customer_notification_preferences_kind_valid"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     customer_user_id: Mapped[UUID] = mapped_column(ForeignKey("jds_users.id", ondelete="CASCADE"), index=True)
     notification_kind: Mapped[str] = mapped_column(String(40))
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
@@ -26,11 +27,13 @@ class WebPushSubscription(Base):
     __table_args__ = (
         CheckConstraint("content_encoding = 'aes128gcm'", name="ck_web_push_subscriptions_encoding_valid"),
         CheckConstraint("failure_count >= 0", name="ck_web_push_subscriptions_failure_count_nonnegative"),
+        UniqueConstraint("organization_id", "endpoint_fingerprint", name="uq_web_push_subscription_org_endpoint"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     customer_user_id: Mapped[UUID] = mapped_column(ForeignKey("jds_users.id", ondelete="CASCADE"), index=True)
     endpoint_ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
-    endpoint_fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    endpoint_fingerprint: Mapped[str] = mapped_column(String(64))
     p256dh_ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
     auth_ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
     content_encoding: Mapped[str] = mapped_column(String(30), default="aes128gcm", server_default="aes128gcm")
@@ -88,6 +91,7 @@ class PushDeliveryAttempt(Base):
         CheckConstraint("attempt_count >= 0", name="ck_push_delivery_attempts_attempt_count_nonnegative"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     announcement_id: Mapped[UUID] = mapped_column(ForeignKey("push_announcements.id", ondelete="CASCADE"), index=True)
     subscription_id: Mapped[UUID] = mapped_column(ForeignKey("web_push_subscriptions.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(30), default="queued", server_default="queued", index=True)

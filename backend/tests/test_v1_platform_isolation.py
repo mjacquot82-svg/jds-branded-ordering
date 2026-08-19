@@ -1,0 +1,181 @@
+from copy import deepcopy
+from uuid import UUID, uuid4
+
+import pytest
+from alembic import command
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.jds_auth.models import JdsApplication, JdsUser, Organization, Role
+from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
+from app.api.v1.platform import ProvisionOrganizationInput, entitlements, platform_organizations, provision_organization
+from app.jds_auth.service import AuthPrincipal
+from app.loyalty.models import CustomerLoyaltyEvent, LoyaltyProgram
+from app.platform.models import CustomerRelationship, DesignVersion, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
+from app.push.models import CustomerNotificationPreference, WebPushSubscription
+from app.tenancy.context import TenantContext, TenantResolutionSource
+from app.tenancy.resolver import TenantResolutionError, resolve_storefront_context
+from tests.test_migrations import make_alembic_config
+
+
+@pytest.fixture
+def platform_db(postgresql_url):
+    command.upgrade(make_alembic_config(postgresql_url), "head")
+    from sqlalchemy import create_engine
+    engine = create_engine(postgresql_url)
+    with Session(engine) as session:
+        suffix = uuid4().hex
+        alpha_host = f"alpha-{suffix}.jdsstudio.ca"; beta_host = f"beta-{suffix}.jdsstudio.ca"
+        a = Organization(slug=f"alpha-{uuid4()}", name="Alpha Café", lifecycle_status="active")
+        b = Organization(slug=f"beta-{uuid4()}", name="Beta Café", lifecycle_status="active")
+        actor = JdsUser(primary_email=f"platform-{uuid4()}@example.com", display_name="Owner")
+        session.add_all([a, b, actor]); session.flush()
+        session.add_all([
+            OnboardingState(organization_id=a.id, state="complete", public_ready=True, current_step="complete"),
+            OnboardingState(organization_id=b.id, state="complete", public_ready=True, current_step="complete"),
+            StorefrontHostname(organization_id=a.id, hostname=alpha_host, status="verified", is_canonical=True),
+            StorefrontHostname(organization_id=b.id, hostname=beta_host, status="verified", is_canonical=True),
+        ])
+        session.commit(); ids = a.id, b.id, actor.id, alpha_host, beta_host
+    yield engine, ids
+    engine.dispose()
+
+
+def context(organization_id, slug):
+    return TenantContext(organization_id=organization_id, organization_slug=slug, source=TenantResolutionSource.AUTHENTICATED_MEMBERSHIP)
+
+
+@pytest.mark.postgresql
+def test_verified_hostname_resolution_is_exact_and_unknown_hosts_fail_closed(platform_db):
+    engine, (a, b, _, alpha_host, beta_host) = platform_db
+    with Session(engine) as session:
+        assert resolve_storefront_context(session, host=alpha_host).organization_id == a
+        assert resolve_storefront_context(session, host=beta_host).organization_id == b
+        with pytest.raises(TenantResolutionError):
+            resolve_storefront_context(session, host="unknown.example")
+
+
+@pytest.mark.postgresql
+def test_customer_relationship_and_media_identifiers_are_tenant_scoped(platform_db):
+    engine, (a, b, _, _, _) = platform_db
+    with Session(engine) as session:
+        user = JdsUser(primary_email=f"shared-{uuid4()}@example.com", display_name="Shared Customer")
+        session.add(user); session.flush()
+        session.add_all([
+            CustomerRelationship(organization_id=a, user_id=user.id, display_name="Alpha Customer", phone="+15195550101"),
+            CustomerRelationship(organization_id=b, user_id=user.id, display_name="Beta Customer", phone="+15195550202"),
+            MediaAsset(organization_id=a, storage_key="brand/logo.png", media_type="image/png", byte_size=100, checksum="a" * 64),
+            MediaAsset(organization_id=b, storage_key="brand/logo.png", media_type="image/png", byte_size=200, checksum="b" * 64),
+        ]); session.commit()
+        assert session.scalar(select(CustomerRelationship.phone).where(CustomerRelationship.organization_id == a, CustomerRelationship.user_id == user.id)) == "+15195550101"
+        assert session.scalar(select(CustomerRelationship.phone).where(CustomerRelationship.organization_id == b, CustomerRelationship.user_id == user.id)) == "+15195550202"
+        assert session.scalar(select(CustomerRelationship.display_name).where(CustomerRelationship.organization_id == a, CustomerRelationship.user_id == user.id)) == "Alpha Customer"
+        assert session.scalar(select(MediaAsset.byte_size).where(MediaAsset.organization_id == a, MediaAsset.storage_key == "brand/logo.png")) == 100
+
+
+@pytest.mark.postgresql
+def test_draft_publish_and_revert_are_isolated_and_append_only(platform_db):
+    engine, (a, b, actor, _, _) = platform_db
+    with Session(engine) as session:
+        # Actor is optional at the model layer for migration/system actions.
+        service_a = DesignService(session, context(a, "alpha")); workspace_a = service_a.workspace(); session.commit()
+        first = deepcopy(DEFAULT_CONFIG); first["displayName"] = "Alpha Café"
+        workspace_a = service_a.save(first, workspace_a.revision, actor)
+        published = service_a.publish(actor)
+        second = deepcopy(first); second["displayName"] = "Alpha Draft Only"
+        service_a.save(second, workspace_a.revision, actor)
+        assert session.get(DesignVersion, published.id).config["displayName"] == "Alpha Café"
+        service_b = DesignService(session, context(b, "beta")); workspace_b = service_b.workspace(); session.commit()
+        with pytest.raises(DesignValidationError): service_b.revert(published.id, actor)
+        reverted = service_a.revert(published.id, actor)
+        assert reverted.id != published.id and reverted.source_version_id == published.id
+        assert workspace_b.published_version_id is None
+
+
+@pytest.mark.postgresql
+def test_design_rejects_media_owned_by_another_tenant(platform_db):
+    engine, (a, b, actor, _, _) = platform_db
+    with Session(engine) as session:
+        media = MediaAsset(organization_id=b, storage_key="hero/shared.webp", media_type="image/webp", byte_size=300, checksum="c" * 64)
+        session.add(media); session.commit()
+        config = deepcopy(DEFAULT_CONFIG); config["hero"] = {"mode": "image", "mediaId": str(media.id)}
+        workspace = DesignService(session, context(a, "alpha")).workspace(); session.commit()
+        with pytest.raises(DesignValidationError, match="unavailable"):
+            DesignService(session, context(a, "alpha")).save(config, workspace.revision, actor)
+
+
+@pytest.mark.postgresql
+def test_platform_visibility_requires_an_explicit_grant_and_is_audited(platform_db):
+    engine, (a, _, actor, _, _) = platform_db
+    principal = AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="platform@example.com",display_name="Platform",role="owner",permissions=frozenset(),assurance_level="password")
+    with Session(engine) as session:
+        with pytest.raises(HTTPException) as denied:
+            platform_organizations(principal, session)
+        assert denied.value.status_code == 403
+        session.add(PlatformGrant(user_id=actor,capability="platform.organizations.read",is_active=True));session.commit()
+        result = platform_organizations(principal, session)
+        assert {item["name"] for item in result} >= {"Alpha Café", "Beta Café"}
+        assert session.scalar(select(OperationalAuditEvent.id).where(OperationalAuditEvent.scope=="platform",OperationalAuditEvent.action=="platform.organizations_viewed")) is not None
+
+
+@pytest.mark.postgresql
+def test_platform_provisioning_is_explicit_idempotent_and_not_public(platform_db):
+    engine, (a, _, actor, _, _) = platform_db
+    principal = AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="platform@example.com",display_name="Platform",role="owner",permissions=frozenset(),assurance_level="password")
+    with Session(engine) as session:
+        session.add(PlatformGrant(user_id=actor,capability="platform.organizations.write",is_active=True));session.commit()
+        owner=session.get(JdsUser,actor)
+        application=JdsApplication(key="jds-commerce",name="JDS Commerce",is_active=True);session.add(application);session.flush()
+        session.add(Role(application_id=application.id,key="owner",name="Owner"));session.commit()
+        created=provision_organization(ProvisionOrganizationInput(slug=f"new-{uuid4().hex[:8]}",display_name="New Café",owner_email=owner.primary_email),principal,session)
+        assert created["publicReady"] is False and created["status"] == "onboarding"
+        onboarding=session.get(OnboardingState,UUID(created["id"]))
+        assert onboarding.public_ready is False
+        with pytest.raises(HTTPException) as duplicate:
+            provision_organization(ProvisionOrganizationInput(slug=created["slug"],display_name="Duplicate",owner_email=owner.primary_email),principal,session)
+        assert duplicate.value.status_code == 409
+
+
+@pytest.mark.postgresql
+def test_entitlements_are_resolved_only_for_the_selected_business(platform_db):
+    engine, (a, b, _, _, _) = platform_db
+    with Session(engine) as session:
+        session.add_all([
+            OrganizationSubscription(organization_id=a,plan_key="engagement",state="active"),
+            OrganizationSubscription(organization_id=b,plan_key="core",state="past_due"),
+        ]);session.commit()
+        assert entitlements(context(a,"alpha"),session)["features"]["loyalty"] is True
+        beta = entitlements(context(b,"beta"),session)
+        assert beta["state"] == "past_due" and beta["features"] == {}
+
+
+@pytest.mark.postgresql
+def test_notification_preferences_and_colliding_endpoints_are_tenant_scoped(platform_db):
+    engine, (a, b, actor, _, _) = platform_db
+    with Session(engine) as session:
+        session.add_all([
+            CustomerNotificationPreference(organization_id=a,customer_user_id=actor,notification_kind="lunch_special",enabled=True),
+            CustomerNotificationPreference(organization_id=b,customer_user_id=actor,notification_kind="lunch_special",enabled=False),
+            WebPushSubscription(organization_id=a,customer_user_id=actor,endpoint_ciphertext=b"a",endpoint_fingerprint="same",p256dh_ciphertext=b"a",auth_ciphertext=b"a"),
+            WebPushSubscription(organization_id=b,customer_user_id=actor,endpoint_ciphertext=b"b",endpoint_fingerprint="same",p256dh_ciphertext=b"b",auth_ciphertext=b"b"),
+        ]);session.commit()
+        assert session.scalar(select(CustomerNotificationPreference.enabled).where(CustomerNotificationPreference.organization_id==a,CustomerNotificationPreference.customer_user_id==actor)) is True
+        assert session.scalar(select(CustomerNotificationPreference.enabled).where(CustomerNotificationPreference.organization_id==b,CustomerNotificationPreference.customer_user_id==actor)) is False
+        assert session.scalar(select(WebPushSubscription.endpoint_ciphertext).where(WebPushSubscription.organization_id==b,WebPushSubscription.endpoint_fingerprint=="same")) == b"b"
+
+
+@pytest.mark.postgresql
+def test_loyalty_programs_and_balances_are_independent_for_one_global_customer(platform_db):
+    engine, (a, b, actor, _, _) = platform_db
+    with Session(engine) as session:
+        programs=[]
+        for organization,name in ((a,"Alpha Loyalty"),(b,"Beta Loyalty")):
+            item=LoyaltyProgram(organization_id=organization,slug="coffee",name=name,description="Local program",enabled=True,stamps_required=6,reward_description="Free drink",earning_rule="one_per_completed_qualifying_order",reward_type="free_qualifying_product");session.add(item);programs.append(item)
+        session.flush()
+        session.add_all([
+            CustomerLoyaltyEvent(organization_id=a,customer_user_id=actor,loyalty_program_id=programs[0].id,event_type="manual_adjustment",quantity=2,actor_user_id=actor,reason="test fixture",program_name_snapshot=programs[0].name),
+            CustomerLoyaltyEvent(organization_id=b,customer_user_id=actor,loyalty_program_id=programs[1].id,event_type="manual_adjustment",quantity=5,actor_user_id=actor,reason="test fixture",program_name_snapshot=programs[1].name),
+        ]);session.commit()
+        assert session.scalar(select(CustomerLoyaltyEvent.quantity).where(CustomerLoyaltyEvent.organization_id==a,CustomerLoyaltyEvent.customer_user_id==actor)) == 2
+        assert session.scalar(select(CustomerLoyaltyEvent.quantity).where(CustomerLoyaltyEvent.organization_id==b,CustomerLoyaltyEvent.customer_user_id==actor)) == 5

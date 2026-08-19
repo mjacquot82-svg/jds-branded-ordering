@@ -9,7 +9,7 @@ export default function RequireOwner() {
   const location = useLocation();
   const attempted = useRef(false);
   const [logoutDestination, setLogoutDestination] = useState(null);
-  const { logout, refreshSession, session, status } = useOwnerAuth();
+  const { businesses, logout, refreshSession, selectBusiness, session, status } = useOwnerAuth();
 
   async function signOut() {
     const destination = session?.role === "staff" ? "/staff" : "/owner/login";
@@ -40,6 +40,7 @@ export default function RequireOwner() {
   );
   if (session && canAccessOwnerPath(session, location.pathname)) return <>
     <nav className="admin-links operations-nav" aria-label="Operations Portal navigation">
+      {businesses.length > 1 ? <label className="business-switcher"><span>Current business</span><select aria-label="Current business" value={businesses.find((item) => item.organization_id === session.organization_id)?.membership_id || ""} onChange={(event) => selectBusiness(event.target.value)}>{businesses.map((item) => <option value={item.membership_id} key={item.membership_id}>{item.organization_name}</option>)}</select></label> : businesses.length === 1 ? <span className="current-business">{businesses[0].organization_name}</span> : null}
       {operationsLinks(session).map((link) => <NavLink end={link.end} key={link.to} to={link.to}>{link.label}</NavLink>)}
       <button className="secondary-button operations-nav-signout" type="button" onClick={signOut}><LogOut size={17} /> Sign out</button>
     </nav>

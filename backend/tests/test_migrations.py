@@ -16,6 +16,9 @@ from app.clover import models as clover_models  # noqa: F401
 from app.orders import models as order_models  # noqa: F401
 from app.jds_auth import models as auth_models  # noqa: F401
 from app.loyalty import models as loyalty_models  # noqa: F401
+from app.customers import models as customer_models  # noqa: F401
+from app.push import models as push_models  # noqa: F401
+from app.platform import models as platform_models  # noqa: F401
 from app.db.base import Base
 from app.db.migrate import (
     MigrationBootstrapError,
@@ -46,7 +49,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     config = make_alembic_config(postgresql_url)
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260822_25"]
+    assert script.get_heads() == ["20260823_26"]
 
     command.downgrade(config, "base")
     command.upgrade(config, "head")
@@ -55,7 +58,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     try:
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260822_25"
+            assert context.get_current_revision() == "20260823_26"
 
         assert set(inspect(engine).get_table_names()) >= {
             "alembic_version",
@@ -318,7 +321,7 @@ def test_tenant_availability_migration_backfills_and_enforces_ownership(
         command.upgrade(config, "head")
         inspector = inspect(engine)
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "20260822_25"
+            assert MigrationContext.configure(connection).get_current_revision() == "20260823_26"
             for table_name in (
                 "business_hours",
                 "business_closures",
@@ -429,7 +432,7 @@ def test_tenant_order_migration_backfills_constraints_and_refuses_unsafe_downgra
                 text("SELECT organization_id FROM orders WHERE id = :id"),
                 {"id": order_id},
             ) == organization_id
-            assert MigrationContext.configure(connection).get_current_revision() == "20260822_25"
+            assert MigrationContext.configure(connection).get_current_revision() == "20260823_26"
         assert {c["name"] for c in inspector.get_unique_constraints("orders")} >= {
             "uq_orders_organization_idempotency_key",
             "uq_orders_organization_public_access_token",
@@ -554,7 +557,7 @@ def test_clover_tenant_migration_backfills_tokens_and_refuses_unsafe_downgrade(
         assert row["id"] is not None
         assert row["access_token_encrypted"] == encrypted_access
         assert row["refresh_token_encrypted"] == encrypted_refresh
-        assert MigrationContext.configure(connection).get_current_revision() == "20260822_25"
+        assert MigrationContext.configure(connection).get_current_revision() == "20260823_26"
 
     with engine.begin() as connection:
         tenant_b = uuid4()
@@ -617,7 +620,7 @@ def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260822_25"
+            assert context.get_current_revision() == "20260823_26"
             assert connection.scalar(
                 text(
                     "SELECT name FROM categories "
@@ -674,7 +677,7 @@ def test_migration_bootstrap_reconciles_catalog_and_orders_without_data_loss(
         inspector = inspect(engine)
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260822_25"
+            assert context.get_current_revision() == "20260823_26"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "
@@ -754,7 +757,7 @@ def test_migration_bootstrap_resumes_interrupted_order_reconciliation(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260822_25"
+            assert context.get_current_revision() == "20260823_26"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "

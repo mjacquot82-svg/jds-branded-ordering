@@ -22,7 +22,7 @@ from app.jds_auth.service import (
     EmailVerificationRequired, MembershipInactive, SessionInvalid, utc_now,
 )
 from app.db.session import get_db_session
-from app.tenancy.resolver import TenantResolutionError, resolve_ladels_compatibility_context
+from app.tenancy.resolver import TenantResolutionError, resolve_storefront_context
 
 router = APIRouter(prefix="/customer/auth", tags=["customer-auth"])
 logger = logging.getLogger(__name__)
@@ -47,15 +47,27 @@ def get_customer_auth_service(
     request: Request,
     session: Session = Depends(get_db_session),
 ) -> AuthenticationService:
+    settings = get_customer_auth_settings(request)
+    try:
+        storefront = resolve_storefront_context(
+            session, host=request.url.hostname, frontend_url=settings.frontend_url,
+            headers=request.headers, query_params=request.query_params,
+        )
+    except TenantResolutionError:
+        auth_error(404, "tenant_not_found", "Storefront is unavailable.")
+    # Tenant resolution is a read, but SQLAlchemy autobegins a transaction.
+    # Authentication services deliberately own their transaction boundaries.
+    session.commit()
     return AuthenticationService(
         session,
         request.app.state.auth_provider,
-        get_customer_auth_settings(request),
+        settings,
+        organization_id=storefront.organization_id,
     )
 
 
-def require_customer_trusted_origin(request: Request) -> None:
-    require_trusted_origin(request, get_customer_auth_settings(request))
+def require_customer_trusted_origin(request: Request, session: Session = Depends(get_db_session)) -> None:
+    require_trusted_origin(request, get_customer_auth_settings(request), session)
 
 
 def current_customer(
@@ -69,7 +81,7 @@ def current_customer(
         auth_error(401, "unauthenticated", "Authentication is required.")
     try:
         principal = service.resolve(token, now=now)
-        storefront = resolve_ladels_compatibility_context(
+        storefront = resolve_storefront_context(
             service._session, host=request.headers.get("host"),
             frontend_url=settings.frontend_url, headers=request.headers,
             query_params=request.query_params,
@@ -109,7 +121,7 @@ def optional_customer(
     service = AuthenticationService(session, provider, settings)
     try:
         principal = service.resolve(token, now=now)
-        storefront = resolve_ladels_compatibility_context(
+        storefront = resolve_storefront_context(
             service._session, host=request.headers.get("host"),
             frontend_url=settings.frontend_url, headers=request.headers,
             query_params=request.query_params,
@@ -131,7 +143,7 @@ def customer_csrf(
     csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     service: AuthenticationService = Depends(get_customer_auth_service),
 ) -> AuthPrincipal:
-    require_trusted_origin(request, get_customer_auth_settings(request))
+    require_trusted_origin(request, get_customer_auth_settings(request), service._session)
     if not csrf_token:
         auth_error(403, "csrf_invalid", "CSRF validation failed.")
     try:
@@ -229,7 +241,7 @@ def read_session(request: Request, service: AuthenticationService = Depends(get_
         auth_error(401, "unauthenticated", "Authentication is required.")
     try:
         principal, csrf = service.rotate_csrf(token, now=now)
-        storefront = resolve_ladels_compatibility_context(
+        storefront = resolve_storefront_context(
             service._session, host=request.headers.get("host"),
             frontend_url=settings.frontend_url, headers=request.headers,
             query_params=request.query_params,

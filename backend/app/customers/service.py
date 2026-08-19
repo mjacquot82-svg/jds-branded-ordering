@@ -3,6 +3,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.customers.account_schemas import CustomerProfileResponse, CustomerProfileUpdate
+from app.platform.models import CustomerRelationship
 from app.customers.models import CustomerProfile
 from app.customers.repository import CustomerRepository
 from app.tenancy.context import TenantContext
@@ -26,14 +27,19 @@ class CustomerAccountService:
                 raise LookupError("Customer not found.")
             profile = self.repo.profile(user_id)
             if profile is None:
-                profile = CustomerProfile(
+                profile = CustomerRelationship(
+                    organization_id=self.repo.tenant.organization_id,
                     user_id=user_id,
+                    display_name=user.display_name,
                     phone=self.repo.latest_order_phone(user_id),
                 )
                 self.repo.add(profile)
                 self.session.commit()
+        if self.repo.tenant.organization_slug == "the-guest-house" and self.session.get(CustomerProfile, user_id) is None:
+            self.repo.add(CustomerProfile(user_id=user_id, phone=profile.phone))
+            self.session.commit()
         return CustomerProfileResponse(
-            name=user.display_name, email=user.primary_email,
+            name=profile.display_name or user.display_name, email=user.primary_email,
             phone=profile.phone,
             preferred_pickup_minutes=profile.preferred_pickup_minutes,
             preferred_pickup_notes=profile.preferred_pickup_notes or "",
@@ -45,11 +51,20 @@ class CustomerAccountService:
             raise LookupError("Customer not found.")
         profile = self.repo.profile(user_id)
         if profile is None:
-            profile = CustomerProfile(user_id=user_id)
+            profile = CustomerRelationship(organization_id=self.repo.tenant.organization_id, user_id=user_id)
             self.repo.add(profile)
-        user.display_name = " ".join(payload.name.strip().split())
+        profile.display_name = " ".join(payload.name.strip().split())
         profile.phone = payload.phone
         profile.preferred_pickup_minutes = payload.preferred_pickup_minutes
         profile.preferred_pickup_notes = payload.preferred_pickup_notes.strip() or None
+        if self.repo.tenant.organization_slug == "the-guest-house":
+            user.display_name = profile.display_name
+            legacy = self.session.get(CustomerProfile, user_id)
+            if legacy is None:
+                legacy = CustomerProfile(user_id=user_id)
+                self.repo.add(legacy)
+            legacy.phone = profile.phone
+            legacy.preferred_pickup_minutes = profile.preferred_pickup_minutes
+            legacy.preferred_pickup_notes = profile.preferred_pickup_notes
         self.session.commit()
         return self.profile(user_id)

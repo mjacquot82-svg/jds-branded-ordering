@@ -1,4 +1,5 @@
-/* Ladel's push-only service worker. No fetch handler or offline cache by design. */
+/* Host-scoped push worker. It intentionally has no shared offline data cache. */
+const TENANT_CACHE_ID = `jds-${self.location.hostname}`;
 const ALLOWED_ROUTES = new Set(["/", "/menu", "/account", "/orders"]);
 const MAX_TITLE_LENGTH = 80;
 const MAX_BODY_LENGTH = 280;

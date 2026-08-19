@@ -6,6 +6,8 @@ from uuid import UUID
 class TenantResolutionSource(str, Enum):
     LADELS_COMPATIBILITY = "ladels_compatibility"
     AUTHENTICATED_MEMBERSHIP = "authenticated_membership"
+    VERIFIED_HOSTNAME = "verified_hostname"
+    PLATFORM_ADMIN = "platform_admin"
 
 
 @dataclass(frozen=True, slots=True)

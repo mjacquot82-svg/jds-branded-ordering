@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.availability.models import ProductAvailability
 from app.catalog.models import Category, ModifierGroup, Product, ProductModifierGroup, ProductVariant, SelectionType
-from app.customers.models import CustomerProfile
+from app.platform.models import CustomerRelationship
 from app.jds_auth.models import JdsUser
 from app.orders.constants import FulfillmentStatus, OrderStatus
 from app.orders.models import Order, OrderItem
@@ -28,8 +28,8 @@ class CustomerRepository:
             .execution_options(populate_existing=True)
         )
 
-    def profile(self, user_id: UUID) -> CustomerProfile | None:
-        return self.session.get(CustomerProfile, user_id)
+    def profile(self, user_id: UUID) -> CustomerRelationship | None:
+        return self.session.scalar(select(CustomerRelationship).where(CustomerRelationship.organization_id == self.tenant.organization_id, CustomerRelationship.user_id == user_id))
 
     def add(self, value: object) -> None:
         self.session.add(value)

@@ -25,6 +25,7 @@ import {
   fetchSchedulingOptions,
   resolveSchedulingSelection,
 } from "../services/schedulingApi.js";
+import { readTenantLocalStorage, writeTenantLocalStorage } from "../services/tenantBrowserState.js";
 
 function formatPrice(price) {
   return new Intl.NumberFormat("en-CA", {
@@ -35,19 +36,19 @@ function formatPrice(price) {
 
 function getStoredCart() {
   try {
-    return JSON.parse(window.localStorage.getItem("cafe-cart")) || [];
+    return JSON.parse(readTenantLocalStorage("cafe-cart")) || [];
   } catch {
     return [];
   }
 }
 
 function storeCart(cart) {
-  window.localStorage.setItem("cafe-cart", JSON.stringify(cart));
+  writeTenantLocalStorage("cafe-cart", JSON.stringify(cart));
 }
 
 function getStoredPickupIntent() {
   try {
-    const stored = window.localStorage.getItem("guesthouse-pickup-intent");
+    const stored = readTenantLocalStorage("pickup-intent");
     const intent = stored ? JSON.parse(stored) : null;
     if (intent?.type === "custom" || intent?.type === "asap") return intent;
     if (intent?.type === "preference" && Number.isInteger(intent.minutes)) return intent;
@@ -58,19 +59,19 @@ function getStoredPickupIntent() {
 }
 
 function storePickupIntent(intent) {
-  window.localStorage.setItem("guesthouse-pickup-intent", JSON.stringify(intent));
+  writeTenantLocalStorage("pickup-intent", JSON.stringify(intent));
 }
 
 function getStoredCustomPickupTime() {
   try {
-    return window.localStorage.getItem("guesthouse-custom-pickup-time") || "";
+    return readTenantLocalStorage("custom-pickup-time") || "";
   } catch {
     return "";
   }
 }
 
 function storeCustomPickupTime(value) {
-  window.localStorage.setItem("guesthouse-custom-pickup-time", value);
+  writeTenantLocalStorage("custom-pickup-time", value);
 }
 
 function formatReadyTime(date, timeZone) {

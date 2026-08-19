@@ -1,3 +1,5 @@
+import { readTenantLocalStorage, removeTenantLocalStorage, writeTenantLocalStorage } from "./tenantBrowserState.js";
+
 const AUTH_RETURN_KEY = "guesthouse-customer-auth-return";
 const DEFAULT_RETURN = "/account";
 
@@ -7,18 +9,18 @@ export function safeCustomerReturn(value) {
 
 export function rememberCustomerReturn(value, storage = globalThis.localStorage) {
   const destination = safeCustomerReturn(value);
-  if (destination === "/cart") storage?.setItem(AUTH_RETURN_KEY, destination);
+  if (destination === "/cart") writeTenantLocalStorage(AUTH_RETURN_KEY, destination, storage);
   return destination;
 }
 
 export function customerReturnFrom(params, storage = globalThis.localStorage) {
   const requested = params?.get?.("returnTo");
   if (requested) return rememberCustomerReturn(requested, storage);
-  return safeCustomerReturn(storage?.getItem(AUTH_RETURN_KEY));
+  return safeCustomerReturn(readTenantLocalStorage(AUTH_RETURN_KEY, storage));
 }
 
 export function clearCustomerReturn(storage = globalThis.localStorage) {
-  storage?.removeItem(AUTH_RETURN_KEY);
+  removeTenantLocalStorage(AUTH_RETURN_KEY, storage);
 }
 
 export function customerAuthHref(path, destination) {

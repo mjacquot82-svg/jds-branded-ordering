@@ -13,6 +13,7 @@ from app.jds_auth.provider import IdentityProvider, ProviderAuthentication, Prov
 from app.jds_auth.repository import AuthRepository
 from app.jds_auth.security import create_secret, hash_secret, secret_matches
 from app.customers.models import CustomerProfile
+from app.platform.models import CustomerRelationship
 
 
 logger = logging.getLogger(__name__)
@@ -79,10 +80,11 @@ class IssuedSession:
 
 
 class AuthenticationService:
-    def __init__(self, session: Session, provider: IdentityProvider, settings: AuthSettings) -> None:
+    def __init__(self, session: Session, provider: IdentityProvider, settings: AuthSettings, *, organization_id: UUID | None = None) -> None:
         self._session = session
         self._provider = provider
         self._settings = settings
+        self._organization_id = organization_id
         self._repo = AuthRepository(session)
         self._audit = DatabaseSecurityAuditWriter(session)
         self.registration_stage = "not_started"
@@ -120,6 +122,20 @@ class AuthenticationService:
                 application, organization = self._scope()
                 self.login_stage = "customer_membership_lookup"
                 membership = self._repo.active_membership(identity.user_id, application.id, organization.id)
+                if membership is None and allowed_roles == frozenset({"customer"}):
+                    role = self._repo.role_by_key(application.id, "customer")
+                    if role is not None:
+                        membership = Membership(
+                            organization_id=organization.id, application_id=application.id,
+                            user_id=identity.user_id, role_id=role.id, status="active", joined_at=now,
+                        )
+                        self._repo.add(membership)
+                        self._repo.add(CustomerRelationship(
+                            organization_id=organization.id, user_id=identity.user_id,
+                            display_name=identity.user.display_name,
+                        ))
+                        self._session.flush()
+                        self._audit.record("auth.customer_relationship_created", "success", organization_id=organization.id, actor_user_id=identity.user_id)
                 logger.warning(
                     "customer_login_membership_lookup outcome=%s membership_active=%s",
                     "found" if membership is not None else "not_found",
@@ -177,7 +193,7 @@ class AuthenticationService:
                     reason="inactive_application",
                 )
             self.registration_stage = "organization_lookup"
-            organization = self._repo.organization_by_slug(self._settings.organization_slug)
+            organization = self._session.get(Organization, self._organization_id) if self._organization_id else self._repo.organization_by_slug(self._settings.organization_slug)
             if organization is None:
                 raise CustomerRegistrationError(
                     "Customer authorization is unavailable.",
@@ -212,7 +228,9 @@ class AuthenticationService:
             )
             self._repo.add(user)
             self._session.flush()
-            self._repo.add(CustomerProfile(user_id=user.id, phone=phone))
+            if organization.slug == "the-guest-house":
+                self._repo.add(CustomerProfile(user_id=user.id, phone=phone))
+            self._repo.add(CustomerRelationship(organization_id=organization.id, user_id=user.id, display_name=display_name.strip(), phone=phone))
             self.registration_stage = "external_identity_creation"
             self._repo.add(ExternalIdentity(
                 user_id=user.id, issuer=identity.issuer, subject=identity.subject,
@@ -600,7 +618,7 @@ class AuthenticationService:
 
     def _scope(self):
         application = self._repo.application_by_key(self._settings.application_key)
-        organization = self._repo.organization_by_slug(self._settings.organization_slug)
+        organization = self._session.get(Organization, self._organization_id) if self._organization_id else self._repo.organization_by_slug(self._settings.organization_slug)
         if application is None or organization is None or not application.is_active or not organization.is_active:
             raise MembershipInactive("JDS authentication scope is unavailable.")
         return application, organization

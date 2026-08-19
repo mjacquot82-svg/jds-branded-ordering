@@ -3,6 +3,7 @@ import { CheckCircle2 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { clearOrderSubmission } from "../services/checkoutOrder.js";
 import { fetchPendingOrder } from "../services/orderApi.js";
+import { removeTenantLocalStorage } from "../services/tenantBrowserState.js";
 
 function formatPrice(cents) {
   return new Intl.NumberFormat("en-CA", {
@@ -76,7 +77,7 @@ export default function ConfirmationPage() {
       return;
     }
     clearOrderSubmission();
-    window.localStorage.removeItem("cafe-cart");
+    removeTenantLocalStorage("cafe-cart");
   }, [order?.status]);
 
   return (

@@ -5,7 +5,7 @@ from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from app.catalog.models import Category, Product
-from app.jds_auth.models import JdsUser
+from app.jds_auth.models import JdsUser, Membership, Role
 from app.loyalty.models import CustomerLoyaltyEvent, LoyaltyProgram, LoyaltyProgramProduct
 from app.orders.constants import FulfillmentStatus, OrderStatus
 from app.orders.models import Order, OrderItem
@@ -62,7 +62,7 @@ class LoyaltyService:
         program.reward_type = DEFAULTS["reward_type"]
         self.session.flush()
         all_ids = earning_product_ids | reward_product_ids
-        existing_products = set(self.session.scalars(select(Product.id).where(Product.id.in_(all_ids)))) if all_ids else set()
+        existing_products = set(self.session.scalars(select(Product.id).where(Product.organization_id == organization_id, Product.id.in_(all_ids)))) if all_ids else set()
         if existing_products != all_ids:
             raise ValueError("product_not_found")
         existing = {item.product_id: item for item in self.session.scalars(select(LoyaltyProgramProduct).where(LoyaltyProgramProduct.loyalty_program_id == program.id))}
@@ -73,7 +73,7 @@ class LoyaltyService:
                 item.earning_eligible = product_id in earning_product_ids
                 item.reward_eligible = product_id in reward_product_ids
         for product_id in all_ids - existing.keys():
-            self.session.add(LoyaltyProgramProduct(loyalty_program_id=program.id, product_id=product_id, earning_eligible=product_id in earning_product_ids, reward_eligible=product_id in reward_product_ids))
+            self.session.add(LoyaltyProgramProduct(organization_id=organization_id, loyalty_program_id=program.id, product_id=product_id, earning_eligible=product_id in earning_product_ids, reward_eligible=product_id in reward_product_ids))
         self.session.commit()
         return program
 
@@ -91,7 +91,7 @@ class LoyaltyService:
             existing_event_id = self.session.scalar(select(CustomerLoyaltyEvent.id).where(CustomerLoyaltyEvent.loyalty_program_id == program.id, CustomerLoyaltyEvent.related_order_id == order.id, CustomerLoyaltyEvent.event_type == "stamp_earned"))
             if existing_event_id:
                 continue
-            self.session.add(CustomerLoyaltyEvent(customer_user_id=order.customer_user_id, loyalty_program_id=program.id, event_type="stamp_earned", quantity=1, related_order_id=order.id, program_name_snapshot=program.name))
+            self.session.add(CustomerLoyaltyEvent(organization_id=organization_id, customer_user_id=order.customer_user_id, loyalty_program_id=program.id, event_type="stamp_earned", quantity=1, related_order_id=order.id, program_name_snapshot=program.name))
             self.session.flush()
             self._issue_due_rewards(order.customer_user_id, program)
             awarded += 1
@@ -112,7 +112,7 @@ class LoyaltyService:
         current = self.balance(customer_user_id, program)
         if quantity < 0 and -quantity > current.stamps:
             raise ValueError("adjustment_exceeds_balance")
-        event = CustomerLoyaltyEvent(customer_user_id=customer_user_id, loyalty_program_id=program.id, event_type="manual_adjustment", quantity=quantity, actor_user_id=actor_user_id, reason=reason.strip(), program_name_snapshot=program.name)
+        event = CustomerLoyaltyEvent(organization_id=program.organization_id, customer_user_id=customer_user_id, loyalty_program_id=program.id, event_type="manual_adjustment", quantity=quantity, actor_user_id=actor_user_id, reason=reason.strip(), program_name_snapshot=program.name)
         self.session.add(event)
         self.session.flush()
         self._issue_due_rewards(customer_user_id, program)
@@ -123,7 +123,7 @@ class LoyaltyService:
         balance = self.balance(customer_user_id, program)
         due = balance.stamps // program.stamps_required
         if due:
-            self.session.add(CustomerLoyaltyEvent(customer_user_id=customer_user_id, loyalty_program_id=program.id, event_type="reward_earned", quantity=due, threshold_snapshot=program.stamps_required, program_name_snapshot=program.name))
+            self.session.add(CustomerLoyaltyEvent(organization_id=program.organization_id, customer_user_id=customer_user_id, loyalty_program_id=program.id, event_type="reward_earned", quantity=due, threshold_snapshot=program.stamps_required, program_name_snapshot=program.name))
             self.session.flush()
 
     def customer_summary(self, customer_user_id: UUID, organization_id: UUID, *, include_inactive: bool = False) -> list[dict]:
@@ -135,8 +135,8 @@ class LoyaltyService:
             result.append({"program": program, "balance": balance, "activity": activity})
         return result
 
-    def catalog(self) -> list[dict]:
-        rows = self.session.execute(select(Product, Category.name).join(Category, Category.id == Product.category_id).where(Product.archived_at.is_(None)).order_by(Category.sort_order, Product.sort_order, Product.name)).all()
+    def catalog(self, organization_id: UUID) -> list[dict]:
+        rows = self.session.execute(select(Product, Category.name).join(Category, Category.id == Product.category_id).where(Product.organization_id == organization_id, Category.organization_id == organization_id, Product.archived_at.is_(None)).order_by(Category.sort_order, Product.sort_order, Product.name)).all()
         return [{"id": p.id, "name": p.name, "category": category, "published": p.is_published} for p, category in rows]
 
     def customers(self, organization_id: UUID, query: str) -> list[JdsUser]:

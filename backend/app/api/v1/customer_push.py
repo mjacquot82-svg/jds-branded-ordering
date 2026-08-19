@@ -74,8 +74,8 @@ def config(response: Response, _: AuthPrincipal = Depends(current_customer), con
 @router.get("/status")
 def status(response: Response, principal: AuthPrincipal = Depends(current_customer), session: Session = Depends(get_order_session)) -> dict:
     response.headers["Cache-Control"] = "no-store"
-    pref = session.scalar(select(CustomerNotificationPreference).where(CustomerNotificationPreference.customer_user_id==principal.user_id, CustomerNotificationPreference.notification_kind=="lunch_special"))
-    subscriptions = session.scalars(select(WebPushSubscription).where(WebPushSubscription.customer_user_id==principal.user_id, WebPushSubscription.revoked_at.is_(None), WebPushSubscription.expired_at.is_(None))).all()
+    pref = session.scalar(select(CustomerNotificationPreference).where(CustomerNotificationPreference.organization_id==principal.organization_id, CustomerNotificationPreference.customer_user_id==principal.user_id, CustomerNotificationPreference.notification_kind=="lunch_special"))
+    subscriptions = session.scalars(select(WebPushSubscription).where(WebPushSubscription.organization_id==principal.organization_id, WebPushSubscription.customer_user_id==principal.user_id, WebPushSubscription.revoked_at.is_(None), WebPushSubscription.expired_at.is_(None))).all()
     return {"lunch_special_enabled": bool(pref and pref.enabled), "active_device_count": len(subscriptions), "subscriptions": [{"id":str(s.id),"device_label":s.device_label,"last_confirmed_at":s.last_confirmed_at} for s in subscriptions]}
 
 @router.post("/subscriptions", status_code=201)
@@ -86,10 +86,10 @@ def subscribe(payload: SubscriptionInput, request:Request, principal: AuthPrinci
         except RateLimitExceeded as error: raise HTTPException(429,detail={"code":"rate_limited","message":"Too many notification setup requests. Try again later."},headers={"Retry-After":str(error.retry_after)}) from error
     if not config.can_enroll: raise HTTPException(503, detail={"code":"push_enrollment_disabled","message":"Notification enrollment is not available yet."})
     now=datetime.now(timezone.utc); fp=endpoint_fingerprint(payload.endpoint); crypt=protector(config)
-    item=session.scalar(select(WebPushSubscription).where(WebPushSubscription.endpoint_fingerprint==fp))
+    item=session.scalar(select(WebPushSubscription).where(WebPushSubscription.organization_id==principal.organization_id, WebPushSubscription.endpoint_fingerprint==fp))
     if item and item.customer_user_id != principal.user_id: raise HTTPException(409, detail={"code":"subscription_in_use","message":"This browser subscription is already registered."})
     if not item:
-        item=WebPushSubscription(customer_user_id=principal.user_id, endpoint_fingerprint=fp, endpoint_ciphertext=b"",p256dh_ciphertext=b"",auth_ciphertext=b"")
+        item=WebPushSubscription(organization_id=principal.organization_id, customer_user_id=principal.user_id, endpoint_fingerprint=fp, endpoint_ciphertext=b"",p256dh_ciphertext=b"",auth_ciphertext=b"")
         session.add(item)
     item.endpoint_ciphertext=crypt.encrypt(payload.endpoint); item.p256dh_ciphertext=crypt.encrypt(payload.keys.p256dh); item.auth_ciphertext=crypt.encrypt(payload.keys.auth)
     item.content_encoding=payload.content_encoding; item.device_label=payload.device_label; item.last_confirmed_at=now; item.revoked_at=None; item.expired_at=None
@@ -97,21 +97,21 @@ def subscribe(payload: SubscriptionInput, request:Request, principal: AuthPrinci
         session.commit()
     except IntegrityError:
         session.rollback()
-        item=session.scalar(select(WebPushSubscription).where(WebPushSubscription.endpoint_fingerprint==fp))
+        item=session.scalar(select(WebPushSubscription).where(WebPushSubscription.organization_id==principal.organization_id, WebPushSubscription.endpoint_fingerprint==fp))
         if item is None or item.customer_user_id != principal.user_id:
             raise HTTPException(409, detail={"code":"subscription_in_use","message":"This browser subscription is already registered."})
     return {"id":str(item.id)}
 
 @router.post("/subscriptions/revoke-current", status_code=204)
 def revoke_current(payload: EndpointInput, principal: AuthPrincipal=Depends(customer_csrf), session: Session=Depends(get_order_session)) -> Response:
-    item=session.scalar(select(WebPushSubscription).where(WebPushSubscription.endpoint_fingerprint==endpoint_fingerprint(payload.endpoint)))
+    item=session.scalar(select(WebPushSubscription).where(WebPushSubscription.organization_id==principal.organization_id, WebPushSubscription.endpoint_fingerprint==endpoint_fingerprint(payload.endpoint)))
     if item and item.customer_user_id == principal.user_id and item.revoked_at is None:
         item.revoked_at=datetime.now(timezone.utc); session.commit()
     return Response(status_code=204)
 
 @router.delete("/subscriptions/{subscription_id}", status_code=204)
 def unsubscribe(subscription_id: UUID, principal: AuthPrincipal=Depends(customer_csrf), session: Session=Depends(get_order_session)) -> Response:
-    item=session.get(WebPushSubscription, subscription_id)
+    item=session.scalar(select(WebPushSubscription).where(WebPushSubscription.id==subscription_id, WebPushSubscription.organization_id==principal.organization_id))
     if item and item.customer_user_id==principal.user_id and item.revoked_at is None:
         item.revoked_at=datetime.now(timezone.utc); session.commit()
     return Response(status_code=204)
@@ -119,10 +119,10 @@ def unsubscribe(subscription_id: UUID, principal: AuthPrincipal=Depends(customer
 @router.put("/preferences")
 def preference(payload: PreferenceInput, principal: AuthPrincipal=Depends(customer_csrf), session: Session=Depends(get_order_session), config: PushSettings=Depends(settings)) -> dict:
     if payload.lunch_special_enabled:
-        active_subscription=session.scalar(select(WebPushSubscription.id).where(WebPushSubscription.customer_user_id==principal.user_id,WebPushSubscription.revoked_at.is_(None),WebPushSubscription.expired_at.is_(None)).limit(1))
+        active_subscription=session.scalar(select(WebPushSubscription.id).where(WebPushSubscription.organization_id==principal.organization_id,WebPushSubscription.customer_user_id==principal.user_id,WebPushSubscription.revoked_at.is_(None),WebPushSubscription.expired_at.is_(None)).limit(1))
         if not config.can_enroll or active_subscription is None:
             raise HTTPException(409, detail={"code":"subscription_required","message":"Enable notifications on a device first."})
-    now=datetime.now(timezone.utc); item=session.scalar(select(CustomerNotificationPreference).where(CustomerNotificationPreference.customer_user_id==principal.user_id, CustomerNotificationPreference.notification_kind=="lunch_special"))
-    if not item: item=CustomerNotificationPreference(customer_user_id=principal.user_id,notification_kind="lunch_special"); session.add(item)
+    now=datetime.now(timezone.utc); item=session.scalar(select(CustomerNotificationPreference).where(CustomerNotificationPreference.organization_id==principal.organization_id,CustomerNotificationPreference.customer_user_id==principal.user_id, CustomerNotificationPreference.notification_kind=="lunch_special"))
+    if not item: item=CustomerNotificationPreference(organization_id=principal.organization_id,customer_user_id=principal.user_id,notification_kind="lunch_special"); session.add(item)
     item.enabled=payload.lunch_special_enabled; item.enabled_at=now if payload.lunch_special_enabled else item.enabled_at; item.disabled_at=None if payload.lunch_special_enabled else now
     session.commit(); return {"lunch_special_enabled":item.enabled}

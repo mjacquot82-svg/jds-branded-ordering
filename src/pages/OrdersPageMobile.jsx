@@ -6,6 +6,7 @@ import { fetchCustomerOrder, fetchCustomerOrders } from "../services/customerAcc
 import { useCustomerCatalog } from "../stores/customerCatalogStore.js";
 import { getCustomerErrorMessage } from "../services/customerMessages.js";
 import { formatConfigurationDescription, groupConfigurationSelections } from "../services/configurationDescription.js";
+import { writeTenantLocalStorage } from "../services/tenantBrowserState.js";
 
 const money = (cents) => new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(cents / 100);
 const friendlyStatus = (value) => ({ paid: "Paid", completed: "Completed", ready: "Ready", preparing: "Preparing", new: "Received", cancelled: "Cancelled" })[value] || "In progress";
@@ -82,7 +83,7 @@ export default function OrdersPageMobile() {
   function reorder() {
     const cart = reorderCart(detail, catalog);
     if (!cart?.length) { setMessage("This order’s exact configuration is no longer available. Please customize it from the current menu."); return; }
-    window.localStorage.setItem("cafe-cart", JSON.stringify(cart));
+    writeTenantLocalStorage("cafe-cart", JSON.stringify(cart));
     navigate("/cart");
   }
   return <section className="page-section ordering-page app-simple-page">

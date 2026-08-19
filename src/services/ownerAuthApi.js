@@ -58,6 +58,14 @@ export function fetchOwnerSession(options = {}) {
   return ownerAuthRequest("/session", options);
 }
 
+export function fetchAuthorizedOrganizations(options = {}) {
+  return ownerAuthRequest("/organizations", options);
+}
+
+export function selectAuthorizedOrganization(membershipId, csrfToken, options = {}) {
+  return ownerAuthRequest(`/organizations/${encodeURIComponent(membershipId)}/select`, { ...options, csrfToken, method: "POST" });
+}
+
 export function loginOwner(email, password, options = {}) {
   return ownerAuthRequest("/login", { ...options, body: { email, password }, method: "POST" });
 }

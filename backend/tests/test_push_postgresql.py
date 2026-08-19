@@ -42,14 +42,14 @@ def add_user(session: Session, email: str) -> JdsUser:
 def test_lunch_send_rereads_and_freezes_authoritative_product_price_and_recipients(owner_orders_api):
     _,engine=owner_orders_api;settings=active_settings();crypt=SubscriptionProtector(settings.encryption_key)
     with Session(engine) as session:
-        organization=Organization(slug=f"push-{uuid4()}",name="Push Test");session.add(organization)
+        organization=session.scalar(select(Organization).order_by(Organization.created_at))
         actor=add_user(session,f"actor-{uuid4()}@example.com");enabled=add_user(session,f"enabled-{uuid4()}@example.com");disabled=add_user(session,f"disabled-{uuid4()}@example.com")
         product=session.scalar(select(Product).order_by(Product.id));category=session.get(Category,product.category_id)
         product.is_lunch_special=True;product.slug="buffalo-chickpea-bowl";product.name="Authoritative Bowl";product.base_price_cents=1375;product.is_published=True;category.is_published=True;product.availability.default_available=True
-        session.add_all([CustomerNotificationPreference(customer_user_id=enabled.id,notification_kind="lunch_special",enabled=True),CustomerNotificationPreference(customer_user_id=disabled.id,notification_kind="lunch_special",enabled=False)])
+        session.add_all([CustomerNotificationPreference(organization_id=organization.id,customer_user_id=enabled.id,notification_kind="lunch_special",enabled=True),CustomerNotificationPreference(organization_id=organization.id,customer_user_id=disabled.id,notification_kind="lunch_special",enabled=False)])
         for user,suffix in ((enabled,"one"),(enabled,"two"),(disabled,"disabled")):
             endpoint=f"https://push.example/{suffix}-{uuid4()}"
-            session.add(WebPushSubscription(customer_user_id=user.id,endpoint_ciphertext=crypt.encrypt(endpoint),endpoint_fingerprint=endpoint_fingerprint(endpoint),p256dh_ciphertext=crypt.encrypt("p256dh"),auth_ciphertext=crypt.encrypt("auth")))
+            session.add(WebPushSubscription(organization_id=organization.id,customer_user_id=user.id,endpoint_ciphertext=crypt.encrypt(endpoint),endpoint_fingerprint=endpoint_fingerprint(endpoint),p256dh_ciphertext=crypt.encrypt("p256dh"),auth_ciphertext=crypt.encrypt("auth")))
         session.commit()
         item=CommunicationCenterService(session,settings).create_lunch_special(organization_id=organization.id,actor_user_id=actor.id,actor_name=actor.display_name,idempotency_key=f"lunch-{uuid4()}",override=False)
         assert item.product_name_snapshot=="Authoritative Bowl";assert item.price_cents_snapshot==1375
@@ -63,7 +63,7 @@ def test_lunch_send_rereads_and_freezes_authoritative_product_price_and_recipien
 def test_lunch_send_url_encodes_the_authoritative_product_slug(owner_orders_api):
     _,engine=owner_orders_api;settings=active_settings()
     with Session(engine) as session:
-        organization=Organization(slug=f"push-encoded-{uuid4()}",name="Push Encoding Test");session.add(organization)
+        organization=session.scalar(select(Organization).order_by(Organization.created_at))
         actor=add_user(session,f"actor-encoded-{uuid4()}@example.com")
         product=session.scalar(select(Product).order_by(Product.id));category=session.get(Category,product.category_id)
         product.is_lunch_special=True;product.slug="chef's bowl/été";product.is_published=True;category.is_published=True;product.availability.default_available=True
@@ -85,7 +85,7 @@ def test_staff_general_api_is_403_and_release_disabled_lunch_is_blocked(owner_or
     blocked=client.post("/api/v1/owner/communications/lunch-special",headers={"Idempotency-Key":"staff-lunch"},json={"kind":"lunch_special"})
     assert blocked.status_code==503;assert blocked.json()["detail"]["code"]=="push_not_released"
     with Session(engine) as session:
-        organization=Organization(slug=f"api-{uuid4()}",name="API Test");session.add(organization);actor=add_user(session,f"staff-{uuid4()}@example.com")
+        organization=session.scalar(select(Organization).order_by(Organization.created_at));actor=add_user(session,f"staff-{uuid4()}@example.com")
         product=session.scalar(select(Product).order_by(Product.id));category=session.get(Category,product.category_id)
         product.is_lunch_special=True;product.is_published=True;category.is_published=True;product.availability.default_available=True;session.commit()
         staff=replace(staff,user_id=actor.id,organization_id=organization.id)
@@ -114,12 +114,12 @@ def test_current_device_revoke_is_owned_and_idempotent(owner_orders_api):
     _,engine=owner_orders_api;settings=active_settings();crypt=SubscriptionProtector(settings.encryption_key);endpoint=f"https://push.example/owned-{uuid4()}"
     with Session(engine) as session:
         owner=add_user(session,f"device-owner-{uuid4()}@example.com");other=add_user(session,f"other-{uuid4()}@example.com")
-        subscription=WebPushSubscription(customer_user_id=owner.id,endpoint_ciphertext=crypt.encrypt(endpoint),endpoint_fingerprint=endpoint_fingerprint(endpoint),p256dh_ciphertext=crypt.encrypt("p256dh"),auth_ciphertext=crypt.encrypt("auth"));session.add(subscription);session.commit()
-        revoke_current(EndpointInput(endpoint=endpoint),SimpleNamespace(user_id=other.id),session)
+        organization=session.scalar(select(Organization).order_by(Organization.created_at));subscription=WebPushSubscription(organization_id=organization.id,customer_user_id=owner.id,endpoint_ciphertext=crypt.encrypt(endpoint),endpoint_fingerprint=endpoint_fingerprint(endpoint),p256dh_ciphertext=crypt.encrypt("p256dh"),auth_ciphertext=crypt.encrypt("auth"));session.add(subscription);session.commit()
+        revoke_current(EndpointInput(endpoint=endpoint),SimpleNamespace(user_id=other.id,organization_id=organization.id),session)
         assert subscription.revoked_at is None
-        revoke_current(EndpointInput(endpoint=endpoint),SimpleNamespace(user_id=owner.id),session)
+        revoke_current(EndpointInput(endpoint=endpoint),SimpleNamespace(user_id=owner.id,organization_id=organization.id),session)
         assert subscription.revoked_at is not None
-        revoke_current(EndpointInput(endpoint=endpoint),SimpleNamespace(user_id=owner.id),session)
+        revoke_current(EndpointInput(endpoint=endpoint),SimpleNamespace(user_id=owner.id,organization_id=organization.id),session)
 
 
 class RecordingProvider:
@@ -136,12 +136,12 @@ def queued_general(session, settings, *, suffix):
     organization=Organization(slug=f"dispatch-{suffix}-{uuid4()}",name="Dispatch Test")
     user=add_user(session,f"dispatch-{suffix}-{uuid4()}@example.com")
     session.add(organization);session.flush()
-    preference=CustomerNotificationPreference(customer_user_id=user.id,notification_kind="lunch_special",enabled=True)
+    preference=CustomerNotificationPreference(organization_id=organization.id,customer_user_id=user.id,notification_kind="lunch_special",enabled=True)
     endpoint=f"https://push.example/{suffix}-{uuid4()}"
-    subscription=WebPushSubscription(customer_user_id=user.id,endpoint_ciphertext=crypt.encrypt(endpoint),endpoint_fingerprint=endpoint_fingerprint(endpoint),p256dh_ciphertext=crypt.encrypt("p256dh"),auth_ciphertext=crypt.encrypt("auth"))
+    subscription=WebPushSubscription(organization_id=organization.id,customer_user_id=user.id,endpoint_ciphertext=crypt.encrypt(endpoint),endpoint_fingerprint=endpoint_fingerprint(endpoint),p256dh_ciphertext=crypt.encrypt("p256dh"),auth_ciphertext=crypt.encrypt("auth"))
     announcement=PushAnnouncement(organization_id=organization.id,kind="general",title="Café update",frozen_message="Open today.",target_route="/",actor_name_snapshot="Owner",status="queued",idempotency_key=f"general-{uuid4()}",expires_at=datetime.now(timezone.utc)+timedelta(hours=4))
     session.add_all([preference,subscription,announcement]);session.flush()
-    delivery=PushDeliveryAttempt(announcement_id=announcement.id,subscription_id=subscription.id)
+    delivery=PushDeliveryAttempt(organization_id=organization.id,announcement_id=announcement.id,subscription_id=subscription.id)
     session.add(delivery);session.commit()
     return user.id, subscription.id, announcement.id, delivery.id
 

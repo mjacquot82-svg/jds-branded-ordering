@@ -24,10 +24,12 @@ class JdsApplication(Timestamped, Base):
 
 class Organization(Timestamped, Base):
     __tablename__ = "organizations"
+    __table_args__ = (CheckConstraint("lifecycle_status IN ('onboarding','active','suspended','archived')", name="lifecycle_status"),)
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     slug: Mapped[str] = mapped_column(String(100), unique=True)
     name: Mapped[str] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    lifecycle_status: Mapped[str] = mapped_column(String(20), default="active", server_default="active")
 
 
 class JdsUser(Timestamped, Base):

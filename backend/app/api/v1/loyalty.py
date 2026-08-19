@@ -83,7 +83,7 @@ def owner_loyalty(response: Response, principal: AuthPrincipal = Depends(require
     response.headers["Cache-Control"] = "no-store"
     service = LoyaltyService(session)
     programs = service.programs(principal.organization_id)
-    return {"programs": [program_json(service, p) for p in programs], "default_program": DEFAULTS, "products": service.catalog()}
+    return {"programs": [program_json(service, p) for p in programs], "default_program": DEFAULTS, "products": service.catalog(principal.organization_id)}
 
 
 @router.put("/owner/loyalty/program")

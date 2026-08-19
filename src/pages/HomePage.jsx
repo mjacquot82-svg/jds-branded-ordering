@@ -21,6 +21,8 @@ import { fetchCustomerLoyalty } from "../services/loyaltyApi.js";
 import { fetchCustomerQuickOrder } from "../services/customerAccountApi.js";
 import { formatConfigurationDescription } from "../services/configurationDescription.js";
 import LoyaltyCard from "../components/LoyaltyCard.jsx";
+import { readTenantLocalStorage, writeTenantLocalStorage } from "../services/tenantBrowserState.js";
+import { useTenant } from "../tenant/TenantContext.jsx";
 
 function formatPrice(price) {
   return new Intl.NumberFormat("en-CA", {
@@ -33,7 +35,7 @@ function formatPrice(price) {
 
 function getStoredCart() {
   try {
-    const stored = JSON.parse(window.localStorage.getItem("cafe-cart"));
+    const stored = JSON.parse(readTenantLocalStorage("cafe-cart"));
     return Array.isArray(stored) ? stored : [];
   } catch {
     return [];
@@ -41,10 +43,11 @@ function getStoredCart() {
 }
 
 function storeCart(cart) {
-  window.localStorage.setItem("cafe-cart", JSON.stringify(cart));
+  writeTenantLocalStorage("cafe-cart", JSON.stringify(cart));
 }
 
 export default function HomePage() {
+  const { value: tenant } = useTenant();
   const { session } = useCustomerAuth();
   const [quickOrderPersonalization, setQuickOrderPersonalization] = useState({
     productIds: [],
@@ -165,7 +168,7 @@ export default function HomePage() {
   return (
     <section className="home-page ordering-page">
       <div className="welcome-panel app-welcome-panel">
-        <img className="ladels-hero-logo" src="/cafe.png" alt="Ladel's Wellness Café" />
+        {tenant.tenant.slug === "the-guest-house" ? <img className="ladels-hero-logo" src="/cafe.png" alt="Ladel's Wellness Café" /> : <div className="tenant-hero-wordmark"><strong>{tenant.design.displayName}</strong><span>{tenant.design.tagline}</span></div>}
       </div>
 
       <div className="home-order-status" aria-live="polite">

@@ -36,6 +36,7 @@ class LoyaltyProgramProduct(Base):
         CheckConstraint("earning_eligible OR reward_eligible", name="some_eligibility_required"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     loyalty_program_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_programs.id", ondelete="CASCADE"), index=True)
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), index=True)
     earning_eligible: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
@@ -57,6 +58,7 @@ class CustomerLoyaltyEvent(Base):
         Index("uq_loyalty_order_stamp", "loyalty_program_id", "related_order_id", unique=True, postgresql_where=text("event_type = 'stamp_earned' AND related_order_id IS NOT NULL")),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     customer_user_id: Mapped[UUID] = mapped_column(ForeignKey("jds_users.id", ondelete="RESTRICT"), index=True)
     loyalty_program_id: Mapped[UUID] = mapped_column(ForeignKey("loyalty_programs.id", ondelete="RESTRICT"), index=True)
     event_type: Mapped[str] = mapped_column(String(40), index=True)

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.jds_auth.models import Membership, Organization
+from app.platform.models import OnboardingState, StorefrontHostname
 from app.tenancy.context import TenantContext, TenantResolutionSource
 
 LADELS_ORGANIZATION_ID = UUID("cd802008-80c6-5719-81ef-9b2310b16512")
@@ -85,6 +86,44 @@ def resolve_internal_ladels_compatibility_context(session: Session) -> TenantCon
         organization_id=organization.id,
         organization_slug=organization.slug,
         source=TenantResolutionSource.LADELS_COMPATIBILITY,
+    )
+
+
+def resolve_storefront_context(
+    session: Session, *, host: str | None, frontend_url: str | None = None,
+    headers: object | None = None, query_params: object | None = None,
+) -> TenantContext:
+    """Resolve a public storefront from a verified mapping; local/legacy is narrow."""
+    if headers is not None and any(key in headers for key in _UNTRUSTED_TENANT_HEADERS):
+        raise TenantResolutionError("Client-supplied tenant context is not allowed.")
+    if query_params is not None and any(key in query_params for key in _UNTRUSTED_TENANT_QUERY_KEYS):
+        raise TenantResolutionError("Client-supplied tenant context is not allowed.")
+    normalized = (host or "").split(":", 1)[0].strip("[]").rstrip(".").lower()
+    mapping = session.scalar(
+        select(StorefrontHostname).where(
+            StorefrontHostname.hostname == normalized,
+            StorefrontHostname.status == "verified",
+        )
+    )
+    if mapping is None:
+        return resolve_ladels_compatibility_context(
+            session, host=host, frontend_url=frontend_url, headers=headers,
+            query_params=query_params,
+        )
+    organization = session.scalar(
+        select(Organization).join(OnboardingState, OnboardingState.organization_id == Organization.id).where(
+            Organization.id == mapping.organization_id,
+            Organization.is_active.is_(True),
+            Organization.lifecycle_status == "active",
+            OnboardingState.public_ready.is_(True),
+        )
+    )
+    if organization is None:
+        raise TenantResolutionError("Storefront is not ready.")
+    return TenantContext(
+        organization_id=organization.id,
+        organization_slug=organization.slug,
+        source=TenantResolutionSource.VERIFIED_HOSTNAME,
     )
 
 

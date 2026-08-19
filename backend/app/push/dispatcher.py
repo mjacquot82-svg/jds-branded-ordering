@@ -79,11 +79,15 @@ class PushDispatcher:
             subscription = db.get(WebPushSubscription, job.subscription_id)
             if announcement is None or subscription is None:
                 return
+            if job.organization_id != announcement.organization_id or subscription.organization_id != announcement.organization_id:
+                self._finish_without_send(db, job, "suppressed", "tenant_mismatch")
+                return
             if subscription.revoked_at or subscription.expired_at:
                 self._finish_without_send(db, job, "suppressed", "subscription_inactive")
                 return
             preference_enabled = db.scalar(
                 select(CustomerNotificationPreference.enabled).where(
+                    CustomerNotificationPreference.organization_id == announcement.organization_id,
                     CustomerNotificationPreference.customer_user_id == subscription.customer_user_id,
                     CustomerNotificationPreference.notification_kind == "lunch_special",
                 )

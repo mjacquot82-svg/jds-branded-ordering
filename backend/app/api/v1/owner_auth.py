@@ -1,11 +1,13 @@
 from collections.abc import Generator
 from datetime import datetime
 from typing import Annotated, Callable
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from app.db.session import get_db_session
 from app.jds_auth.config import AuthSettings
@@ -44,6 +46,7 @@ from app.jds_auth.service import (
     SessionInvalid,
     utc_now,
 )
+from app.platform.models import StorefrontHostname
 
 router = APIRouter(prefix="/owner/auth", tags=["owner-auth"])
 _TENANT_HEADERS = ("x-tenant-id", "x-organization-id", "x-tenant-slug", "x-organization-slug")
@@ -93,10 +96,15 @@ def get_auth_service(request: Request, session: Session = Depends(get_db_session
     return AuthenticationService(session, request.app.state.auth_provider, settings)
 
 
-def require_trusted_origin(request: Request, settings: AuthSettings = Depends(get_auth_settings)) -> None:
+def require_trusted_origin(request: Request, settings: AuthSettings = Depends(get_auth_settings), session: Session = Depends(get_db_session)) -> None:
     origin = request.headers.get("origin")
-    if origin != settings.frontend_url.rstrip("/"):
-        auth_error(403, "origin_invalid", "Request origin is not allowed.")
+    if origin == settings.frontend_url.rstrip("/"):
+        return
+    parsed=urlparse(origin or "")
+    request_host=(request.url.hostname or "").lower()
+    if parsed.scheme == "https" and parsed.hostname == request_host and session.scalar(select(StorefrontHostname.id).where(StorefrontHostname.hostname==request_host,StorefrontHostname.status=="verified")) is not None:
+        return
+    auth_error(403, "origin_invalid", "Request origin is not allowed.")
 
 
 def current_principal(
@@ -124,7 +132,7 @@ def csrf_principal(
     csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     service: AuthenticationService = Depends(get_auth_service),
 ) -> AuthPrincipal:
-    require_trusted_origin(request, get_auth_settings(request))
+    require_trusted_origin(request, get_auth_settings(request), service._session)
     if not csrf_token:
         auth_error(403, "csrf_invalid", "CSRF validation failed.")
     try:

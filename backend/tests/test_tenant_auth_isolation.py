@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.jds_auth.models import JdsApplication, JdsUser, Membership, Organization, OwnerInvitation, Role, StaffPinCredential
 from app.jds_auth.security import hash_pin
+from app.jds_auth.provider import ProviderIdentity
+from app.platform.models import CustomerRelationship, OnboardingState, StorefrontHostname
 from tests.test_jds_auth import auth_client, auth_engine, auth_settings, fake_provider  # noqa: F401
 
 
@@ -115,3 +117,38 @@ async def test_staff_pin_is_membership_bound_and_cannot_be_replayed_across_tenan
     )
     assert valid.status_code == 200
     assert valid.json()["organization_id"] == owner["organization_id"]
+
+
+@pytest.mark.anyio
+@pytest.mark.postgresql
+async def test_verified_customer_can_establish_independent_second_storefront_relationship(auth_client, auth_engine, fake_provider):
+    fake_provider.identity = ProviderIdentity(
+        issuer=fake_provider.identity.issuer, subject="shared-storefront-customer",
+        email="shared-storefront@example.com", email_verified=True,
+    )
+    registered = await auth_client.post(
+        "/api/v1/customer/auth/register", headers={"Origin":"http://test"},
+        json={"display_name":"Ladel Customer","email":"shared-storefront@example.com","password":"correct horse battery staple","phone":"5198816869"},
+    )
+    assert registered.status_code == 201
+    second_host = "customer-second.jdsstudio.ca"
+    with Session(auth_engine) as session, session.begin():
+        second = Organization(slug="customer-second", name="Customer Second", lifecycle_status="active")
+        session.add(second); session.flush()
+        session.add_all([
+            OnboardingState(organization_id=second.id,state="complete",current_step="complete",public_ready=True),
+            StorefrontHostname(organization_id=second.id,hostname=second_host,status="verified",is_canonical=True),
+        ])
+        second_id = second.id
+    login = await auth_client.post(
+        "/api/v1/customer/auth/login",
+        headers={"Host":second_host,"Origin":"http://test"},
+        json={"email":"shared-storefront@example.com","password":"correct horse battery staple"},
+    )
+    assert login.status_code == 200
+    assert login.json()["organization_id"] == str(second_id)
+    with Session(auth_engine) as session:
+        user = session.scalar(select(JdsUser).where(JdsUser.primary_email == "shared-storefront@example.com"))
+        relationships = session.scalars(select(CustomerRelationship).where(CustomerRelationship.user_id == user.id)).all()
+        assert len(relationships) == 2
+        assert {item.organization_id for item in relationships} == {UUID(login.json()["organization_id"]), next(item.organization_id for item in relationships if item.organization_id != second_id)}
