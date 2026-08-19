@@ -117,6 +117,57 @@ CATALOG_BASELINE_UNIQUE_CONSTRAINTS = {
     "products": {"uq_products_slug": ("slug",)},
     "modifier_groups": {"uq_modifier_groups_key": ("key",)},
 }
+AVAILABILITY_BASELINE_UNIQUE_CONSTRAINTS = {
+    "business_hours": {
+        "uq_business_hours_settings_weekday": ("business_settings_id", "weekday")
+    },
+    "business_closures": {
+        "uq_business_closures_settings_date": (
+            "business_settings_id",
+            "business_date",
+        )
+    },
+    "product_availability_overrides": {
+        "uq_product_availability_overrides_product_date": (
+            "product_id",
+            "business_date",
+        )
+    },
+}
+AVAILABILITY_BASELINE_FOREIGN_KEYS = {
+    "business_hours": {
+        "fk_business_hours_business_settings_id_business_settings": (
+            ("business_settings_id",),
+            "business_settings",
+            ("id",),
+            "CASCADE",
+        )
+    },
+    "business_closures": {
+        "fk_business_closures_business_settings_id_business_settings": (
+            ("business_settings_id",),
+            "business_settings",
+            ("id",),
+            "CASCADE",
+        )
+    },
+    "product_availability": {
+        "fk_product_availability_product_id_products": (
+            ("product_id",),
+            "products",
+            ("id",),
+            "CASCADE",
+        )
+    },
+    "product_availability_overrides": {
+        "fk_product_availability_overrides_product_id_products": (
+            ("product_id",),
+            "products",
+            ("id",),
+            "CASCADE",
+        )
+    },
+}
 
 
 class MigrationBootstrapError(RuntimeError):
@@ -154,6 +205,10 @@ def _validate_table(
     excluded_check_names: frozenset[str] = frozenset(),
     additional_check_names: frozenset[str] = frozenset(),
     additional_unique_constraints: dict[str, tuple[str, ...]] | None = None,
+    additional_foreign_keys: dict[
+        str, tuple[tuple[str, ...], str, tuple[str, ...], str | None]
+    ]
+    | None = None,
     expected_type_signatures: dict[tuple[str, str], str] | None = None,
 ) -> list[str]:
     inspector = inspect(engine)
@@ -260,6 +315,7 @@ def _validate_table(
             element.parent.name for element in constraint.elements
         } & excluded_column_names
     }
+    expected_foreign_keys.update(additional_foreign_keys or {})
     if actual_foreign_keys != expected_foreign_keys:
         problems.append(
             f"{table_name} foreign keys are {sorted(actual_foreign_keys)}; "
@@ -364,9 +420,10 @@ def _validate_availability_baseline(engine: Engine) -> None:
             excluded_column_names=(
                 TENANT_HEAD_ONLY_COLUMN_NAMES | AVAILABILITY_HEAD_ONLY_COLUMN_NAMES
                 if table_name == "business_settings"
-                else AVAILABILITY_CLOSURE_HEAD_ONLY_COLUMN_NAMES
+                else TENANT_HEAD_ONLY_COLUMN_NAMES
+                | AVAILABILITY_CLOSURE_HEAD_ONLY_COLUMN_NAMES
                 if table_name == "business_closures"
-                else frozenset()
+                else TENANT_HEAD_ONLY_COLUMN_NAMES
             ),
             excluded_check_names=(
                 AVAILABILITY_HEAD_ONLY_CHECK_NAMES
@@ -380,6 +437,10 @@ def _validate_availability_baseline(engine: Engine) -> None:
                 if table_name == "business_settings"
                 else frozenset()
             ),
+            additional_unique_constraints=AVAILABILITY_BASELINE_UNIQUE_CONSTRAINTS.get(
+                table_name
+            ),
+            additional_foreign_keys=AVAILABILITY_BASELINE_FOREIGN_KEYS.get(table_name),
             expected_type_signatures=AVAILABILITY_BASELINE_TYPE_SIGNATURES,
         )
     ]

@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from alembic import command
@@ -7,6 +8,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.availability import models as availability_models  # noqa: F401
 from app.catalog import models as catalog_models  # noqa: F401
@@ -44,7 +46,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     config = make_alembic_config(postgresql_url)
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260819_21"]
+    assert script.get_heads() == ["20260819_22"]
 
     command.downgrade(config, "base")
     command.upgrade(config, "head")
@@ -53,7 +55,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     try:
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_21"
+            assert context.get_current_revision() == "20260819_22"
 
         assert set(inspect(engine).get_table_names()) >= {
             "alembic_version",
@@ -245,6 +247,159 @@ def test_tenant_catalog_migration_backfills_baseline_rows_once(
 
 
 @pytest.mark.postgresql
+def test_tenant_availability_migration_backfills_and_enforces_ownership(
+    postgresql_url: str,
+) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260819_21")
+    engine = create_engine(postgresql_url)
+    try:
+        with engine.begin() as connection:
+            organization_id = connection.scalar(
+                text("SELECT id FROM organizations WHERE slug = 'the-guest-house'")
+            )
+            settings_id = connection.scalar(
+                text(
+                    "SELECT id FROM business_settings "
+                    "WHERE organization_id = :organization_id"
+                ),
+                {"organization_id": organization_id},
+            )
+            category_id = connection.scalar(
+                text(
+                    "INSERT INTO categories (organization_id, slug, name) "
+                    "VALUES (:organization_id, 'availability', 'Availability') "
+                    "RETURNING id"
+                ),
+                {"organization_id": organization_id},
+            )
+            product_id = connection.scalar(
+                text(
+                    "INSERT INTO products "
+                    "(organization_id, category_id, slug, name, base_price_cents) "
+                    "VALUES (:organization_id, :category_id, 'available', "
+                    "'Available', 100) RETURNING id"
+                ),
+                {"organization_id": organization_id, "category_id": category_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO business_hours "
+                    "(business_settings_id, weekday, is_closed) "
+                    "VALUES (:settings_id, 0, true)"
+                ),
+                {"settings_id": settings_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO business_closures "
+                    "(business_settings_id, business_date) "
+                    "VALUES (:settings_id, '2026-12-25')"
+                ),
+                {"settings_id": settings_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO product_availability (product_id, default_available) "
+                    "VALUES (:product_id, false)"
+                ),
+                {"product_id": product_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO product_availability_overrides "
+                    "(product_id, business_date, is_available) "
+                    "VALUES (:product_id, '2026-12-25', true)"
+                ),
+                {"product_id": product_id},
+            )
+
+        command.upgrade(config, "head")
+        inspector = inspect(engine)
+        with engine.connect() as connection:
+            assert MigrationContext.configure(connection).get_current_revision() == "20260819_22"
+            for table_name in (
+                "business_hours",
+                "business_closures",
+                "product_availability",
+                "product_availability_overrides",
+            ):
+                columns = {column["name"]: column for column in inspector.get_columns(table_name)}
+                assert columns["organization_id"]["nullable"] is False
+                assert connection.scalar(
+                    text(
+                        f"SELECT count(*) FROM {table_name} "
+                        "WHERE organization_id = :organization_id"
+                    ),
+                    {"organization_id": organization_id},
+                ) == 1
+            assert {
+                constraint["name"]
+                for constraint in inspector.get_unique_constraints("business_hours")
+            } >= {"uq_business_hours_organization_weekday"}
+            assert {
+                constraint["name"]
+                for constraint in inspector.get_unique_constraints("business_closures")
+            } >= {"uq_business_closures_organization_date"}
+            assert {
+                index["name"]
+                for index in inspector.get_indexes("product_availability_overrides")
+            } >= {"ix_product_availability_overrides_organization_date"}
+
+        tenant_b_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO organizations (id, slug, name) "
+                    "VALUES (:id, 'migration-tenant-b', 'Migration Tenant B')"
+                ),
+                {"id": tenant_b_id},
+            )
+            settings_b_id = connection.scalar(
+                text(
+                    "INSERT INTO business_settings (organization_id, timezone) "
+                    "VALUES (:id, 'UTC') RETURNING id"
+                ),
+                {"id": tenant_b_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO business_hours "
+                    "(organization_id, business_settings_id, weekday, is_closed) "
+                    "VALUES (:organization_id, :settings_id, 0, true)"
+                ),
+                {"organization_id": tenant_b_id, "settings_id": settings_b_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO business_closures "
+                    "(organization_id, business_settings_id, business_date) "
+                    "VALUES (:organization_id, :settings_id, '2026-12-25')"
+                ),
+                {"organization_id": tenant_b_id, "settings_id": settings_b_id},
+            )
+
+        with pytest.raises(SQLAlchemyError, match="cannot safely downgrade"):
+            command.downgrade(config, "20260819_21")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DELETE FROM business_settings WHERE organization_id = :id"
+                ),
+                {"id": tenant_b_id},
+            )
+            connection.execute(
+                text("DELETE FROM organizations WHERE id = :id"), {"id": tenant_b_id}
+            )
+    finally:
+        engine.dispose()
+
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+
+
+@pytest.mark.postgresql
 def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
     postgresql_url: str,
 ) -> None:
@@ -268,7 +423,7 @@ def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_21"
+            assert context.get_current_revision() == "20260819_22"
             assert connection.scalar(
                 text(
                     "SELECT name FROM categories "
@@ -325,7 +480,7 @@ def test_migration_bootstrap_reconciles_catalog_and_orders_without_data_loss(
         inspector = inspect(engine)
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_21"
+            assert context.get_current_revision() == "20260819_22"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "
@@ -405,7 +560,7 @@ def test_migration_bootstrap_resumes_interrupted_order_reconciliation(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_21"
+            assert context.get_current_revision() == "20260819_22"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "

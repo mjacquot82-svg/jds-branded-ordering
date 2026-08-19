@@ -20,6 +20,8 @@ from app.catalog.models import Category, Product
 from tests.test_migrations import make_alembic_config
 from app.tenancy.resolver import (
     LADELS_ORGANIZATION_ID,
+    LADELS_ORGANIZATION_NAME,
+    LADELS_ORGANIZATION_SLUG,
     resolve_internal_ladels_compatibility_context,
 )
 
@@ -39,6 +41,18 @@ def availability_engine(postgresql_url: str) -> Iterator[Engine]:
                     "modifier_options, product_variants, products, "
                     "modifier_groups, categories RESTART IDENTITY CASCADE"
                 )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO organizations (id, slug, name, is_active) "
+                    "VALUES (:id, :slug, :name, true) "
+                    "ON CONFLICT (slug) DO NOTHING"
+                ),
+                {
+                    "id": LADELS_ORGANIZATION_ID,
+                    "slug": LADELS_ORGANIZATION_SLUG,
+                    "name": LADELS_ORGANIZATION_NAME,
+                },
             )
 
     reset_tables()
@@ -288,18 +302,18 @@ def test_database_constraints_enforce_business_invariants(
     invalid_child_statements = [
         (
             "INSERT INTO business_hours "
-            "(business_settings_id, weekday, is_closed, opens_at, closes_at) "
-            "VALUES (1, 7, true, NULL, NULL)"
+            "(organization_id, business_settings_id, weekday, is_closed, opens_at, closes_at) "
+            f"VALUES ('{LADELS_ORGANIZATION_ID}', 1, 7, true, NULL, NULL)"
         ),
         (
             "INSERT INTO business_hours "
-            "(business_settings_id, weekday, is_closed, opens_at, closes_at) "
-            "VALUES (1, 0, false, '15:00', '07:00')"
+            "(organization_id, business_settings_id, weekday, is_closed, opens_at, closes_at) "
+            f"VALUES ('{LADELS_ORGANIZATION_ID}', 1, 0, false, '15:00', '07:00')"
         ),
         (
             "INSERT INTO business_closures "
-            "(business_settings_id, business_date, reason) "
-            "VALUES (1, '2026-12-25', ' ')"
+            "(organization_id, business_settings_id, business_date, reason) "
+            f"VALUES ('{LADELS_ORGANIZATION_ID}', 1, '2026-12-25', ' ')"
         ),
     ]
 
@@ -332,10 +346,13 @@ def test_database_enforces_unique_daily_overrides_and_cascades(
             connection.execute(
                 text(
                     "INSERT INTO product_availability_overrides "
-                    "(product_id, business_date, is_available) "
-                    "VALUES (:product_id, '2026-07-28', true)"
+                    "(organization_id, product_id, business_date, is_available) "
+                    "VALUES (:organization_id, :product_id, '2026-07-28', true)"
                 ),
-                {"product_id": product_id},
+                {
+                    "organization_id": LADELS_ORGANIZATION_ID,
+                    "product_id": product_id,
+                },
             )
 
     with availability_engine.begin() as connection:

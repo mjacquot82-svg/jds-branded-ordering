@@ -30,6 +30,7 @@ from app.main import create_app
 from app.jds_auth.service import AuthPrincipal
 from app.jds_auth.models import JdsUser
 from app.orders.models import Order
+from app.tenancy.resolver import LADELS_ORGANIZATION_ID
 from tests.test_migrations import make_alembic_config
 from tests.test_order_service import local_datetime, seed_order_dependencies
 
@@ -869,6 +870,7 @@ def test_create_order_rejects_unavailable_product(
     with Session(engine) as session:
         session.add(
             ProductAvailabilityOverride(
+                organization_id=LADELS_ORGANIZATION_ID,
                 product_id=ids["product"],
                 business_date=date(2026, 7, 28),
                 is_available=False,

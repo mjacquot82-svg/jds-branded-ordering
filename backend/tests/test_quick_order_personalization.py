@@ -107,7 +107,13 @@ def test_quick_order_uses_paid_quantity_recency_customer_ownership_and_current_c
                 is_published=product_id != 10,
                 archived_at=now if product_id == 9 else None,
             ))
-        session.add(ProductAvailability(product_id=8, default_available=False))
+        session.add(
+            ProductAvailability(
+                organization_id=LADELS_ORGANIZATION_ID,
+                product_id=8,
+                default_available=False,
+            )
+        )
 
         # Equal total quantity: product 3 wins the recency tie over product 1.
         _order(session, order_id=1, customer_id=customer_id, status="paid", created_at=now - timedelta(days=10), product_id=1, quantity=5)

@@ -243,7 +243,10 @@ class CatalogService:
         if product is None or product.archived_at is not None:
             raise LookupError("Product not found.")
         if product.availability is None:
-            product.availability = ProductAvailability(default_available=available)
+            product.availability = ProductAvailability(
+                organization_id=self._repository.tenant.organization_id,
+                default_available=available,
+            )
         else:
             product.availability.default_available = available
         self._repository.commit()
@@ -395,7 +398,10 @@ class CatalogService:
         product.variants[:] = next_variants
         self._repository.replace_modifier_assignments(product.id, payload.modifier_group_ids)
         if product.availability is None:
-            product.availability = ProductAvailability(default_available=payload.available)
+            product.availability = ProductAvailability(
+                organization_id=self._repository.tenant.organization_id,
+                default_available=payload.available,
+            )
         else:
             product.availability.default_available = payload.available
         self._repository.flush()

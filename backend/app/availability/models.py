@@ -11,6 +11,8 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
+    Index,
     Integer,
     SmallInteger,
     String,
@@ -63,6 +65,9 @@ class BusinessSettings(AvailabilityModelValidation, Base):
     __table_args__ = (
         UniqueConstraint(
             "organization_id", name="uq_business_settings_organization_id"
+        ),
+        UniqueConstraint(
+            "organization_id", "id", name="uq_business_settings_organization_id_id"
         ),
         CheckConstraint("btrim(timezone) <> ''", name="timezone_nonblank"),
         CheckConstraint(
@@ -162,9 +167,15 @@ class BusinessHour(Base):
     __tablename__ = "business_hours"
     __table_args__ = (
         UniqueConstraint(
-            "business_settings_id",
+            "organization_id",
             "weekday",
-            name="uq_business_hours_settings_weekday",
+            name="uq_business_hours_organization_weekday",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "business_settings_id"],
+            ["business_settings.organization_id", "business_settings.id"],
+            name="fk_business_hours_organization_settings",
+            ondelete="CASCADE",
         ),
         CheckConstraint("weekday BETWEEN 0 AND 6", name="weekday_valid"),
         CheckConstraint(
@@ -176,10 +187,11 @@ class BusinessHour(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
     business_settings_id: Mapped[int] = mapped_column(
-        ForeignKey("business_settings.id", ondelete="CASCADE"),
-        default=1,
-        server_default="1",
+        BigInteger,
         index=True,
     )
     weekday: Mapped[int] = mapped_column(SmallInteger)
@@ -218,9 +230,15 @@ class BusinessClosure(AvailabilityModelValidation, Base):
     __tablename__ = "business_closures"
     __table_args__ = (
         UniqueConstraint(
-            "business_settings_id",
+            "organization_id",
             "business_date",
-            name="uq_business_closures_settings_date",
+            name="uq_business_closures_organization_date",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "business_settings_id"],
+            ["business_settings.organization_id", "business_settings.id"],
+            name="fk_business_closures_organization_settings",
+            ondelete="CASCADE",
         ),
         CheckConstraint(
             "reason IS NULL OR btrim(reason) <> ''", name="reason_nonblank"
@@ -232,10 +250,11 @@ class BusinessClosure(AvailabilityModelValidation, Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
     business_settings_id: Mapped[int] = mapped_column(
-        ForeignKey("business_settings.id", ondelete="CASCADE"),
-        default=1,
-        server_default="1",
+        BigInteger,
         index=True,
     )
     business_date: Mapped[date] = mapped_column(Date)
@@ -254,13 +273,22 @@ class BusinessClosure(AvailabilityModelValidation, Base):
 class ProductAvailability(AvailabilityModelValidation, Base):
     __tablename__ = "product_availability"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "product_id"],
+            ["products.organization_id", "products.id"],
+            name="fk_product_availability_organization_product",
+            ondelete="CASCADE",
+        ),
         CheckConstraint(
             "reason IS NULL OR btrim(reason) <> ''", name="reason_nonblank"
         ),
     )
 
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
     product_id: Mapped[int] = mapped_column(
-        ForeignKey("products.id", ondelete="CASCADE"),
+        BigInteger,
         primary_key=True,
     )
     default_available: Mapped[bool] = mapped_column(
@@ -281,9 +309,21 @@ class ProductAvailabilityOverride(AvailabilityModelValidation, Base):
     __tablename__ = "product_availability_overrides"
     __table_args__ = (
         UniqueConstraint(
+            "organization_id",
             "product_id",
             "business_date",
-            name="uq_product_availability_overrides_product_date",
+            name="uq_product_availability_overrides_organization_product_date",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "product_id"],
+            ["products.organization_id", "products.id"],
+            name="fk_product_availability_overrides_organization_product",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_product_availability_overrides_organization_date",
+            "organization_id",
+            "business_date",
         ),
         CheckConstraint(
             "reason IS NULL OR btrim(reason) <> ''", name="reason_nonblank"
@@ -291,8 +331,11 @@ class ProductAvailabilityOverride(AvailabilityModelValidation, Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
     product_id: Mapped[int] = mapped_column(
-        ForeignKey("products.id", ondelete="CASCADE"),
+        BigInteger,
         index=True,
     )
     business_date: Mapped[date] = mapped_column(Date)
