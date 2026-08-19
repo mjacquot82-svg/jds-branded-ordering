@@ -37,7 +37,7 @@ from app.orders.schemas import (
 from app.orders.service import (
     OrderCreationError,
     OrderCreationErrorCode,
-    OrderCreationService,
+    OrderCreationService as TenantOrderCreationService,
 )
 from app.jds_auth.models import Organization
 from app.tenancy.resolver import (
@@ -45,7 +45,19 @@ from app.tenancy.resolver import (
     LADELS_ORGANIZATION_NAME,
     LADELS_ORGANIZATION_SLUG,
 )
+from app.tenancy.context import TenantContext, TenantResolutionSource
 from tests.test_migrations import make_alembic_config
+
+
+LADELS_TENANT = TenantContext(
+    organization_id=LADELS_ORGANIZATION_ID,
+    organization_slug=LADELS_ORGANIZATION_SLUG,
+    source=TenantResolutionSource.LADELS_COMPATIBILITY,
+)
+
+
+def OrderCreationService(session: Session, **kwargs) -> TenantOrderCreationService:
+    return TenantOrderCreationService(session, LADELS_TENANT, **kwargs)
 
 
 @pytest.fixture

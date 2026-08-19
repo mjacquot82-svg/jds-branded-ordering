@@ -32,7 +32,7 @@ from app.jds_auth.models import JdsUser
 from app.orders.models import Order
 from app.tenancy.resolver import LADELS_ORGANIZATION_ID
 from tests.test_migrations import make_alembic_config
-from tests.test_order_service import local_datetime, seed_order_dependencies
+from tests.test_order_service import LADELS_TENANT, local_datetime, seed_order_dependencies
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def orders_api(
             )
         )
     customer = AuthPrincipal(
-        user_id=uuid4(), membership_id=uuid4(), organization_id=uuid4(),
+        user_id=uuid4(), membership_id=uuid4(), organization_id=LADELS_ORGANIZATION_ID,
         application_id=uuid4(), session_id=uuid4(), email=f"ordering-{uuid4()}@example.com",
         display_name="Ordering Customer", role="customer", permissions=frozenset(),
         assurance_level="aal1",
@@ -166,7 +166,7 @@ def test_authenticated_order_uses_authoritative_checkout_contact(
     client, engine, ids = orders_api
     customer_email = f"marc-{uuid4()}@example.com"
     customer = AuthPrincipal(
-        user_id=uuid4(), membership_id=uuid4(), organization_id=uuid4(),
+        user_id=uuid4(), membership_id=uuid4(), organization_id=LADELS_ORGANIZATION_ID,
         application_id=uuid4(), session_id=uuid4(), email=customer_email,
         display_name="Marc Jacquot", role="customer", permissions=frozenset(),
         assurance_level="aal1",
@@ -207,8 +207,8 @@ def test_customer_cannot_read_or_checkout_another_customers_order(
     client, engine, ids = orders_api
     created = client.post("/api/v1/orders", json=order_payload(ids)).json()
     other = AuthPrincipal(
-        user_id=uuid4(), membership_id=uuid4(), organization_id=uuid4(),
-        application_id=uuid4(), session_id=uuid4(), email="other@example.com",
+        user_id=uuid4(), membership_id=uuid4(), organization_id=LADELS_ORGANIZATION_ID,
+        application_id=uuid4(), session_id=uuid4(), email=f"other-{uuid4()}@example.com",
         display_name="Other Customer", role="customer", permissions=frozenset(),
         assurance_level="aal1",
     )
@@ -852,6 +852,7 @@ def test_concurrent_clover_checkout_requests_create_one_external_session(
                 client.app.dependency_overrides[current_ordering_customer](),
                 session,
                 settings,
+                LADELS_TENANT,
             )
             return result.checkout_session_id
 

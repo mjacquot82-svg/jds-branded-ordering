@@ -78,6 +78,11 @@ ORDER_CLOVER_COLUMN_NAMES = frozenset(
         "cancelled_at",
     }
 )
+ORDER_TENANT_COLUMN_NAMES = frozenset({"organization_id"})
+ORDER_BASELINE_UNIQUE_CONSTRAINTS = {
+    "uq_orders_idempotency_key": ("idempotency_key",),
+    "uq_orders_public_access_token": ("public_access_token",),
+}
 ORDER_HEAD_ONLY_CHECK_NAMES = frozenset(
     {
         "ck_orders_status_valid",
@@ -380,9 +385,10 @@ def _validate_order_baseline(engine: Engine) -> None:
     problems = _validate_table(
         engine,
         "orders",
-        excluded_column_names=ORDER_CLOVER_COLUMN_NAMES,
+        excluded_column_names=ORDER_CLOVER_COLUMN_NAMES | ORDER_TENANT_COLUMN_NAMES,
         excluded_check_names=ORDER_HEAD_ONLY_CHECK_NAMES,
         additional_check_names=frozenset({"ck_orders_status_pending"}),
+        additional_unique_constraints=ORDER_BASELINE_UNIQUE_CONSTRAINTS,
     )
     problems.extend(
         problem

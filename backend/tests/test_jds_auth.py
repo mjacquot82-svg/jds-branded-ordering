@@ -1567,6 +1567,12 @@ async def test_customer_registration_verification_profile_and_role_isolation(
         session.delete(registered_profile)
         legacy_now = datetime.now(timezone.utc)
         legacy_order = Order(
+            organization_id=session.scalar(
+                select(Membership.organization_id).where(
+                    Membership.user_id == customer.id,
+                    Membership.status == "active",
+                )
+            ),
             customer_user_id=customer.id,
             idempotency_key="legacy-customer-profile-reconciliation",
             request_fingerprint="a" * 64,
@@ -1627,6 +1633,12 @@ async def test_customer_registration_verification_profile_and_role_isolation(
         customer = session.scalar(select(JdsUser).where(JdsUser.primary_email == "customer@example.com"))
         assert customer is not None
         order = Order(
+            organization_id=session.scalar(
+                select(Membership.organization_id).where(
+                    Membership.user_id == customer.id,
+                    Membership.status == "active",
+                )
+            ),
             customer_user_id=customer.id,
             idempotency_key="customer-history-order",
             request_fingerprint="b" * 64,

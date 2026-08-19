@@ -5,12 +5,13 @@ from sqlalchemy.orm import Session
 from app.customers.account_schemas import CustomerProfileResponse, CustomerProfileUpdate
 from app.customers.models import CustomerProfile
 from app.customers.repository import CustomerRepository
+from app.tenancy.context import TenantContext
 
 
 class CustomerAccountService:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, tenant: TenantContext) -> None:
         self.session = session
-        self.repo = CustomerRepository(session)
+        self.repo = CustomerRepository(session, tenant)
 
     def profile(self, user_id: UUID) -> CustomerProfileResponse:
         user = self.repo.user(user_id)

@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -10,13 +11,19 @@ from app.catalog.models import (
 )
 from app.orders.constants import FulfillmentStatus, OrderStatus
 from app.orders.models import Order, OrderItem
+from app.tenancy.context import TenantContext
 
 
 class OrderRepository:
     """Catalog reads and pending-order aggregate persistence."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, tenant: TenantContext) -> None:
         self._session = session
+        self._tenant = tenant
+
+    @property
+    def tenant(self) -> TenantContext:
+        return self._tenant
 
     def get_by_idempotency_key(self, idempotency_key: str) -> Order | None:
         return self._session.scalar(
@@ -24,7 +31,21 @@ class OrderRepository:
             .options(
                 selectinload(Order.items).selectinload(OrderItem.modifiers),
             )
-            .where(Order.idempotency_key == idempotency_key)
+            .where(
+                Order.organization_id == self._tenant.organization_id,
+                Order.idempotency_key == idempotency_key,
+            )
+        )
+
+    def get_by_public_access_token(
+        self, public_access_token: str, *, customer_user_id: UUID
+    ) -> Order | None:
+        return self._session.scalar(
+            self._complete_order_query().where(
+                Order.organization_id == self._tenant.organization_id,
+                Order.public_access_token == public_access_token,
+                Order.customer_user_id == customer_user_id,
+            )
         )
 
     def get_product_for_order(self, product_id: int) -> Product | None:
@@ -39,10 +60,19 @@ class OrderRepository:
                 .joinedload(ProductModifierGroup.modifier_group)
                 .selectinload(ModifierGroup.options),
             )
-            .where(Product.id == product_id)
+            .where(
+                Product.organization_id == self._tenant.organization_id,
+                Product.id == product_id,
+            )
         )
 
     def add(self, order: Order) -> None:
+        if (
+            order.organization_id is not None
+            and order.organization_id != self._tenant.organization_id
+        ):
+            raise ValueError("Order belongs to another organization.")
+        order.organization_id = self._tenant.organization_id
         self._session.add(order)
 
     @staticmethod
@@ -56,6 +86,7 @@ class OrderRepository:
             self._session.scalars(
                 self._complete_order_query()
                 .where(
+                    Order.organization_id == self._tenant.organization_id,
                     Order.fulfillment_status.notin_(
                         (FulfillmentStatus.COMPLETED, FulfillmentStatus.CANCELLED)
                     ),
@@ -73,6 +104,7 @@ class OrderRepository:
             self._session.scalars(
                 self._complete_order_query()
                 .where(
+                    Order.organization_id == self._tenant.organization_id,
                     Order.fulfillment_status.in_(
                         (FulfillmentStatus.COMPLETED, FulfillmentStatus.CANCELLED)
                     )
@@ -92,7 +124,10 @@ class OrderRepository:
 
     def get_complete(self, order_id: int) -> Order | None:
         return self._session.scalar(
-            self._complete_order_query().where(Order.id == order_id)
+            self._complete_order_query().where(
+                Order.organization_id == self._tenant.organization_id,
+                Order.id == order_id,
+            )
         )
 
     def transition(
@@ -118,6 +153,7 @@ class OrderRepository:
         result = self._session.execute(
             update(Order)
             .where(
+                Order.organization_id == self._tenant.organization_id,
                 Order.id == order_id,
                 Order.version == expected_version,
                 Order.status == OrderStatus.PAID,
@@ -179,7 +215,7 @@ class OrderRepository:
                     Order.requested_pickup_at >= day_start,
                     Order.requested_pickup_at < day_end,
                 ),
-            )
+            ).where(Order.organization_id == self._tenant.organization_id)
         ).one()
         return {
             "active_paid": row[0],

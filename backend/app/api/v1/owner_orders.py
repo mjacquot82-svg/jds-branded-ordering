@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.orders import get_order_session
 from app.api.v1.owner_auth import require_permission, require_read_permission
+from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.api.v1.order_schemas import OrderItemSnapshot
 from app.jds_auth.service import AuthPrincipal
 from app.orders.constants import FulfillmentStatus, OrderStatus
@@ -16,6 +17,7 @@ from app.orders.fulfillment import (
     OwnerOrderService,
 )
 from app.orders.models import Order
+from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/owner/orders", tags=["owner-orders"])
 
@@ -99,8 +101,11 @@ class DashboardSummary(OwnerOrderSchema):
     currency: str | None
 
 
-def get_service(session: Session = Depends(get_order_session)) -> OwnerOrderService:
-    return OwnerOrderService(session)
+def get_service(
+    session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
+) -> OwnerOrderService:
+    return OwnerOrderService(session, tenant)
 
 
 def _handle_error(error: Exception) -> None:

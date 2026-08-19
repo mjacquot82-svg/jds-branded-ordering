@@ -6,9 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
-from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app.api.v1.order_schemas import (
     CreateOrderRequest,
@@ -16,7 +15,8 @@ from app.api.v1.order_schemas import (
     PendingOrderResponse,
 )
 from app.availability.service import AvailabilityConfigurationError
-from app.orders.models import Order, OrderItem
+from app.api.v1.catalog import ladels_compatibility_tenant
+from app.orders.repository import OrderRepository
 from app.orders.service import (
     OrderCreationError,
     OrderCreationErrorCode,
@@ -24,6 +24,7 @@ from app.orders.service import (
 )
 from app.api.v1.customer_auth import current_ordering_customer
 from app.jds_auth.service import AuthPrincipal
+from app.tenancy.context import TenantContext
 
 class OrderApiRoute(APIRoute):
     def get_route_handler(
@@ -128,10 +129,13 @@ def create_pending_order(
     session: Session = Depends(get_order_session),
     now: datetime = Depends(get_current_time),
     customer: AuthPrincipal = Depends(current_ordering_customer),
+    tenant: TenantContext = Depends(ladels_compatibility_tenant),
 ) -> PendingOrderResponse:
     try:
         domain_request = request.to_domain()
-        order = OrderCreationService(session).create_pending_order(
+        if customer.organization_id != tenant.organization_id:
+            raise_order_http_error(status.HTTP_404_NOT_FOUND, "tenant_not_found", "Storefront is unavailable.")
+        order = OrderCreationService(session, tenant).create_pending_order(
             domain_request,
             now=now,
             customer_user_id=customer.user_id,
@@ -181,17 +185,12 @@ def get_pending_order(
     ],
     customer: AuthPrincipal = Depends(current_ordering_customer),
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(ladels_compatibility_tenant),
 ) -> PendingOrderResponse:
     try:
-        order = session.scalar(
-            select(Order)
-            .options(
-                selectinload(Order.items).selectinload(OrderItem.modifiers),
-            )
-            .where(
-                Order.public_access_token == public_token,
-                Order.customer_user_id == customer.user_id,
-            )
+        order = OrderRepository(session, tenant).get_by_public_access_token(
+            public_token,
+            customer_user_id=customer.user_id,
         )
         if order is None:
             raise_order_http_error(

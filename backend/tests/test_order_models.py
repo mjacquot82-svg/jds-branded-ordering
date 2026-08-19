@@ -19,7 +19,7 @@ from app.catalog.models import (
 from app.orders.constants import OrderStatus
 from app.orders.models import Order, OrderItem, OrderItemModifier
 from app.orders.repository import OrderRepository
-from app.tenancy.resolver import LADELS_ORGANIZATION_ID
+from app.tenancy.resolver import LADELS_ORGANIZATION_ID, resolve_internal_ladels_compatibility_context
 from tests.test_migrations import make_alembic_config
 
 
@@ -51,6 +51,7 @@ def order_engine(postgresql_url: str) -> Iterator[Engine]:
 
 def make_order(now: datetime) -> Order:
     return Order(
+        organization_id=LADELS_ORGANIZATION_ID,
         idempotency_key="order-key-123",
         request_fingerprint="a" * 64,
         public_access_token="public-token-123",
@@ -159,7 +160,7 @@ def test_order_models_persist_complete_snapshot_relationships(
         session.add(order)
         session.commit()
 
-        persisted = OrderRepository(session).get_by_idempotency_key(
+        persisted = OrderRepository(session, resolve_internal_ladels_compatibility_context(session)).get_by_idempotency_key(
             "order-key-123"
         )
         assert persisted is order
@@ -234,16 +235,17 @@ def test_database_constraints_reject_invalid_order_totals_and_lines(
         order_id = connection.scalar(
             text(
                 "INSERT INTO orders "
-                "(idempotency_key, request_fingerprint, public_access_token, "
+                "(organization_id, idempotency_key, request_fingerprint, public_access_token, "
                 "guest_name, guest_email, guest_phone, requested_pickup_at, "
                 "business_timezone, subtotal_cents, tax_cents, total_cents, "
                 "expires_at, created_at, updated_at) VALUES "
-                "('valid-key', :fingerprint, 'valid-token', 'Guest', "
+                "(:organization_id, 'valid-key', :fingerprint, 'valid-token', 'Guest', "
                 "'guest@example.com', '+15551234567', :pickup, "
                 "'America/New_York', 500, 0, 500, :expires, :now, :now) "
                 "RETURNING id"
             ),
             {
+                "organization_id": LADELS_ORGANIZATION_ID,
                 "fingerprint": "a" * 64,
                 "pickup": now + timedelta(hours=1),
                 "expires": now + timedelta(minutes=30),
@@ -254,14 +256,15 @@ def test_database_constraints_reject_invalid_order_totals_and_lines(
     invalid_statements = [
         (
             "INSERT INTO orders "
-            "(idempotency_key, request_fingerprint, public_access_token, "
+            "(organization_id, idempotency_key, request_fingerprint, public_access_token, "
             "guest_name, guest_email, guest_phone, requested_pickup_at, "
             "business_timezone, subtotal_cents, tax_cents, total_cents, "
             "expires_at, created_at, updated_at) VALUES "
-            "('bad-total', :fingerprint, 'bad-total-token', 'Guest', "
+            "(:organization_id, 'bad-total', :fingerprint, 'bad-total-token', 'Guest', "
             "'guest@example.com', '+15551234567', :pickup, "
             "'America/New_York', 500, 0, 499, :expires, :now, :now)",
             {
+                "organization_id": LADELS_ORGANIZATION_ID,
                 "fingerprint": "b" * 64,
                 "pickup": now + timedelta(hours=1),
                 "expires": now + timedelta(minutes=30),

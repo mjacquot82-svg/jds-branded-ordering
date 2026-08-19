@@ -27,7 +27,7 @@ from app.orders.schemas import (
     ConfiguredOrderLineInput,
     CreatePendingOrderInput,
 )
-from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
+from app.tenancy.context import TenantContext
 
 
 class OrderCreationErrorCode(str, Enum):
@@ -55,18 +55,20 @@ class ValidatedLine:
 class OrderCreationService:
     """Validates and persists one complete pending-order aggregate."""
 
-    _IDEMPOTENCY_CONSTRAINT = "uq_orders_idempotency_key"
+    _IDEMPOTENCY_CONSTRAINT = "uq_orders_organization_idempotency_key"
 
     def __init__(
         self,
         session: Session,
+        tenant: TenantContext,
         *,
         pending_expiry_minutes: int = DEFAULT_PENDING_EXPIRY_MINUTES,
     ) -> None:
         if pending_expiry_minutes < 1:
             raise ValueError("pending_expiry_minutes must be positive.")
         self._session = session
-        self._orders = OrderRepository(session)
+        self._tenant = tenant
+        self._orders = OrderRepository(session, tenant)
         self._pending_expiry_minutes = pending_expiry_minutes
 
     def create_pending_order(
@@ -83,7 +85,7 @@ class OrderCreationService:
         with self._session.begin():
             self._availability = AvailabilityRepository(
                 self._session,
-                resolve_internal_ladels_compatibility_context(self._session),
+                self._tenant,
             )
             self._pickup = PickupSchedulingService(self._availability)
             self._sellability = SellabilityService(self._availability)
@@ -120,6 +122,7 @@ class OrderCreationService:
                 subtotal_cents, settings.tax_rate_millionths
             )
             order = Order(
+                organization_id=self._tenant.organization_id,
                 customer_user_id=customer_user_id,
                 idempotency_key=request.idempotency_key,
                 request_fingerprint=fingerprint,

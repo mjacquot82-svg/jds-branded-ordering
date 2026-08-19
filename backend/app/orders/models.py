@@ -69,11 +69,37 @@ class Order(OrderModelValidation, Base):
             name="status_valid",
         ),
         Index(
-            "ix_orders_active_queue",
+            "ix_orders_organization_active_queue",
+            "organization_id",
             "status",
             "fulfillment_status",
             "requested_pickup_at",
             "created_at",
+        ),
+        Index(
+            "ix_orders_organization_customer_created",
+            "organization_id",
+            "customer_user_id",
+            "created_at",
+        ),
+        Index(
+            "ix_orders_organization_fulfillment_pickup",
+            "organization_id",
+            "fulfillment_status",
+            "requested_pickup_at",
+        ),
+        UniqueConstraint(
+            "organization_id", "id", name="uq_orders_organization_id_id"
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "idempotency_key",
+            name="uq_orders_organization_idempotency_key",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "public_access_token",
+            name="uq_orders_organization_public_access_token",
         ),
         CheckConstraint(
             "fulfillment_status IN "
@@ -132,12 +158,15 @@ class Order(OrderModelValidation, Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
     customer_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("jds_users.id", ondelete="SET NULL"), index=True
     )
-    idempotency_key: Mapped[str] = mapped_column(String(200), unique=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
     request_fingerprint: Mapped[str] = mapped_column(String(64))
-    public_access_token: Mapped[str] = mapped_column(String(200), unique=True)
+    public_access_token: Mapped[str] = mapped_column(String(200))
     status: Mapped[OrderStatus] = mapped_column(
         String(30),
         default=OrderStatus.PENDING,
@@ -147,7 +176,6 @@ class Order(OrderModelValidation, Base):
         String(30),
         default=FulfillmentStatus.NEW,
         server_default=FulfillmentStatus.NEW.value,
-        index=True,
     )
     guest_name: Mapped[str] = mapped_column(String(200))
     guest_email: Mapped[str] = mapped_column(String(320))

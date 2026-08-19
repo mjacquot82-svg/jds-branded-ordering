@@ -26,11 +26,15 @@ from app.clover.security import (
 )
 from app.api.v1.owner_auth import require_permission, require_read_permission
 from app.api.v1.customer_auth import current_ordering_customer
+from app.api.v1.catalog import ladels_compatibility_tenant
+from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.db.session import get_db_session
 from app.orders.constants import OrderStatus
 from app.orders.models import Order, OrderItem
 from app.jds_auth.service import AuthPrincipal
 from app.orders.pricing import calculate_tax_cents
+from app.tenancy.context import TenantContext
+from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
 
 router = APIRouter(prefix="/clover", tags=["clover"])
 logger = logging.getLogger(__name__)
@@ -746,6 +750,7 @@ def create_hosted_checkout(
     customer: AuthPrincipal = Depends(current_ordering_customer),
     session: Session = Depends(get_db_session),
     settings: CloverSettings = Depends(get_settings),
+    tenant: TenantContext = Depends(ladels_compatibility_tenant),
 ) -> CloverCheckoutResponse:
     response.headers["Cache-Control"] = "no-store"
     merchant_id, access_token = _active_credential(session, settings)
@@ -757,6 +762,7 @@ def create_hosted_checkout(
             .where(
                 Order.public_access_token == public_token,
                 Order.customer_user_id == customer.user_id,
+                Order.organization_id == tenant.organization_id,
             )
             .with_for_update()
         )
@@ -1009,11 +1015,13 @@ async def hosted_checkout_webhook(
             ) from error
 
     try:
+        tenant = resolve_internal_ladels_compatibility_context(session)
         order = session.scalar(
             select(Order)
             .where(
                 Order.clover_checkout_session_id == checkout_session_id,
                 Order.clover_merchant_id == merchant_id,
+                Order.organization_id == tenant.organization_id,
             )
             .with_for_update()
         )
@@ -1172,6 +1180,7 @@ def reconcile_hosted_checkout_payment(
     session: Session = Depends(get_db_session),
     settings: CloverSettings = Depends(get_settings),
     _: object = Depends(require_permission("integrations.manage")),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
 ) -> Response:
     """Recover a missed webhook only when Clover proves every required identity."""
     if settings.environment != "production":
@@ -1179,7 +1188,7 @@ def reconcile_hosted_checkout_payment(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "reconciliation_production_only"},
         )
-    order = session.scalar(select(Order).where(Order.public_access_token == public_token))
+    order = session.scalar(select(Order).where(Order.public_access_token == public_token, Order.organization_id == tenant.organization_id))
     if order is None:
         raise HTTPException(status_code=404, detail={"code": "order_not_found"})
     checkout_session_id = order.clover_checkout_session_id
@@ -1197,7 +1206,7 @@ def reconcile_hosted_checkout_payment(
         )
     merchant_id, access_token = _active_credential(session, settings)
     order = session.scalar(
-        select(Order).where(Order.public_access_token == public_token).with_for_update()
+        select(Order).where(Order.public_access_token == public_token, Order.organization_id == tenant.organization_id).with_for_update()
     )
     if order is None:
         raise HTTPException(status_code=404, detail={"code": "order_not_found"})

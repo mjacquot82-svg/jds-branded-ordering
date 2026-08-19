@@ -46,7 +46,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     config = make_alembic_config(postgresql_url)
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260819_22"]
+    assert script.get_heads() == ["20260820_23"]
 
     command.downgrade(config, "base")
     command.upgrade(config, "head")
@@ -55,7 +55,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     try:
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_22"
+            assert context.get_current_revision() == "20260820_23"
 
         assert set(inspect(engine).get_table_names()) >= {
             "alembic_version",
@@ -318,7 +318,7 @@ def test_tenant_availability_migration_backfills_and_enforces_ownership(
         command.upgrade(config, "head")
         inspector = inspect(engine)
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "20260819_22"
+            assert MigrationContext.configure(connection).get_current_revision() == "20260820_23"
             for table_name in (
                 "business_hours",
                 "business_closures",
@@ -395,6 +395,84 @@ def test_tenant_availability_migration_backfills_and_enforces_ownership(
     finally:
         engine.dispose()
 
+
+@pytest.mark.postgresql
+def test_tenant_order_migration_backfills_constraints_and_refuses_unsafe_downgrade(
+    postgresql_url: str,
+) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260819_22")
+    engine = create_engine(postgresql_url)
+    try:
+        with engine.begin() as connection:
+            organization_id = connection.scalar(
+                text("SELECT id FROM organizations WHERE slug = 'the-guest-house'")
+            )
+            order_id = connection.scalar(
+                text(
+                    "INSERT INTO orders (idempotency_key, request_fingerprint, "
+                    "public_access_token, guest_name, guest_email, guest_phone, "
+                    "requested_pickup_at, business_timezone, subtotal_cents, "
+                    "tax_cents, total_cents, expires_at) VALUES "
+                    "('historical', :fingerprint, 'shared-token', 'Historical', "
+                    "'history@example.com', '+15195550123', now() + interval '1 hour', "
+                    "'America/Toronto', 100, 0, 100, now() + interval '30 minutes') "
+                    "RETURNING id"
+                ),
+                {"fingerprint": "a" * 64},
+            )
+        command.upgrade(config, "head")
+        inspector = inspect(engine)
+        with engine.connect() as connection:
+            assert connection.scalar(
+                text("SELECT organization_id FROM orders WHERE id = :id"),
+                {"id": order_id},
+            ) == organization_id
+            assert MigrationContext.configure(connection).get_current_revision() == "20260820_23"
+        assert {c["name"] for c in inspector.get_unique_constraints("orders")} >= {
+            "uq_orders_organization_idempotency_key",
+            "uq_orders_organization_public_access_token",
+        }
+        assert {i["name"] for i in inspector.get_indexes("orders")} >= {
+            "ix_orders_organization_active_queue",
+            "ix_orders_organization_customer_created",
+            "ix_orders_organization_fulfillment_pickup",
+        }
+
+        command.downgrade(config, "20260819_22")
+        command.upgrade(config, "head")
+        with engine.begin() as connection:
+            tenant_b = uuid4()
+            connection.execute(
+                text("INSERT INTO organizations (id, slug, name) VALUES (:id, 'order-tenant-b', 'Order Tenant B')"),
+                {"id": tenant_b},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO orders (organization_id, idempotency_key, request_fingerprint, "
+                    "public_access_token, guest_name, guest_email, guest_phone, requested_pickup_at, "
+                    "business_timezone, subtotal_cents, tax_cents, total_cents, expires_at) VALUES "
+                    "(:organization_id, 'historical', :fingerprint, 'shared-token', 'Tenant B', "
+                    "'b@example.com', '+15195550124', now() + interval '1 hour', "
+                    "'America/Toronto', 100, 0, 100, now() + interval '30 minutes')"
+                ),
+                {"organization_id": tenant_b, "fingerprint": "b" * 64},
+            )
+        with pytest.raises(SQLAlchemyError, match="cannot safely downgrade tenant order data"):
+            command.downgrade(config, "20260819_22")
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM orders WHERE organization_id = :organization_id"),
+                {"organization_id": tenant_b},
+            )
+            connection.execute(
+                text("DELETE FROM organizations WHERE id = :organization_id"),
+                {"organization_id": tenant_b},
+            )
+    finally:
+        engine.dispose()
+
     command.downgrade(config, "base")
     command.upgrade(config, "head")
 
@@ -423,7 +501,7 @@ def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_22"
+            assert context.get_current_revision() == "20260820_23"
             assert connection.scalar(
                 text(
                     "SELECT name FROM categories "
@@ -480,7 +558,7 @@ def test_migration_bootstrap_reconciles_catalog_and_orders_without_data_loss(
         inspector = inspect(engine)
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_22"
+            assert context.get_current_revision() == "20260820_23"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "
@@ -560,7 +638,7 @@ def test_migration_bootstrap_resumes_interrupted_order_reconciliation(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_22"
+            assert context.get_current_revision() == "20260820_23"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "

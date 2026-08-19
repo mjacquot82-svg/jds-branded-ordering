@@ -23,6 +23,14 @@ from app.tenancy.resolver import (
     LADELS_ORGANIZATION_NAME,
     LADELS_ORGANIZATION_SLUG,
 )
+from app.tenancy.context import TenantContext, TenantResolutionSource
+
+
+TENANT = TenantContext(
+    organization_id=LADELS_ORGANIZATION_ID,
+    organization_slug=LADELS_ORGANIZATION_SLUG,
+    source=TenantResolutionSource.LADELS_COMPATIBILITY,
+)
 
 
 def _engine():
@@ -50,6 +58,7 @@ def _engine():
 
 def _order(session, *, order_id, customer_id, status, fulfillment="new", created_at, product_id, quantity):
     order = Order(
+        organization_id=LADELS_ORGANIZATION_ID,
         id=order_id,
         customer_user_id=customer_id,
         idempotency_key=f"quick-order-{order_id}",
@@ -131,8 +140,8 @@ def test_quick_order_uses_paid_quantity_recency_customer_ownership_and_current_c
         _order(session, order_id=11, customer_id=customer_id, status="paid", created_at=now, product_id=11, quantity=50)
 
     with Session(engine) as session:
-        assert CustomerRepository(session).quick_order_product_ids(customer_id) == [3, 1, 2]
-        assert CustomerRepository(session).quick_order_product_ids(uuid4()) == []
+        assert CustomerRepository(session, TENANT).quick_order_product_ids(customer_id) == [3, 1, 2]
+        assert CustomerRepository(session, TENANT).quick_order_product_ids(uuid4()) == []
 
 
 def test_quick_order_is_capped_at_six_with_a_deterministic_product_id_tie_break():
@@ -147,7 +156,7 @@ def test_quick_order_is_capped_at_six_with_a_deterministic_product_id_tie_break(
             _order(session, order_id=product_id, customer_id=customer_id, status="paid", created_at=now, product_id=product_id, quantity=1)
 
     with Session(engine) as session:
-        assert CustomerRepository(session).quick_order_product_ids(customer_id) == [1, 2, 3, 4, 5, 6]
+        assert CustomerRepository(session, TENANT).quick_order_product_ids(customer_id) == [1, 2, 3, 4, 5, 6]
 
 
 def test_exact_quick_order_preserves_quantity_and_uses_only_current_valid_catalog_price():
@@ -188,6 +197,7 @@ def test_exact_quick_order_preserves_quantity_and_uses_only_current_valid_catalo
             ProductModifierGroup(modifier_group=sugar, is_active=True, sort_order=1),
         ]
         order = Order(
+            organization_id=LADELS_ORGANIZATION_ID,
             id=1, customer_user_id=customer_id, idempotency_key="exact-quick-order",
             request_fingerprint="1" * 64, public_access_token="exact-quick-token",
             status="paid", fulfillment_status="completed", guest_name="Quick Customer",
@@ -221,7 +231,7 @@ def test_exact_quick_order_preserves_quantity_and_uses_only_current_valid_catalo
         session.add_all([product, variant, whole, sugar_option, order])
 
     with Session(engine) as session:
-        assert CustomerRepository(session).quick_order_configurations(customer_id) == [{
+        assert CustomerRepository(session, TENANT).quick_order_configurations(customer_id) == [{
             "product_id": "1",
             "variant_id": "20",
             "modifiers": [
@@ -234,4 +244,4 @@ def test_exact_quick_order_preserves_quantity_and_uses_only_current_valid_catalo
         session.commit()
 
     with Session(engine) as session:
-        assert CustomerRepository(session).quick_order_configurations(customer_id) == []
+        assert CustomerRepository(session, TENANT).quick_order_configurations(customer_id) == []

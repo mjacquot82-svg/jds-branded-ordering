@@ -18,6 +18,14 @@ from app.orders.fulfillment import FulfillmentError, FulfillmentErrorCode, Owner
 from app.orders.models import Order, OrderItem
 from tests.test_migrations import make_alembic_config
 from tests.test_order_service import local_datetime, seed_order_dependencies
+from app.tenancy.resolver import LADELS_ORGANIZATION_ID, resolve_internal_ladels_compatibility_context
+
+
+TenantOwnerOrderService = OwnerOrderService
+
+
+def OwnerOrderService(session: Session) -> TenantOwnerOrderService:
+    return TenantOwnerOrderService(session, resolve_internal_ladels_compatibility_context(session))
 
 
 def principal(
@@ -42,6 +50,7 @@ def add_order(
 ) -> Order:
     now = datetime.now(timezone.utc)
     order = Order(
+        organization_id=LADELS_ORGANIZATION_ID,
         idempotency_key=key,
         request_fingerprint=(key[0] * 64),
         public_access_token=f"token-{key}",

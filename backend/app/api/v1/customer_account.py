@@ -11,6 +11,13 @@ from app.customers.service import CustomerAccountService
 from app.jds_auth.service import AuthPrincipal
 from app.orders.constants import FulfillmentStatus
 from app.orders.models import Order
+from app.tenancy.resolver import resolve_owner_tenant_context
+
+
+def _customer_tenant(session: Session, principal: AuthPrincipal):
+    return resolve_owner_tenant_context(
+        session, principal_organization_id=principal.organization_id
+    )
 
 
 class CustomerOrderDetail(PendingOrderResponse):
@@ -33,7 +40,7 @@ router = APIRouter(prefix="/customer", tags=["customer-account"])
 def get_profile(response: Response, principal: AuthPrincipal = Depends(current_customer), session: Session = Depends(get_order_session)) -> CustomerProfileResponse:
     response.headers["Cache-Control"] = "no-store"
     try:
-        return CustomerAccountService(session).profile(principal.user_id)
+        return CustomerAccountService(session, _customer_tenant(session, principal)).profile(principal.user_id)
     except (SQLAlchemyError, LookupError) as error:
         raise HTTPException(status_code=503, detail="Customer profile is unavailable.") from error
 
@@ -42,7 +49,7 @@ def get_profile(response: Response, principal: AuthPrincipal = Depends(current_c
 def update_profile(payload: CustomerProfileUpdate, response: Response, principal: AuthPrincipal = Depends(customer_csrf), session: Session = Depends(get_order_session)) -> CustomerProfileResponse:
     response.headers["Cache-Control"] = "no-store"
     try:
-        return CustomerAccountService(session).update_profile(principal.user_id, payload)
+        return CustomerAccountService(session, _customer_tenant(session, principal)).update_profile(principal.user_id, payload)
     except (SQLAlchemyError, LookupError) as error:
         raise HTTPException(status_code=503, detail="Customer profile is unavailable.") from error
 
@@ -66,7 +73,7 @@ def list_orders(principal: AuthPrincipal = Depends(current_customer), session: S
                     quantity=modifier.quantity,
                 ) for modifier in order.items[0].modifiers],
             ),
-        ) for order in CustomerRepository(session).orders(principal.user_id)]
+        ) for order in CustomerRepository(session, _customer_tenant(session, principal)).orders(principal.user_id)]
     except SQLAlchemyError as error:
         raise HTTPException(status_code=503, detail="Order history is unavailable.") from error
 
@@ -75,7 +82,7 @@ def list_orders(principal: AuthPrincipal = Depends(current_customer), session: S
 def quick_order(response: Response, principal: AuthPrincipal = Depends(current_customer), session: Session = Depends(get_order_session)) -> CustomerQuickOrderResponse:
     response.headers["Cache-Control"] = "no-store"
     try:
-        repository = CustomerRepository(session)
+        repository = CustomerRepository(session, _customer_tenant(session, principal))
         product_ids = repository.quick_order_product_ids(principal.user_id)
         return CustomerQuickOrderResponse(product_ids=[str(product_id) for product_id in product_ids], configurations=repository.quick_order_configurations(principal.user_id))
     except SQLAlchemyError as error:
@@ -85,7 +92,7 @@ def quick_order(response: Response, principal: AuthPrincipal = Depends(current_c
 @router.get("/orders/{order_id}", response_model=CustomerOrderDetail)
 def get_order(order_id: int, principal: AuthPrincipal = Depends(current_customer), session: Session = Depends(get_order_session)) -> CustomerOrderDetail:
     try:
-        order = CustomerRepository(session).order(principal.user_id, order_id)
+        order = CustomerRepository(session, _customer_tenant(session, principal)).order(principal.user_id, order_id)
         if order is None:
             raise HTTPException(status_code=404, detail="Order not found.")
         return CustomerOrderDetail.from_model(order)

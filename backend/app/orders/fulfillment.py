@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.availability.repository import AvailabilityRepository
-from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
+from app.tenancy.context import TenantContext
 from app.orders.constants import FulfillmentStatus, OrderStatus
 from app.orders.models import Order
 from app.orders.repository import OrderRepository
@@ -41,9 +41,10 @@ TRANSITIONS = {
 
 
 class OwnerOrderService:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, tenant: TenantContext) -> None:
         self._session = session
-        self._orders = OrderRepository(session)
+        self._tenant = tenant
+        self._orders = OrderRepository(session, tenant)
 
     def active_orders(self, *, now: datetime) -> list[Order]:
         return self._orders.active_orders(unpaid_cutoff=now - timedelta(days=1))
@@ -98,14 +99,17 @@ class OwnerOrderService:
                 "This order changed on another device. Refresh and try again.",
             )
         if target == FulfillmentStatus.COMPLETED:
-            LoyaltyService(self._session).award_completed_order(order_id)
+            LoyaltyService(self._session).award_completed_order(
+                order_id,
+                organization_id=self._tenant.organization_id,
+            )
         self._session.commit()
         return self.order(order_id)
 
     def dashboard(self, *, now: datetime) -> dict:
         settings = AvailabilityRepository(
             self._session,
-            resolve_internal_ladels_compatibility_context(self._session),
+            self._tenant,
         ).get_business_settings()
         if settings is None:
             raise RuntimeError("Business settings are unavailable.")

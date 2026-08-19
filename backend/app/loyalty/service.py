@@ -5,7 +5,7 @@ from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from app.catalog.models import Category, Product
-from app.jds_auth.models import JdsUser, Membership, Role
+from app.jds_auth.models import JdsUser
 from app.loyalty.models import CustomerLoyaltyEvent, LoyaltyProgram, LoyaltyProgramProduct
 from app.orders.constants import FulfillmentStatus, OrderStatus
 from app.orders.models import Order, OrderItem
@@ -77,21 +77,15 @@ class LoyaltyService:
         self.session.commit()
         return program
 
-    def award_completed_order(self, order_id: int) -> int:
-        order = self.session.scalar(select(Order).where(Order.id == order_id).with_for_update())
+    def award_completed_order(self, order_id: int, *, organization_id: UUID) -> int:
+        order = self.session.scalar(select(Order).where(Order.id == order_id, Order.organization_id == organization_id).with_for_update())
         if order is None or order.status != OrderStatus.PAID or order.fulfillment_status != FulfillmentStatus.COMPLETED or order.customer_user_id is None:
             return 0
         product_ids = set(self.session.scalars(select(OrderItem.source_product_id).where(OrderItem.order_id == order.id, OrderItem.source_product_id.is_not(None))))
         if not product_ids:
             return 0
-        active_organizations = set(self.session.scalars(select(Membership.organization_id).join(Role, Role.id == Membership.role_id).where(Membership.user_id == order.customer_user_id, Membership.status == "active", Role.key.in_(("customer", "owner")))))
-        # Orders predate organization ownership. Fail closed instead of awarding
-        # across tenants if an account ever has active memberships in more than
-        # one organization.
-        if len(active_organizations) != 1:
-            return 0
         eligible_product = exists(select(LoyaltyProgramProduct.id).where(LoyaltyProgramProduct.loyalty_program_id == LoyaltyProgram.id, LoyaltyProgramProduct.earning_eligible.is_(True), LoyaltyProgramProduct.product_id.in_(product_ids)))
-        programs = list(self.session.scalars(select(LoyaltyProgram).where(LoyaltyProgram.organization_id == next(iter(active_organizations)), LoyaltyProgram.enabled.is_(True), eligible_product).with_for_update()))
+        programs = list(self.session.scalars(select(LoyaltyProgram).where(LoyaltyProgram.organization_id == organization_id, LoyaltyProgram.enabled.is_(True), eligible_product).with_for_update()))
         awarded = 0
         for program in programs:
             existing_event_id = self.session.scalar(select(CustomerLoyaltyEvent.id).where(CustomerLoyaltyEvent.loyalty_program_id == program.id, CustomerLoyaltyEvent.related_order_id == order.id, CustomerLoyaltyEvent.event_type == "stamp_earned"))

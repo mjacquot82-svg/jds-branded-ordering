@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.availability.models import ProductAvailability
@@ -9,11 +9,13 @@ from app.customers.models import CustomerProfile
 from app.jds_auth.models import JdsUser
 from app.orders.constants import FulfillmentStatus, OrderStatus
 from app.orders.models import Order, OrderItem
+from app.tenancy.context import TenantContext
 
 
 class CustomerRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, tenant: TenantContext) -> None:
         self.session = session
+        self.tenant = tenant
 
     def user(self, user_id: UUID) -> JdsUser | None:
         return self.session.get(JdsUser, user_id)
@@ -35,7 +37,7 @@ class CustomerRepository:
     def latest_order_phone(self, user_id: UUID) -> str:
         return self.session.scalar(
             select(Order.guest_phone)
-            .where(Order.customer_user_id == user_id)
+            .where(Order.customer_user_id == user_id, Order.organization_id == self.tenant.organization_id)
             .order_by(Order.created_at.desc(), Order.id.desc())
             .limit(1)
         ) or ""
@@ -43,7 +45,8 @@ class CustomerRepository:
     def orders(self, user_id: UUID) -> list[Order]:
         return list(self.session.scalars(
             select(Order).options(selectinload(Order.items)).where(
-                Order.customer_user_id == user_id
+                Order.customer_user_id == user_id,
+                Order.organization_id == self.tenant.organization_id,
             ).order_by(Order.created_at.desc(), Order.id.desc())
         ).all())
 
@@ -51,7 +54,7 @@ class CustomerRepository:
         return self.session.scalar(
             select(Order).options(
                 selectinload(Order.items).selectinload(OrderItem.modifiers)
-            ).where(Order.customer_user_id == user_id, Order.id == order_id)
+            ).where(Order.customer_user_id == user_id, Order.id == order_id, Order.organization_id == self.tenant.organization_id)
         )
 
     def quick_order_product_ids(self, user_id: UUID, *, limit: int = 6) -> list[int]:
@@ -65,10 +68,16 @@ class CustomerRepository:
             .join(Category, Category.id == Product.category_id)
             .outerjoin(
                 ProductAvailability,
-                ProductAvailability.product_id == Product.id,
+                and_(
+                    ProductAvailability.product_id == Product.id,
+                    ProductAvailability.organization_id == self.tenant.organization_id,
+                ),
             )
             .where(
                 Order.customer_user_id == user_id,
+                Order.organization_id == self.tenant.organization_id,
+                Product.organization_id == self.tenant.organization_id,
+                Category.organization_id == self.tenant.organization_id,
                 Order.status == OrderStatus.PAID,
                 Order.fulfillment_status != FulfillmentStatus.CANCELLED,
                 Category.is_published.is_(True),
@@ -90,6 +99,7 @@ class CustomerRepository:
         items = self.session.scalars(
             select(OrderItem).join(Order).options(selectinload(OrderItem.modifiers)).where(
                 Order.customer_user_id == user_id,
+                Order.organization_id == self.tenant.organization_id,
                 Order.status == OrderStatus.PAID,
                 Order.fulfillment_status != FulfillmentStatus.CANCELLED,
             )
@@ -115,7 +125,7 @@ class CustomerRepository:
                 selectinload(Product.category), selectinload(Product.availability),
                 selectinload(Product.variants),
                 selectinload(Product.modifier_group_assignments).selectinload(ProductModifierGroup.modifier_group).selectinload(ModifierGroup.options),
-            ).where(Product.id == product_id))
+            ).where(Product.id == product_id, Product.organization_id == self.tenant.organization_id))
             if product is None or not product.is_published or product.archived_at is not None or not product.category.is_published or (product.availability and not product.availability.default_available):
                 continue
             active_variants = {variant.id: variant for variant in product.variants if variant.is_active}
