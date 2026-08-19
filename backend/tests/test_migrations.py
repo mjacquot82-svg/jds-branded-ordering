@@ -1,0 +1,380 @@
+from pathlib import Path
+
+import pytest
+from alembic import command
+from alembic.autogenerate import compare_metadata
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import create_engine, inspect, text
+
+from app.availability import models as availability_models  # noqa: F401
+from app.catalog import models as catalog_models  # noqa: F401
+from app.clover import models as clover_models  # noqa: F401
+from app.orders import models as order_models  # noqa: F401
+from app.jds_auth import models as auth_models  # noqa: F401
+from app.loyalty import models as loyalty_models  # noqa: F401
+from app.db.base import Base
+from app.db.migrate import (
+    MigrationBootstrapError,
+    _alembic_config,
+    migrate_database,
+)
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+
+def make_alembic_config(database_url: str) -> Config:
+    config = Config(str(BACKEND_ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    return config
+
+
+def test_migration_config_preserves_percent_encoded_database_urls() -> None:
+    database_url = (
+        "postgresql+psycopg://postgres.project:p%40ss%25word@"
+        "pooler.example.com:5432/postgres"
+    )
+
+    assert _alembic_config(database_url).get_main_option("sqlalchemy.url") == database_url
+
+
+@pytest.mark.postgresql
+def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
+    config = make_alembic_config(postgresql_url)
+    script = ScriptDirectory.from_config(config)
+
+    assert script.get_heads() == ["20260818_20"]
+
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+
+    engine = create_engine(postgresql_url)
+    try:
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection)
+            assert context.get_current_revision() == "20260818_20"
+
+        assert set(inspect(engine).get_table_names()) >= {
+            "alembic_version",
+            "categories",
+            "products",
+            "product_variants",
+            "modifier_groups",
+            "modifier_options",
+            "product_modifier_groups",
+            "business_settings",
+            "business_hours",
+            "business_closures",
+            "product_availability",
+            "product_availability_overrides",
+            "orders",
+            "order_items",
+            "order_item_modifiers",
+            "clover_installations",
+            "clover_payment_events",
+            "jds_applications",
+            "organizations",
+            "jds_users",
+            "external_identities",
+            "auth_roles",
+            "auth_permissions",
+            "auth_role_permissions",
+            "organization_memberships",
+            "owner_sessions",
+            "owner_invitations",
+            "security_audit_events",
+            "auth_rate_limit_buckets",
+            "staff_pin_credentials",
+            "customer_profiles",
+            "customer_notification_preferences",
+            "web_push_subscriptions",
+            "push_announcements",
+            "push_delivery_attempts",
+            "loyalty_programs",
+            "loyalty_program_products",
+            "customer_loyalty_events",
+        }
+        currency_column = next(
+            column
+            for column in inspect(engine).get_columns("orders")
+            if column["name"] == "currency"
+        )
+        assert "CAD" in str(currency_column["default"])
+        lunch_special_column = next(
+            column
+            for column in inspect(engine).get_columns("products")
+            if column["name"] == "is_lunch_special"
+        )
+        assert lunch_special_column["nullable"] is False
+        assert any(
+            index["name"] == "uq_products_single_lunch_special"
+            and index["unique"]
+            for index in inspect(engine).get_indexes("products")
+        )
+
+        command.downgrade(config, "base")
+        assert set(inspect(engine).get_table_names()).isdisjoint(
+            {
+                "categories",
+                "products",
+                "product_variants",
+                "modifier_groups",
+                "modifier_options",
+                "product_modifier_groups",
+                "business_settings",
+                "business_hours",
+                "business_closures",
+                "product_availability",
+                "product_availability_overrides",
+                "orders",
+                "order_items",
+                "order_item_modifiers",
+                "clover_installations",
+                "clover_payment_events",
+                "jds_applications",
+                "organizations",
+                "jds_users",
+                "external_identities",
+                "auth_roles",
+                "auth_permissions",
+                "auth_role_permissions",
+                "organization_memberships",
+                "owner_sessions",
+                "owner_invitations",
+                "security_audit_events",
+                "auth_rate_limit_buckets",
+                "staff_pin_credentials",
+                "customer_profiles",
+                "customer_notification_preferences",
+                "web_push_subscriptions",
+                "push_announcements",
+                "push_delivery_attempts",
+                "loyalty_programs",
+                "loyalty_program_products",
+                "customer_loyalty_events",
+            }
+        )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+
+
+@pytest.mark.postgresql
+def test_catalog_models_match_migration(postgresql_url: str) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.upgrade(config, "head")
+
+    engine = create_engine(postgresql_url)
+    try:
+        with engine.connect() as connection:
+            context = MigrationContext.configure(
+                connection,
+                opts={
+                    "compare_type": True,
+                    "target_metadata": Base.metadata,
+                },
+            )
+            differences = compare_metadata(context, Base.metadata)
+    finally:
+        engine.dispose()
+
+    assert differences == []
+
+
+@pytest.mark.postgresql
+def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
+    postgresql_url: str,
+) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260727_01")
+
+    engine = create_engine(postgresql_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO categories "
+                    "(slug, name, is_published, sort_order) "
+                    "VALUES ('existing-category', 'Existing Category', true, 0)"
+                )
+            )
+            connection.execute(text("DROP TABLE alembic_version"))
+
+        migrate_database(postgresql_url)
+
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection)
+            assert context.get_current_revision() == "20260818_20"
+            assert connection.scalar(
+                text(
+                    "SELECT name FROM categories "
+                    "WHERE slug = 'existing-category'"
+                )
+            ) == "Existing Category"
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.postgresql
+def test_migration_bootstrap_reconciles_catalog_and_orders_without_data_loss(
+    postgresql_url: str,
+) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260728_03")
+
+    engine = create_engine(postgresql_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO categories "
+                    "(slug, name, is_published, sort_order) "
+                    "VALUES ('legacy-category', 'Legacy Category', true, 0)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO orders "
+                    "(idempotency_key, request_fingerprint, public_access_token, "
+                    "status, guest_name, guest_email, guest_phone, "
+                    "requested_pickup_at, business_timezone, currency, "
+                    "subtotal_cents, tax_cents, total_cents, version, expires_at) "
+                    "VALUES ('legacy-order-key', :fingerprint, 'legacy-token', "
+                    "'pending', 'Legacy Guest', 'legacy@example.com', "
+                    "'+15555550100', now(), 'America/Toronto', 'USD', "
+                    "1250, 0, 1250, 1, now() + interval '1 hour')"
+                ),
+                {"fingerprint": "a" * 64},
+            )
+            connection.execute(
+                text(
+                    "DROP TABLE product_availability_overrides, "
+                    "product_availability, business_closures, business_hours, "
+                    "business_settings"
+                )
+            )
+            connection.execute(text("DROP TABLE alembic_version"))
+
+        migrate_database(postgresql_url)
+
+        inspector = inspect(engine)
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection)
+            assert context.get_current_revision() == "20260818_20"
+            assert connection.scalar(
+                text(
+                    "SELECT guest_name FROM orders "
+                    "WHERE idempotency_key = 'legacy-order-key'"
+                )
+            ) == "Legacy Guest"
+            assert connection.scalar(
+                text(
+                    "SELECT name FROM categories "
+                    "WHERE slug = 'legacy-category'"
+                )
+            ) == "Legacy Category"
+
+        assert {
+            "business_settings",
+            "business_hours",
+            "business_closures",
+            "product_availability",
+            "product_availability_overrides",
+            "clover_installations",
+        }.issubset(inspector.get_table_names())
+        assert {
+            "clover_merchant_id",
+            "clover_checkout_session_id",
+            "clover_checkout_url",
+            "clover_checkout_expires_at",
+        }.issubset(
+            column["name"] for column in inspector.get_columns("orders")
+        )
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.postgresql
+@pytest.mark.parametrize("interrupted_revision", ["20260727_01", "20260728_02"])
+def test_migration_bootstrap_resumes_interrupted_order_reconciliation(
+    postgresql_url: str,
+    interrupted_revision: str,
+) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260728_03")
+
+    engine = create_engine(postgresql_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO orders "
+                    "(idempotency_key, request_fingerprint, public_access_token, "
+                    "status, guest_name, guest_email, guest_phone, "
+                    "requested_pickup_at, business_timezone, currency, "
+                    "subtotal_cents, tax_cents, total_cents, version, expires_at) "
+                    "VALUES ('resume-order-key', :fingerprint, 'resume-token', "
+                    "'pending', 'Resume Guest', 'resume@example.com', "
+                    "'+15555550101', now(), 'America/Toronto', 'USD', "
+                    "1250, 0, 1250, 1, now() + interval '1 hour')"
+                ),
+                {"fingerprint": "b" * 64},
+            )
+            connection.execute(text("DROP TABLE alembic_version"))
+
+        if interrupted_revision == "20260727_01":
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "DROP TABLE product_availability_overrides, "
+                        "product_availability, business_closures, business_hours, "
+                        "business_settings"
+                    )
+                )
+            command.stamp(config, "20260727_01")
+        else:
+            command.stamp(config, "20260728_02")
+
+        migrate_database(postgresql_url)
+
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection)
+            assert context.get_current_revision() == "20260818_20"
+            assert connection.scalar(
+                text(
+                    "SELECT guest_name FROM orders "
+                    "WHERE idempotency_key = 'resume-order-key'"
+                )
+            ) == "Resume Guest"
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.postgresql
+def test_migration_bootstrap_refuses_partial_unversioned_schema(
+    postgresql_url: str,
+) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    engine = create_engine(postgresql_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE categories (id bigint PRIMARY KEY)"))
+
+        with pytest.raises(MigrationBootstrapError, match="partial set"):
+            migrate_database(postgresql_url)
+
+        assert set(inspect(engine).get_table_names()) == {
+            "alembic_version",
+            "categories",
+        }
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE categories CASCADE"))
+        engine.dispose()
+        command.upgrade(config, "head")

@@ -1,0 +1,1 @@
+"""Guest customer information domain."""

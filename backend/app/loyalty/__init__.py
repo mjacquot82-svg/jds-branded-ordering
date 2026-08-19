@@ -1,0 +1,1 @@
+"""Customer loyalty domain."""
