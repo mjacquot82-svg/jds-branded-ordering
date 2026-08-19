@@ -8,7 +8,9 @@ export function OwnerAuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [status, setStatus] = useState("idle");
   const [businesses, setBusinesses] = useState([]);
+  const [businessStatus,setBusinessStatus]=useState("idle");const [businessError,setBusinessError]=useState("");
   const pendingSession = useRef(null);
+  const loadBusinesses=useCallback(async()=>{setBusinessStatus("loading");setBusinessError("");try{const items=await fetchAuthorizedOrganizations();setBusinesses(items);setBusinessStatus("ready");return items;}catch(error){setBusinesses([]);setBusinessStatus("error");setBusinessError(error.message);throw error;}},[]);
 
   const refreshSession = useCallback(async () => {
     if (pendingSession.current) return pendingSession.current;
@@ -17,7 +19,7 @@ export function OwnerAuthProvider({ children }) {
       .then((nextSession) => {
         setSession({ ...nextSession, platform_capabilities: [] });
         setStatus("authenticated");
-        fetchAuthorizedOrganizations().then(setBusinesses).catch(() => setBusinesses([]));
+        loadBusinesses().catch(() => {});
         fetchPlatformCapabilities().then(({ capabilities }) => setSession((current) => current ? ({ ...current, platform_capabilities: capabilities }) : current)).catch(() => {});
         return nextSession;
       })
@@ -30,15 +32,16 @@ export function OwnerAuthProvider({ children }) {
         pendingSession.current = null;
       });
     return pendingSession.current;
-  }, []);
+  }, [loadBusinesses]);
 
   const login = useCallback(async (email, password) => {
     const nextSession = await loginOwner(email, password);
     setSession({ ...nextSession, platform_capabilities: [] });
     setStatus("authenticated");
+    loadBusinesses().catch(() => {});
     fetchPlatformCapabilities().then(({ capabilities }) => setSession((current) => current ? ({ ...current, platform_capabilities: capabilities }) : current)).catch(() => {});
     return nextSession;
-  }, []);
+  }, [loadBusinesses]);
 
   const staffLogin = useCallback(async (staffId, pin) => {
     const nextSession = await loginStaff(staffId, pin);
@@ -55,18 +58,20 @@ export function OwnerAuthProvider({ children }) {
       setSession(null);
       setStatus("anonymous");
       setBusinesses([]);
+      setBusinessStatus("idle");setBusinessError("");
     }
   }, [session]);
 
   const selectBusiness = useCallback(async (membershipId) => {
-    const nextSession = await selectAuthorizedOrganization(membershipId, session.csrf_token);
-    setSession({ ...nextSession, platform_capabilities: session.platform_capabilities || [] });
-    globalThis.location?.reload?.();
-    return nextSession;
-  }, [session]);
+    setBusinessStatus("switching");setBusinessError("");
+    try{const nextSession = await selectAuthorizedOrganization(membershipId, session.csrf_token);
+      setSession({ ...nextSession, platform_capabilities: session.platform_capabilities || [] });
+      globalThis.location?.reload?.();return nextSession;
+    }catch(error){setBusinessStatus("error");setBusinessError(error.message);await loadBusinesses().catch(()=>{});throw error;}
+  }, [loadBusinesses,session]);
 
   return (
-    <OwnerAuthContext.Provider value={{ businesses, login, staffLogin, logout, refreshSession, selectBusiness, session, status }}>
+    <OwnerAuthContext.Provider value={{ businesses, businessError, businessStatus, login, staffLogin, logout, refreshSession, selectBusiness, session, status }}>
       {children}
     </OwnerAuthContext.Provider>
   );

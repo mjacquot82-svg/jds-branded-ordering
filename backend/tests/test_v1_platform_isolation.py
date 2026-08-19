@@ -11,11 +11,23 @@ from sqlalchemy.orm import Session
 
 from app.jds_auth.models import JdsApplication, JdsUser, Organization, Role
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
-from app.api.v1.platform import OnboardingInput, ProvisionOrganizationInput, entitlements, platform_organizations, provision_organization, save_onboarding
+from app.api.v1.platform import (
+    OnboardingInput,
+    ProvisionOrganizationInput,
+    disable_storefront,
+    entitlements,
+    launch_kit,
+    platform_organizations,
+    provision_organization,
+    retry_storefront,
+    save_onboarding,
+)
 from app.jds_auth.service import AuthPrincipal
 from app.loyalty.models import CustomerLoyaltyEvent, LoyaltyProgram
 from app.platform.models import BillingPlan, CustomerRelationship, DesignMediaReference, DesignVersion, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
 from app.platform.media import local_media_path, persist_local_image
+from app.platform.entitlements import enforce_entitlement
+from app.platform.assets import launch_qr_svg, tenant_icon_png
 from app.push.models import CustomerNotificationPreference, WebPushSubscription
 from app.tenancy.context import TenantContext, TenantResolutionSource
 from app.tenancy.resolver import TenantResolutionError, resolve_storefront_context
@@ -153,8 +165,23 @@ def test_platform_provisioning_is_explicit_idempotent_and_not_public(platform_db
     with Session(engine) as session:
         session.add(PlatformGrant(user_id=actor,capability="platform.organizations.write",is_active=True));session.commit()
         owner=session.get(JdsUser,actor)
-        application=JdsApplication(key="jds-commerce",name="JDS Commerce",is_active=True);session.add(application);session.flush()
-        session.add(Role(application_id=application.id,key="owner",name="Owner"));session.commit()
+        application = session.scalar(
+            select(JdsApplication).where(JdsApplication.key == "jds-commerce")
+        )
+        if application is None:
+            application = JdsApplication(
+                key="jds-commerce", name="JDS Commerce", is_active=True
+            )
+            session.add(application)
+            session.flush()
+        role = session.scalar(
+            select(Role).where(
+                Role.application_id == application.id, Role.key == "owner"
+            )
+        )
+        if role is None:
+            session.add(Role(application_id=application.id, key="owner", name="Owner"))
+        session.commit()
         created=provision_organization(ProvisionOrganizationInput(slug=f"new-{uuid4().hex[:8]}",display_name="New Café",owner_email=owner.primary_email),principal,session)
         assert created["publicReady"] is False and created["status"] == "onboarding"
         onboarding=session.get(OnboardingState,UUID(created["id"]))
@@ -165,8 +192,9 @@ def test_platform_provisioning_is_explicit_idempotent_and_not_public(platform_db
 
 
 @pytest.mark.postgresql
-def test_entitlements_are_resolved_only_for_the_selected_business(platform_db):
+def test_entitlements_are_resolved_only_for_the_selected_business(platform_db, monkeypatch):
     engine, (a, b, _, _, _) = platform_db
+    monkeypatch.setenv("JDS_BILLING_ENFORCEMENT_ENABLED","true")
     with Session(engine) as session:
         session.add_all([
             OrganizationSubscription(organization_id=a,plan_key="engagement-test",state="active"),
@@ -175,6 +203,10 @@ def test_entitlements_are_resolved_only_for_the_selected_business(platform_db):
         assert entitlements(context(a,"alpha"),session)["features"]["loyalty"] is True
         beta = entitlements(context(b,"beta"),session)
         assert beta["state"] == "past_due" and beta["features"] == {}
+        with pytest.raises(HTTPException) as denied:
+            enforce_entitlement(session,b,"loyalty")
+        assert denied.value.status_code == 403
+        enforce_entitlement(session,a,"loyalty")
 
 
 @pytest.mark.postgresql
@@ -186,7 +218,8 @@ def test_onboarding_checklist_cannot_override_server_readiness(platform_db):
         item.state = "in_progress"; item.public_ready = False; item.completed_steps = []; item.current_step = "business"
         session.commit()
         result = save_onboarding(OnboardingInput(revision=item.revision,current_step="complete",completed_steps=["business","storefront","hours","fulfillment","design","catalog","clover"]),principal,context(a,"alpha"),session)
-        assert result["state"] == "complete"
+        assert result["state"] == "in_progress"
+        assert result["completedSteps"] == ["storefront"]
         assert result["publicReady"] is False
         assert session.get(OnboardingState,a).public_ready is False
 
@@ -200,6 +233,57 @@ def test_local_media_storage_keys_are_tenant_and_asset_scoped(tmp_path, monkeypa
     assert key_a != key_b and key_a.startswith(f"{tenant_a}/") and key_b.startswith(f"{tenant_b}/")
     assert checksum_a == checksum_b
     assert local_media_path(key_a).read_bytes() == image
+
+
+def test_tenant_pwa_icons_and_launch_qr_are_tenant_specific():
+    alpha = tenant_icon_png(192, "#112233", "#abcdef")
+    beta = tenant_icon_png(192, "#445566", "#fedcba")
+    assert alpha.startswith(b"\x89PNG")
+    assert beta.startswith(b"\x89PNG")
+    assert alpha != beta
+    assert launch_qr_svg("https://alpha.example").startswith(b"<?xml")
+    assert launch_qr_svg("https://alpha.example") != launch_qr_svg(
+        "https://beta.example"
+    )
+
+
+@pytest.mark.postgresql
+def test_hostname_retry_disable_and_launch_assets_are_tenant_bound(
+    platform_db, monkeypatch
+):
+    engine, (a, b, actor, alpha_host, _) = platform_db
+    principal = AuthPrincipal(
+        user_id=actor,
+        membership_id=uuid4(),
+        organization_id=a,
+        application_id=uuid4(),
+        session_id=uuid4(),
+        email="owner@example.com",
+        display_name="Owner",
+        role="owner",
+        permissions=frozenset(),
+        assurance_level="password",
+    )
+    monkeypatch.setenv("JDS_STOREFRONT_SCHEME", "https")
+    with Session(engine) as session:
+        alpha = session.scalar(
+            select(StorefrontHostname).where(
+                StorefrontHostname.organization_id == a,
+                StorefrontHostname.hostname == alpha_host,
+            )
+        )
+        assert launch_kit(context(a, "alpha"), session)["url"] == (
+            f"https://{alpha_host}"
+        )
+        with pytest.raises(HTTPException) as foreign:
+            retry_storefront(alpha.id, principal, context(b, "beta"), session)
+        assert foreign.value.status_code == 404
+        retried = retry_storefront(alpha.id, principal, context(a, "alpha"), session)
+        assert retried["status"] == "pending"
+        assert session.get(OnboardingState, a).public_ready is False
+        disable_storefront(alpha.id, principal, context(a, "alpha"), session)
+        assert session.get(StorefrontHostname, alpha.id).status == "disabled"
+        assert session.get(OnboardingState, a).public_ready is False
 
 
 @pytest.mark.postgresql

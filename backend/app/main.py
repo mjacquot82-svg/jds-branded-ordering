@@ -1,5 +1,7 @@
 import os
 import asyncio
+import re
+import uuid
 from contextlib import suppress
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -20,6 +22,7 @@ from app.push.trigger import drain_push_outbox
 
 APP_NAME = "guesthouse-backend"
 APP_VERSION = "0.1.0"
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 def create_app(
@@ -85,8 +88,29 @@ def create_app(
         allow_origins=allowed_origins,
         allow_credentials=bool(frontend_url),
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Accept", "Content-Type", "X-CSRF-Token", "Idempotency-Key"],
+        allow_headers=[
+            "Accept",
+            "Content-Type",
+            "X-CSRF-Token",
+            "Idempotency-Key",
+            "X-Request-Id",
+        ],
+        expose_headers=["X-Request-Id"],
     )
+
+    @application.middleware("http")
+    async def attach_request_id(request: Request, call_next):
+        candidate = request.headers.get("X-Request-Id", "")
+        request_id = (
+            candidate
+            if REQUEST_ID_PATTERN.fullmatch(candidate)
+            else str(uuid.uuid4())
+        )
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-Id"] = request_id
+        return response
+
     application.include_router(api_v1_router)
 
     @application.get("/health/live")

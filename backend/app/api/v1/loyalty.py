@@ -12,6 +12,7 @@ from app.api.v1.owner_auth import require_permission, require_read_permission
 from app.jds_auth.service import AuthPrincipal
 from app.loyalty.models import LoyaltyProgramProduct
 from app.loyalty.service import DEFAULTS, LoyaltyService
+from app.platform.entitlements import enforce_entitlement
 
 router = APIRouter(tags=["loyalty"])
 
@@ -74,12 +75,14 @@ def summary_json(item: dict, *, include_activity: bool = True) -> dict:
 
 @router.get("/customer/loyalty")
 def customer_loyalty(response: Response, principal: AuthPrincipal = Depends(current_customer), session: Session = Depends(get_order_session)) -> dict:
+    enforce_entitlement(session,principal.organization_id,"loyalty")
     response.headers["Cache-Control"] = "no-store"
     return {"programs": [summary_json(item) for item in LoyaltyService(session).customer_summary(principal.user_id, principal.organization_id, include_inactive=True)]}
 
 
 @router.get("/owner/loyalty")
 def owner_loyalty(response: Response, principal: AuthPrincipal = Depends(require_read_permission("loyalty.manage")), session: Session = Depends(get_order_session)) -> dict:
+    enforce_entitlement(session,principal.organization_id,"loyalty")
     response.headers["Cache-Control"] = "no-store"
     service = LoyaltyService(session)
     programs = service.programs(principal.organization_id)
@@ -88,6 +91,7 @@ def owner_loyalty(response: Response, principal: AuthPrincipal = Depends(require
 
 @router.put("/owner/loyalty/program")
 def save_program(payload: ProgramInput, principal: AuthPrincipal = Depends(require_permission("loyalty.manage")), session: Session = Depends(get_order_session)) -> dict:
+    enforce_entitlement(session,principal.organization_id,"loyalty")
     service = LoyaltyService(session)
     try:
         program = service.save_program(principal.organization_id, program_id=payload.id, values=payload.model_dump(), earning_product_ids=set(payload.earning_product_ids), reward_product_ids=set(payload.reward_product_ids))
@@ -99,12 +103,14 @@ def save_program(payload: ProgramInput, principal: AuthPrincipal = Depends(requi
 
 @router.get("/owner/loyalty/customers")
 def search_customers(q: str = Query(min_length=2, max_length=100), principal: AuthPrincipal = Depends(require_read_permission("loyalty.adjust")), session: Session = Depends(get_order_session)) -> dict:
+    enforce_entitlement(session,principal.organization_id,"loyalty")
     service = LoyaltyService(session)
     return {"customers": [{"id": str(user.id), "name": user.display_name, "email": user.primary_email, "programs": [summary_json(item, include_activity=False) for item in service.customer_summary(user.id, principal.organization_id, include_inactive=True)]} for user in service.customers(principal.organization_id, q)]}
 
 
 @router.post("/owner/loyalty/adjustments", status_code=201)
 def adjust(payload: AdjustmentInput, principal: AuthPrincipal = Depends(require_permission("loyalty.adjust")), session: Session = Depends(get_order_session)) -> dict:
+    enforce_entitlement(session,principal.organization_id,"loyalty")
     service = LoyaltyService(session)
     program = service.program(principal.organization_id, payload.program_id)
     if program is None or service.customer(principal.organization_id, payload.customer_user_id) is None:

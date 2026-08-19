@@ -12,6 +12,7 @@ from app.jds_auth.service import utc_now
 from app.push.trigger import drain_push_outbox
 from app.communications.service import CommunicationCenterService
 from app.jds_auth.service import AuthPrincipal
+from app.platform.entitlements import enforce_entitlement
 
 router = APIRouter(prefix="/owner/communications", tags=["owner-communications"])
 
@@ -87,6 +88,7 @@ def communication_center(
     principal: AuthPrincipal = Depends(require_read_permission("communications.announce")),
     session: Session = Depends(get_order_session),
 ) -> CommunicationCenterResponse:
+    enforce_entitlement(session,principal.organization_id,"notifications")
     try:
         result = CommunicationCenterResponse.model_validate(
             CommunicationCenterService(session, request.app.state.push_settings).snapshot(
@@ -127,6 +129,7 @@ def enforce_push_limit(request: Request, session: Session, principal: AuthPrinci
 
 @router.post("/lunch-special", status_code=202)
 def send_lunch(payload: LunchSend, request: Request, background_tasks: BackgroundTasks, idempotency_key: str|None=Header(None,alias="Idempotency-Key"), principal:AuthPrincipal=Depends(require_permission("communications.announce")), now:datetime=Depends(utc_now), session:Session=Depends(get_order_session)) -> dict:
+    enforce_entitlement(session,principal.organization_id,"notifications")
     enforce_push_limit(request,session,principal,now)
     if payload.kind != "lunch_special": raise HTTPException(422, detail={"code":"kind_invalid","message":"Lunch Special intent is required."})
     if payload.override and (principal.role != "owner" or not payload.confirm_override): raise HTTPException(403, detail={"code":"override_forbidden","message":"Only an Owner may explicitly confirm a resend."})
@@ -143,6 +146,7 @@ def send_lunch(payload: LunchSend, request: Request, background_tasks: Backgroun
 
 @router.post("/general", status_code=202)
 def send_general(payload:GeneralSend, request:Request,background_tasks:BackgroundTasks,idempotency_key:str|None=Header(None,alias="Idempotency-Key"),principal:AuthPrincipal=Depends(require_permission("communications.general_announce")),now:datetime=Depends(utc_now),session:Session=Depends(get_order_session)) -> dict:
+    enforce_entitlement(session,principal.organization_id,"notifications")
     enforce_push_limit(request,session,principal,now)
     title=payload.title.strip(); body=payload.body.strip(); route=payload.target_route
     if not (1<=len(title)<=80 and 1<=len(body)<=280): raise HTTPException(422,detail={"code":"content_invalid","message":"Title and message are required and too long."})

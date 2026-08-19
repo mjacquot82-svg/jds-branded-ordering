@@ -16,3 +16,10 @@ def hosted_storefront_hostname(slug: str) -> str | None:
 def default_plan_key() -> str | None:
     value = os.getenv("JDS_DEFAULT_BILLING_PLAN_KEY", "").strip()
     return value or None
+
+
+def storefront_url(hostname: str) -> str:
+    scheme = os.getenv("JDS_STOREFRONT_SCHEME", "https").strip().lower()
+    if scheme not in {"http", "https"}:
+        scheme = "https"
+    return f"{scheme}://{hostname}"

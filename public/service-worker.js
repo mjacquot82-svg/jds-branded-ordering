@@ -3,6 +3,9 @@ const TENANT_CACHE_ID = `jds-${self.location.hostname}`;
 const ALLOWED_ROUTES = new Set(["/", "/menu", "/account", "/orders"]);
 const MAX_TITLE_LENGTH = 80;
 const MAX_BODY_LENGTH = 280;
+self.addEventListener("activate", (event) => {
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith("jds-") && key !== TENANT_CACHE_ID).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
+});
 function safeDestination(value) {
   try {
     const url = new URL(value || "/", self.location.origin);
@@ -18,7 +21,7 @@ self.addEventListener("push", (event) => {
   const body = payload.body.trim();
   if (!title || title.length > MAX_TITLE_LENGTH || !body || body.length > MAX_BODY_LENGTH) return;
   event.waitUntil(self.registration.showNotification(title, {
-    body, icon: "/icon-192.png", badge: "/icon-192.png",
+    body, icon: "/api/v1/storefront/icon/192.png", badge: "/api/v1/storefront/icon/192.png",
     tag: payload.announcementId ? `announcement-${payload.announcementId}` : undefined,
     data: { destination: safeDestination(payload.destination), announcementId: payload.announcementId },
   }));

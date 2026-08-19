@@ -80,3 +80,12 @@ def evaluate_publish_readiness(session: Session, organization_id: UUID) -> Readi
         key: value for key, value in launch.checks.items()
         if key in {"business_profile", "fulfillment", "hours", "catalog", "clover"}
     })
+
+
+def onboarding_completed_steps(result: ReadinessResult) -> list[str]:
+    mapping = {
+        "business": "business_profile", "storefront": "verified_hostname",
+        "hours": "hours", "fulfillment": "fulfillment",
+        "design": "published_design", "catalog": "catalog", "clover": "clover",
+    }
+    return [step for step, check in mapping.items() if result.checks.get(check, False)]
