@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.availability.models import ProductAvailability
 from app.availability.repository import AvailabilityRepository
+from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
 from app.availability.service import AvailabilityConfigurationError, SellabilityService
 from app.catalog.models import Category, Product
 from app.push.config import PushSettings
@@ -171,7 +172,12 @@ class CommunicationCenterService:
         orderable = bool(customer_visible and available)
         if at is not None:
             try:
-                orderable = SellabilityService(AvailabilityRepository(self._session)).evaluate(product.id, at=at).is_sellable
+                orderable = SellabilityService(
+                    AvailabilityRepository(
+                        self._session,
+                        resolve_internal_ladels_compatibility_context(self._session),
+                    )
+                ).evaluate(product.id, at=at).is_sellable
             except AvailabilityConfigurationError:
                 orderable = False
         warnings: list[str] = []

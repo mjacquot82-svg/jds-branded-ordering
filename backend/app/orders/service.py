@@ -27,6 +27,7 @@ from app.orders.schemas import (
     ConfiguredOrderLineInput,
     CreatePendingOrderInput,
 )
+from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
 
 
 class OrderCreationErrorCode(str, Enum):
@@ -66,9 +67,6 @@ class OrderCreationService:
             raise ValueError("pending_expiry_minutes must be positive.")
         self._session = session
         self._orders = OrderRepository(session)
-        self._availability = AvailabilityRepository(session)
-        self._pickup = PickupSchedulingService(self._availability)
-        self._sellability = SellabilityService(self._availability)
         self._pending_expiry_minutes = pending_expiry_minutes
 
     def create_pending_order(
@@ -83,6 +81,12 @@ class OrderCreationService:
 
         fingerprint = self._fingerprint(request)
         with self._session.begin():
+            self._availability = AvailabilityRepository(
+                self._session,
+                resolve_internal_ladels_compatibility_context(self._session),
+            )
+            self._pickup = PickupSchedulingService(self._availability)
+            self._sellability = SellabilityService(self._availability)
             existing = self._orders.get_by_idempotency_key(
                 request.idempotency_key
             )

@@ -21,6 +21,7 @@ from app.catalog.repository import CatalogRepository
 from app.catalog.seed import seed_catalog
 from app.catalog.service import CatalogService
 from app.main import create_app
+from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
 from tests.test_migrations import make_alembic_config
 
 
@@ -251,12 +252,42 @@ async def test_catalog_returns_complete_seeded_guest_house_contract(
     }
 
 
+@pytest.mark.anyio
+@pytest.mark.postgresql
+async def test_catalog_rejects_client_tenant_hints_and_unknown_hosts(
+    catalog_client: AsyncClient,
+    catalog_api_engine: Engine,
+    postgresql_url: str,
+) -> None:
+    with Session(catalog_api_engine) as session:
+        seed_catalog(session)
+
+    conflicting = await catalog_client.get(
+        "/api/v1/catalog", headers={"X-Tenant-ID": "client-selected"}
+    )
+    assert conflicting.status_code == 404
+    assert conflicting.json()["detail"]["code"] == "tenant_not_found"
+
+    application = create_app(database_url=postgresql_url)
+    transport = ASGITransport(app=application)
+    try:
+        async with AsyncClient(
+            transport=transport, base_url="http://unknown.example"
+        ) as client:
+            unknown = await client.get("/api/v1/catalog")
+        assert unknown.status_code == 404
+        assert unknown.json()["detail"]["code"] == "tenant_not_found"
+    finally:
+        application.state.db_engine.dispose()
+
+
 @pytest.mark.postgresql
 def test_owner_catalog_hydrates_products_with_bounded_queries(
     catalog_api_engine: Engine,
 ) -> None:
     with Session(catalog_api_engine) as session:
         seed_catalog(session)
+        tenant = resolve_internal_ladels_compatibility_context(session)
         statements: list[str] = []
 
         def record_query(*args) -> None:
@@ -264,7 +295,9 @@ def test_owner_catalog_hydrates_products_with_bounded_queries(
 
         event.listen(catalog_api_engine, "before_cursor_execute", record_query)
         try:
-            catalog = CatalogService(CatalogRepository(session)).build_owner_catalog()
+            catalog = CatalogService(
+                CatalogRepository(session, tenant)
+            ).build_owner_catalog()
         finally:
             event.remove(catalog_api_engine, "before_cursor_execute", record_query)
 

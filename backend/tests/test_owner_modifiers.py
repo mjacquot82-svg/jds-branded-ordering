@@ -11,6 +11,10 @@ from app.catalog.models import Category, ModifierGroup, ModifierOption, Product
 from app.catalog.repository import CatalogRepository
 from app.catalog.schemas import OwnerModifierGroupWrite, OwnerModifierOptionWrite, OwnerProductWrite
 from app.catalog.service import CatalogService
+from app.tenancy.resolver import (
+    LADELS_ORGANIZATION_ID,
+    resolve_internal_ladels_compatibility_context,
+)
 from tests.test_migrations import make_alembic_config
 
 
@@ -56,13 +60,15 @@ def test_owner_manages_group_options_assignments_and_public_runtime_catalog(
     with Session(modifier_engine) as session:
         category = Category(slug="test-coffee", name="Test coffee", is_published=True, sort_order=0)
         product = Product(
+            organization_id=LADELS_ORGANIZATION_ID,
             category=category, slug="test-coffee", name="Test coffee", description="",
             base_price_cents=400, image_reference="", is_published=True,
             is_featured=False, is_lunch_special=False, sort_order=0,
         )
+        category.organization_id = LADELS_ORGANIZATION_ID
         session.add(category)
         session.commit()
-        service = CatalogService(CatalogRepository(session), tax_name="HST", tax_rate_millionths=1_300_000)
+        service = CatalogService(CatalogRepository(session, resolve_internal_ladels_compatibility_context(session)), tax_name="HST", tax_rate_millionths=1_300_000)
 
         created = service.create_modifier_group(group_write())
         assert created.name == "Milk"
@@ -113,7 +119,7 @@ def test_disabled_group_and_option_are_preserved_for_owner_but_excluded_publicly
     modifier_engine: Engine,
 ) -> None:
     with Session(modifier_engine) as session:
-        service = CatalogService(CatalogRepository(session), tax_name="HST", tax_rate_millionths=1_300_000)
+        service = CatalogService(CatalogRepository(session, resolve_internal_ladels_compatibility_context(session)), tax_name="HST", tax_rate_millionths=1_300_000)
         created = service.create_modifier_group(group_write(active=False))
         option = service.create_modifier_option(int(created.id), option_write(active=False))
         owner = service.build_owner_catalog().modifier_groups[0]
@@ -127,7 +133,7 @@ def test_modifier_validation_and_duplicate_assignment_prevention(
     modifier_engine: Engine,
 ) -> None:
     with Session(modifier_engine) as session:
-        service = CatalogService(CatalogRepository(session))
+        service = CatalogService(CatalogRepository(session, resolve_internal_ladels_compatibility_context(session)))
         with pytest.raises(ValueError, match="minimum"):
             service.create_modifier_group(group_write(required=True, min_selections=0))
         with pytest.raises(ValueError, match="Maximum"):
@@ -139,9 +145,11 @@ def test_modifier_validation_and_duplicate_assignment_prevention(
 
         category = Category(slug="coffee", name="Coffee", is_published=True, sort_order=0)
         product = Product(
+            organization_id=LADELS_ORGANIZATION_ID,
             category=category, slug="coffee", name="Coffee", base_price_cents=300,
             is_published=True, is_featured=False, is_lunch_special=False, sort_order=0,
         )
+        category.organization_id = LADELS_ORGANIZATION_ID
         session.add(category); session.commit()
         group = service.create_modifier_group(group_write())
         service.create_modifier_option(int(group.id), option_write())
@@ -158,12 +166,14 @@ def test_assigned_required_group_cannot_be_made_impossible(
     modifier_engine: Engine,
 ) -> None:
     with Session(modifier_engine) as session:
-        service = CatalogService(CatalogRepository(session))
+        service = CatalogService(CatalogRepository(session, resolve_internal_ladels_compatibility_context(session)))
         category = Category(slug="coffee", name="Coffee", is_published=True, sort_order=0)
         product = Product(
+            organization_id=LADELS_ORGANIZATION_ID,
             category=category, slug="coffee", name="Coffee", base_price_cents=300,
             is_published=True, is_featured=False, is_lunch_special=False, sort_order=0,
         )
+        category.organization_id = LADELS_ORGANIZATION_ID
         session.add(category); session.commit()
         group = service.create_modifier_group(group_write(required=True, min_selections=1))
         option = service.create_modifier_option(int(group.id), option_write())

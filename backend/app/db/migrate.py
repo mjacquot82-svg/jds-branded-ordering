@@ -106,6 +106,17 @@ AVAILABILITY_CLOSURE_HEAD_ONLY_CHECK_NAMES = frozenset(
     {"ck_business_closures_reopens_after_start"}
 )
 MIGRATION_LOCK_NAME = "guesthouse_preorder_alembic"
+TENANT_HEAD_ONLY_COLUMN_NAMES = frozenset({"organization_id"})
+AVAILABILITY_BASELINE_TYPE_SIGNATURES = {
+    ("business_settings", "id"): "SMALLINT",
+    ("business_hours", "business_settings_id"): "SMALLINT",
+    ("business_closures", "business_settings_id"): "SMALLINT",
+}
+CATALOG_BASELINE_UNIQUE_CONSTRAINTS = {
+    "categories": {"uq_categories_slug": ("slug",)},
+    "products": {"uq_products_slug": ("slug",)},
+    "modifier_groups": {"uq_modifier_groups_key": ("key",)},
+}
 
 
 class MigrationBootstrapError(RuntimeError):
@@ -142,6 +153,8 @@ def _validate_table(
     excluded_column_names: frozenset[str] = frozenset(),
     excluded_check_names: frozenset[str] = frozenset(),
     additional_check_names: frozenset[str] = frozenset(),
+    additional_unique_constraints: dict[str, tuple[str, ...]] | None = None,
+    expected_type_signatures: dict[tuple[str, str], str] | None = None,
 ) -> list[str]:
     inspector = inspect(engine)
     expected = Base.metadata.tables[table_name]
@@ -164,7 +177,10 @@ def _validate_table(
         actual_column = actual_columns[column_name]
         expected_column = expected_columns[column_name]
         actual_type = _type_signature(actual_column["type"], engine)
-        expected_type = _type_signature(expected_column.type, engine)
+        expected_type = (expected_type_signatures or {}).get(
+            (table_name, column_name),
+            _type_signature(expected_column.type, engine),
+        )
         if actual_type != expected_type:
             problems.append(
                 f"{table_name}.{column_name} type is {actual_type}; "
@@ -199,6 +215,7 @@ def _validate_table(
             column.name for column in constraint.columns
         } & excluded_column_names
     }
+    expected_unique.update(additional_unique_constraints or {})
     if actual_unique != expected_unique:
         problems.append(
             f"{table_name} unique constraints are {sorted(actual_unique)}; "
@@ -282,11 +299,16 @@ def _validate_catalog_baseline(engine: Engine) -> None:
             engine,
             table_name,
             excluded_column_names=(
-                CATALOG_HEAD_ONLY_COLUMN_NAMES
+                TENANT_HEAD_ONLY_COLUMN_NAMES | CATALOG_HEAD_ONLY_COLUMN_NAMES
                 if table_name == "products"
-                else MODIFIER_GROUP_HEAD_ONLY_COLUMN_NAMES
+                else TENANT_HEAD_ONLY_COLUMN_NAMES | MODIFIER_GROUP_HEAD_ONLY_COLUMN_NAMES
                 if table_name == "modifier_groups"
+                else TENANT_HEAD_ONLY_COLUMN_NAMES
+                if table_name == "categories"
                 else frozenset()
+            ),
+            additional_unique_constraints=CATALOG_BASELINE_UNIQUE_CONSTRAINTS.get(
+                table_name
             ),
         )
     ]
@@ -340,7 +362,7 @@ def _validate_availability_baseline(engine: Engine) -> None:
             engine,
             table_name,
             excluded_column_names=(
-                AVAILABILITY_HEAD_ONLY_COLUMN_NAMES
+                TENANT_HEAD_ONLY_COLUMN_NAMES | AVAILABILITY_HEAD_ONLY_COLUMN_NAMES
                 if table_name == "business_settings"
                 else AVAILABILITY_CLOSURE_HEAD_ONLY_COLUMN_NAMES
                 if table_name == "business_closures"
@@ -353,6 +375,12 @@ def _validate_availability_baseline(engine: Engine) -> None:
                 if table_name == "business_closures"
                 else frozenset()
             ),
+            additional_check_names=(
+                frozenset({"ck_business_settings_singleton"})
+                if table_name == "business_settings"
+                else frozenset()
+            ),
+            expected_type_signatures=AVAILABILITY_BASELINE_TYPE_SIGNATURES,
         )
     ]
     if problems:

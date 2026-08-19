@@ -19,6 +19,7 @@ from app.catalog.models import (
 from app.orders.constants import OrderStatus
 from app.orders.models import Order, OrderItem, OrderItemModifier
 from app.orders.repository import OrderRepository
+from app.tenancy.resolver import LADELS_ORGANIZATION_ID
 from tests.test_migrations import make_alembic_config
 
 
@@ -78,6 +79,7 @@ def test_order_models_persist_complete_snapshot_relationships(
     now = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
     with Session(order_engine) as session:
         category = Category(
+            organization_id=LADELS_ORGANIZATION_ID,
             slug="espresso",
             name="Espresso",
             description=None,
@@ -85,6 +87,7 @@ def test_order_models_persist_complete_snapshot_relationships(
             sort_order=0,
         )
         product = Product(
+            organization_id=LADELS_ORGANIZATION_ID,
             category=category,
             slug="latte",
             name="Latte",
@@ -104,6 +107,7 @@ def test_order_models_persist_complete_snapshot_relationships(
             sort_order=0,
         )
         group = ModifierGroup(
+            organization_id=LADELS_ORGANIZATION_ID,
             key="milk",
             name="Milk",
             description=None,
@@ -170,6 +174,7 @@ def test_source_catalog_deletion_preserves_order_snapshots(
     now = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
     with Session(order_engine) as session:
         category = Category(
+            organization_id=LADELS_ORGANIZATION_ID,
             slug="bakery",
             name="Bakery",
             description=None,
@@ -177,6 +182,7 @@ def test_source_catalog_deletion_preserves_order_snapshots(
             sort_order=0,
         )
         product = Product(
+            organization_id=LADELS_ORGANIZATION_ID,
             category=category,
             slug="croissant",
             name="Croissant",

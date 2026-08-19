@@ -18,6 +18,10 @@ from app.availability.models import (
 from app.availability.repository import AvailabilityRepository
 from app.catalog.models import Category, Product
 from tests.test_migrations import make_alembic_config
+from app.tenancy.resolver import (
+    LADELS_ORGANIZATION_ID,
+    resolve_internal_ladels_compatibility_context,
+)
 
 
 @pytest.fixture
@@ -48,12 +52,14 @@ def availability_engine(postgresql_url: str) -> Iterator[Engine]:
 def make_product() -> Product:
     return Product(
         category=Category(
+            organization_id=LADELS_ORGANIZATION_ID,
             slug="coffee",
             name="Coffee",
             description=None,
             is_published=True,
             sort_order=0,
         ),
+        organization_id=LADELS_ORGANIZATION_ID,
         slug="drip-coffee",
         name="Drip Coffee",
         description=None,
@@ -71,6 +77,7 @@ def test_models_persist_settings_hours_closures_and_availability(
 ) -> None:
     with Session(availability_engine) as session:
         settings = BusinessSettings(
+            organization_id=LADELS_ORGANIZATION_ID,
             timezone="America/New_York",
             ordering_enabled=True,
             minimum_lead_time_minutes=15,
@@ -114,7 +121,9 @@ def test_models_persist_settings_hours_closures_and_availability(
         session.add_all([settings, product])
         session.commit()
 
-        repository = AvailabilityRepository(session)
+        repository = AvailabilityRepository(
+            session, resolve_internal_ladels_compatibility_context(session)
+        )
         assert repository.get_business_settings() is settings
         assert repository.get_business_hour(0) is settings.hours[0]
         assert (
@@ -225,6 +234,7 @@ def test_business_hour_model_rejects_invalid_periods(
 ) -> None:
     with Session(availability_engine) as session:
         settings = BusinessSettings(
+            organization_id=LADELS_ORGANIZATION_ID,
             timezone="UTC",
             ordering_enabled=True,
             minimum_lead_time_minutes=0,
@@ -244,15 +254,9 @@ def test_database_constraints_enforce_business_invariants(
     invalid_statements = [
         (
             "INSERT INTO business_settings "
-            "(id, timezone, minimum_lead_time_minutes, "
+            "(id, organization_id, timezone, minimum_lead_time_minutes, "
             "pickup_interval_minutes, maximum_advance_days) "
-            "VALUES (2, 'UTC', 15, 5, 14)"
-        ),
-        (
-            "INSERT INTO business_settings "
-            "(id, timezone, minimum_lead_time_minutes, "
-            "pickup_interval_minutes, maximum_advance_days) "
-            "VALUES (1, 'UTC', -1, 5, 14)"
+            f"VALUES (1, '{LADELS_ORGANIZATION_ID}', 'UTC', -1, 5, 14)"
         ),
     ]
 
@@ -265,11 +269,21 @@ def test_database_constraints_enforce_business_invariants(
         connection.execute(
             text(
                 "INSERT INTO business_settings "
-                "(id, timezone, minimum_lead_time_minutes, "
+                "(id, organization_id, timezone, minimum_lead_time_minutes, "
                 "pickup_interval_minutes, maximum_advance_days) "
-                "VALUES (1, 'UTC', 15, 5, 14)"
+                f"VALUES (1, '{LADELS_ORGANIZATION_ID}', 'UTC', 15, 5, 14)"
             )
         )
+
+    with pytest.raises(IntegrityError):
+        with availability_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO business_settings "
+                    "(organization_id, timezone) "
+                    f"VALUES ('{LADELS_ORGANIZATION_ID}', 'UTC')"
+                )
+            )
 
     invalid_child_statements = [
         (

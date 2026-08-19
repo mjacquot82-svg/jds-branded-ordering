@@ -44,7 +44,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     config = make_alembic_config(postgresql_url)
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260818_20"]
+    assert script.get_heads() == ["20260819_21"]
 
     command.downgrade(config, "base")
     command.upgrade(config, "head")
@@ -53,7 +53,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     try:
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260818_20"
+            assert context.get_current_revision() == "20260819_21"
 
         assert set(inspect(engine).get_table_names()) >= {
             "alembic_version",
@@ -184,6 +184,67 @@ def test_catalog_models_match_migration(postgresql_url: str) -> None:
 
 
 @pytest.mark.postgresql
+def test_tenant_catalog_migration_backfills_baseline_rows_once(
+    postgresql_url: str,
+) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260818_20")
+    engine = create_engine(postgresql_url)
+    try:
+        with engine.begin() as connection:
+            category_id = connection.scalar(
+                text(
+                    "INSERT INTO categories (slug, name) "
+                    "VALUES ('baseline', 'Baseline') RETURNING id"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO products (category_id, slug, name, base_price_cents) "
+                    "VALUES (:category_id, 'baseline-product', 'Baseline product', 100)"
+                ),
+                {"category_id": category_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO modifier_groups "
+                    "(key, name, selection_type, is_required, minimum_selections, "
+                    "maximum_selections) VALUES "
+                    "('baseline-group', 'Baseline group', 'single', false, 0, 1)"
+                )
+            )
+
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            organization_id = connection.scalar(
+                text("SELECT id FROM organizations WHERE slug = 'the-guest-house'")
+            )
+            assert organization_id is not None
+            for table_name in (
+                "categories",
+                "products",
+                "modifier_groups",
+                "business_settings",
+            ):
+                assert connection.scalar(
+                    text(
+                        f"SELECT count(*) FROM {table_name} "
+                        "WHERE organization_id = :organization_id"
+                    ),
+                    {"organization_id": organization_id},
+                ) == connection.scalar(text(f"SELECT count(*) FROM {table_name}"))
+                assert connection.scalar(
+                    text(f"SELECT count(*) FROM {table_name} WHERE organization_id IS NULL")
+                ) == 0
+    finally:
+        engine.dispose()
+
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+
+
+@pytest.mark.postgresql
 def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
     postgresql_url: str,
 ) -> None:
@@ -207,7 +268,7 @@ def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260818_20"
+            assert context.get_current_revision() == "20260819_21"
             assert connection.scalar(
                 text(
                     "SELECT name FROM categories "
@@ -264,7 +325,7 @@ def test_migration_bootstrap_reconciles_catalog_and_orders_without_data_loss(
         inspector = inspect(engine)
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260818_20"
+            assert context.get_current_revision() == "20260819_21"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "
@@ -344,7 +405,7 @@ def test_migration_bootstrap_resumes_interrupted_order_reconciliation(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260818_20"
+            assert context.get_current_revision() == "20260819_21"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "

@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.v1.orders import get_current_time, get_order_session
+from app.api.v1.catalog import ladels_compatibility_tenant
 from app.availability.repository import AvailabilityRepository
 from app.availability.service import (
     AvailabilityConfigurationError,
@@ -13,6 +14,7 @@ from app.availability.service import (
     SchedulingOptions,
 )
 from app.orders.constants import MAX_ORDER_LINES
+from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/scheduling", tags=["scheduling"])
 
@@ -89,13 +91,14 @@ class SchedulingOptionsResponse(SchedulingSchema):
 def scheduling_options(
     request: SchedulingOptionsRequest,
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(ladels_compatibility_tenant),
     now: datetime = Depends(get_current_time),
 ) -> SchedulingOptionsResponse:
     # Stable cart identifiers are accepted now so cart-derived preparation rules
     # can be added inside the scheduling engine without changing this contract.
     _ = request.lines
     try:
-        options = PickupSchedulingService(AvailabilityRepository(session)).options(
+        options = PickupSchedulingService(AvailabilityRepository(session, tenant)).options(
             now=now,
             custom_pickup_time=request.custom_pickup_time,
         )

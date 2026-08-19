@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -10,6 +10,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.api.v1.owner_auth import csrf_principal, current_principal
+from app.jds_auth.models import Organization
 from app.jds_auth.service import AuthPrincipal
 from app.main import create_app
 from app.orders.constants import FulfillmentStatus, OrderStatus
@@ -19,9 +20,12 @@ from tests.test_migrations import make_alembic_config
 from tests.test_order_service import local_datetime, seed_order_dependencies
 
 
-def principal(*permissions: str) -> AuthPrincipal:
+def principal(
+    *permissions: str,
+    organization_id: UUID | None = None,
+) -> AuthPrincipal:
     return AuthPrincipal(
-        user_id=uuid4(), membership_id=uuid4(), organization_id=uuid4(),
+        user_id=uuid4(), membership_id=uuid4(), organization_id=organization_id or uuid4(),
         application_id=uuid4(), session_id=uuid4(), email="owner@example.com",
         display_name="Jessie", role="owner", permissions=frozenset(permissions),
         assurance_level="aal1",
@@ -82,8 +86,14 @@ def owner_orders_api(postgresql_url: str) -> Iterator[tuple[TestClient, Engine]]
         ))
     with Session(engine) as session:
         seed_order_dependencies(session)
+        organization_id = session.scalar(
+            select(Organization.id).where(Organization.slug == "the-guest-house")
+        )
+        assert organization_id is not None
     app = create_app(postgresql_url)
-    owner = principal("orders.read", "orders.fulfill")
+    owner = principal(
+        "orders.read", "orders.fulfill", organization_id=organization_id
+    )
     app.dependency_overrides[current_principal] = lambda: owner
     app.dependency_overrides[csrf_principal] = lambda: owner
     with TestClient(app) as client:

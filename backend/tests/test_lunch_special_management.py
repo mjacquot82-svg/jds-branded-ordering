@@ -18,6 +18,15 @@ def catalog_products(engine):
         return list(session.scalars(select(Product).order_by(Product.id)).all())
 
 
+def ladels_principal(engine, *permissions: str):
+    with Session(engine) as session:
+        organization_id = session.scalar(
+            select(Organization.id).where(Organization.slug == "the-guest-house")
+        )
+    assert organization_id is not None
+    return principal(*permissions, organization_id=organization_id)
+
+
 def seed_required_products(engine) -> None:
     """Own the two-product precondition instead of relying on another fixture's seed."""
     with Session(engine) as session:
@@ -27,6 +36,7 @@ def seed_required_products(engine) -> None:
         category = session.scalar(select(Category).order_by(Category.id))
         assert category is not None
         second = Product(
+            organization_id=category.organization_id,
             category_id=category.id,
             slug="test-lunch-special",
             name="Test Lunch Special",
@@ -46,7 +56,7 @@ def seed_required_products(engine) -> None:
 @pytest.mark.postgresql
 def test_staff_narrow_operation_selects_replaces_clears_and_feeds_communications(owner_orders_api):
     client, engine = owner_orders_api
-    staff = replace(principal("catalog.read", "lunch_special.manage", "communications.announce"), role="staff")
+    staff = replace(ladels_principal(engine, "catalog.read", "lunch_special.manage", "communications.announce"), role="staff")
     client.app.dependency_overrides[current_principal] = lambda: staff
     client.app.dependency_overrides[csrf_principal] = lambda: staff
     seed_required_products(engine)
@@ -89,7 +99,7 @@ def test_lunch_special_operation_rejects_extra_fields_hidden_products_and_missin
     seed_required_products(engine)
     products = catalog_products(engine)
     target = products[0]
-    staff = replace(principal("lunch_special.manage"), role="staff")
+    staff = replace(ladels_principal(engine, "lunch_special.manage"), role="staff")
     client.app.dependency_overrides[csrf_principal] = lambda: staff
 
     arbitrary = client.put("/api/v1/owner/catalog/lunch-special", json={"product_id": target.id, "name": "Tampered", "base_price_cents": 1})
@@ -109,7 +119,7 @@ def test_lunch_special_operation_rejects_extra_fields_hidden_products_and_missin
         session.commit()
     assert client.put("/api/v1/owner/catalog/lunch-special", json={"product_id": target.id}).status_code == 409
 
-    denied = replace(principal(), role="staff")
+    denied = replace(ladels_principal(engine), role="staff")
     client.app.dependency_overrides[csrf_principal] = lambda: denied
     assert client.put("/api/v1/owner/catalog/lunch-special", json={"product_id": products[1].id}).status_code == 403
 
@@ -131,7 +141,7 @@ def test_staff_remains_denied_broad_catalog_edit_while_owner_retains_it(owner_or
         client.app.dependency_overrides[get_auth_settings] = lambda: SimpleNamespace(organization_slug="the-guest-house")
 
         staff = replace(
-            principal("catalog.read", "availability.manage", "lunch_special.manage"),
+            ladels_principal(engine, "catalog.read", "availability.manage", "lunch_special.manage"),
             organization_id=organization_id,
             role="staff",
         )
@@ -146,7 +156,7 @@ def test_staff_remains_denied_broad_catalog_edit_while_owner_retains_it(owner_or
         assert client.put(f"/api/v1/owner/catalog/products/{product.id}", json=broad_payload).status_code == 403
 
         owner = replace(
-            principal("catalog.write", "catalog.publish", "availability.manage", "modifiers.manage", "lunch_special.manage"),
+            ladels_principal(engine, "catalog.write", "catalog.publish", "availability.manage", "modifiers.manage", "lunch_special.manage"),
             organization_id=organization_id,
         )
         client.app.dependency_overrides[csrf_principal] = lambda: owner

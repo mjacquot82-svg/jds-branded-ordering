@@ -18,6 +18,8 @@ from app.catalog.seed_data import (
 )
 from app.db.engine import create_database_engine
 from app.db.session import create_session_factory
+from app.tenancy.context import TenantContext
+from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
 
 
 def seed_catalog(
@@ -27,20 +29,23 @@ def seed_catalog(
     """Upsert the reviewed Guest House catalog in one transaction."""
 
     with session.begin():
+        tenant = resolve_internal_ladels_compatibility_context(session)
         validate_catalog_seed(catalog)
-        categories = _seed_categories(session, catalog)
-        modifier_groups = _seed_modifier_groups(session, catalog)
-        _seed_products(session, catalog, categories, modifier_groups)
+        categories = _seed_categories(session, tenant, catalog)
+        modifier_groups = _seed_modifier_groups(session, tenant, catalog)
+        _seed_products(session, tenant, catalog, categories, modifier_groups)
 
 
 def _seed_categories(
     session: Session,
+    tenant: TenantContext,
     catalog: CatalogSeed,
 ) -> dict[str, Category]:
     existing = {
         category.slug: category
         for category in session.scalars(
             select(Category).where(
+                Category.organization_id == tenant.organization_id,
                 Category.slug.in_(
                     category_seed.slug for category_seed in catalog.categories
                 )
@@ -51,7 +56,10 @@ def _seed_categories(
     for sort_order, category_seed in enumerate(catalog.categories):
         category = existing.get(category_seed.slug)
         if category is None:
-            category = Category(slug=category_seed.slug)
+            category = Category(
+                organization_id=tenant.organization_id,
+                slug=category_seed.slug,
+            )
             session.add(category)
             existing[category_seed.slug] = category
 
@@ -66,12 +74,14 @@ def _seed_categories(
 
 def _seed_modifier_groups(
     session: Session,
+    tenant: TenantContext,
     catalog: CatalogSeed,
 ) -> dict[str, ModifierGroup]:
     existing = {
         group.key: group
         for group in session.scalars(
             select(ModifierGroup).where(
+                ModifierGroup.organization_id == tenant.organization_id,
                 ModifierGroup.key.in_(
                     group_seed.key for group_seed in catalog.modifier_groups
                 )
@@ -82,7 +92,10 @@ def _seed_modifier_groups(
     for sort_order, group_seed in enumerate(catalog.modifier_groups):
         group = existing.get(group_seed.key)
         if group is None:
-            group = ModifierGroup(key=group_seed.key)
+            group = ModifierGroup(
+                organization_id=tenant.organization_id,
+                key=group_seed.key,
+            )
             session.add(group)
             existing[group_seed.key] = group
 
@@ -127,6 +140,7 @@ def _seed_modifier_groups(
 
 def _seed_products(
     session: Session,
+    tenant: TenantContext,
     catalog: CatalogSeed,
     categories: dict[str, Category],
     modifier_groups: dict[str, ModifierGroup],
@@ -135,6 +149,7 @@ def _seed_products(
         product.slug: product
         for product in session.scalars(
             select(Product).where(
+                Product.organization_id == tenant.organization_id,
                 Product.slug.in_(
                     product_seed.slug for product_seed in catalog.products
                 )
@@ -145,7 +160,10 @@ def _seed_products(
     for sort_order, product_seed in enumerate(catalog.products):
         product = existing.get(product_seed.slug)
         if product is None:
-            product = Product(slug=product_seed.slug)
+            product = Product(
+                organization_id=tenant.organization_id,
+                slug=product_seed.slug,
+            )
             session.add(product)
             existing[product_seed.slug] = product
 

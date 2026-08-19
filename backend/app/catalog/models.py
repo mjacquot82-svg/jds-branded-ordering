@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
@@ -9,6 +10,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -63,10 +65,15 @@ class Category(CatalogModelValidation, Base):
         CheckConstraint("btrim(slug) <> ''", name="slug_nonblank"),
         CheckConstraint("btrim(name) <> ''", name="name_nonblank"),
         CheckConstraint("sort_order >= 0", name="sort_order_nonnegative"),
+        UniqueConstraint("organization_id", "slug", name="uq_categories_organization_slug"),
+        UniqueConstraint("organization_id", "id", name="uq_categories_organization_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    slug: Mapped[str] = mapped_column(String(100), unique=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
+    slug: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
     is_published: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
@@ -80,6 +87,7 @@ class Category(CatalogModelValidation, Base):
 
     products: Mapped[list[Product]] = relationship(
         back_populates="category",
+        foreign_keys="Product.category_id",
         passive_deletes=True,
     )
 
@@ -91,20 +99,31 @@ class Product(CatalogModelValidation, Base):
         CheckConstraint("btrim(name) <> ''", name="name_nonblank"),
         CheckConstraint("base_price_cents >= 0", name="base_price_nonnegative"),
         CheckConstraint("sort_order >= 0", name="sort_order_nonnegative"),
+        UniqueConstraint("organization_id", "slug", name="uq_products_organization_slug"),
+        UniqueConstraint("organization_id", "id", name="uq_products_organization_id"),
+        ForeignKeyConstraint(
+            ["organization_id", "category_id"],
+            ["categories.organization_id", "categories.id"],
+            name="fk_products_organization_category",
+            ondelete="RESTRICT",
+        ),
         Index(
             "uq_products_single_lunch_special",
-            "is_lunch_special",
+            "organization_id",
             unique=True,
             postgresql_where=text("is_lunch_special IS TRUE"),
         ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
     category_id: Mapped[int] = mapped_column(
         ForeignKey("categories.id", ondelete="RESTRICT"),
         index=True,
     )
-    slug: Mapped[str] = mapped_column(String(100), unique=True)
+    slug: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
     base_price_cents: Mapped[int] = mapped_column(Integer)
@@ -123,7 +142,9 @@ class Product(CatalogModelValidation, Base):
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    category: Mapped[Category] = relationship(back_populates="products")
+    category: Mapped[Category] = relationship(
+        back_populates="products", foreign_keys=[category_id]
+    )
     variants: Mapped[list[ProductVariant]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
@@ -199,10 +220,19 @@ class ModifierGroup(CatalogModelValidation, Base):
             name="selection_range_valid",
         ),
         CheckConstraint("sort_order >= 0", name="sort_order_nonnegative"),
+        UniqueConstraint(
+            "organization_id", "key", name="uq_modifier_groups_organization_key"
+        ),
+        UniqueConstraint(
+            "organization_id", "id", name="uq_modifier_groups_organization_id"
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    key: Mapped[str] = mapped_column(String(100), unique=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
+    key: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
     selection_type: Mapped[SelectionType] = mapped_column(

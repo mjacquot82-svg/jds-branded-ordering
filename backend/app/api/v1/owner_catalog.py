@@ -3,6 +3,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1.catalog import get_catalog_session
 from app.api.v1.owner_auth import csrf_principal, current_principal, get_auth_service, get_auth_settings, require_permission
+from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.catalog.repository import CatalogRepository
 from app.catalog.schemas import LunchSpecialSelectionWrite, OwnerCatalogResponse, OwnerModifierGroupResponse, OwnerModifierGroupWrite, OwnerModifierOptionResponse, OwnerModifierOptionWrite, OwnerProductAvailabilityWrite, OwnerProductResponse, OwnerProductWrite
 from app.catalog.service import CatalogService
@@ -12,6 +13,7 @@ from app.jds_auth.config import AuthSettings
 from app.jds_auth.models import Organization
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from app.tenancy.context import TenantContext
 
 
 router = APIRouter(prefix="/owner/catalog", tags=["owner-catalog"])
@@ -89,8 +91,11 @@ def require_modifier_manager(
     return principal
 
 
-def catalog_service(session: Session = Depends(get_catalog_session)) -> CatalogService:
-    return CatalogService(CatalogRepository(session))
+def catalog_service(
+    session: Session = Depends(get_catalog_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
+) -> CatalogService:
+    return CatalogService(CatalogRepository(session, tenant))
 
 
 def mutation_error(error: Exception) -> None:

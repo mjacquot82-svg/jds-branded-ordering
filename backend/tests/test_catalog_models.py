@@ -18,6 +18,10 @@ from app.catalog.models import (
 )
 from app.catalog.repository import CatalogRepository
 from tests.test_migrations import make_alembic_config
+from app.tenancy.resolver import (
+    LADELS_ORGANIZATION_ID,
+    resolve_internal_ladels_compatibility_context,
+)
 
 
 @pytest.fixture
@@ -41,6 +45,7 @@ def catalog_engine(postgresql_url: str) -> Iterator[Engine]:
 
 def make_category(**overrides: object) -> Category:
     values = {
+        "organization_id": LADELS_ORGANIZATION_ID,
         "slug": "coffee",
         "name": "Coffee",
         "description": None,
@@ -53,6 +58,7 @@ def make_category(**overrides: object) -> Category:
 
 def make_product(category: Category, **overrides: object) -> Product:
     values = {
+        "organization_id": LADELS_ORGANIZATION_ID,
         "category": category,
         "slug": "flat-white",
         "name": "Flat White",
@@ -70,6 +76,7 @@ def make_product(category: Category, **overrides: object) -> Product:
 
 def make_modifier_group(**overrides: object) -> ModifierGroup:
     values = {
+        "organization_id": LADELS_ORGANIZATION_ID,
         "key": "milk",
         "name": "Milk",
         "description": None,
@@ -115,7 +122,9 @@ def test_models_persist_relationships_and_repository_queries(
             sort_order=0,
         )
 
-        repository = CatalogRepository(session)
+        repository = CatalogRepository(
+            session, resolve_internal_ladels_compatibility_context(session)
+        )
         repository.add(category)
         repository.add(group)
         session.commit()
@@ -221,24 +230,24 @@ def test_single_selection_group_can_allow_quantity_with_total_unit_limit(
 def test_database_rejects_invalid_constraints(catalog_engine: Engine) -> None:
     invalid_statements = [
         (
-            "INSERT INTO categories (slug, name, sort_order) "
-            "VALUES ('bad-category', ' ', 0)"
+            "INSERT INTO categories (organization_id, slug, name, sort_order) "
+            f"VALUES ('{LADELS_ORGANIZATION_ID}', 'bad-category', ' ', 0)"
         ),
         (
-            "INSERT INTO categories (slug, name, sort_order) "
-            "VALUES ('negative-sort', 'Negative', -1)"
+            "INSERT INTO categories (organization_id, slug, name, sort_order) "
+            f"VALUES ('{LADELS_ORGANIZATION_ID}', 'negative-sort', 'Negative', -1)"
         ),
         (
             "INSERT INTO modifier_groups "
-            "(key, name, selection_type, is_required, minimum_selections, "
+            "(organization_id, key, name, selection_type, is_required, minimum_selections, "
             "maximum_selections, sort_order) "
-            "VALUES ('invalid-range', 'Invalid', 'multiple', true, 2, 1, 0)"
+            f"VALUES ('{LADELS_ORGANIZATION_ID}', 'invalid-range', 'Invalid', 'multiple', true, 2, 1, 0)"
         ),
         (
             "INSERT INTO modifier_groups "
-            "(key, name, selection_type, is_required, minimum_selections, "
+            "(organization_id, key, name, selection_type, is_required, minimum_selections, "
             "maximum_selections, allow_quantity, sort_order) "
-            "VALUES ('invalid-single-range', 'Invalid single', 'single', "
+            f"VALUES ('{LADELS_ORGANIZATION_ID}', 'invalid-single-range', 'Invalid single', 'single', "
             "false, 0, 2, false, 0)"
         ),
     ]
@@ -254,36 +263,38 @@ def test_database_enforces_keys_and_foreign_keys(catalog_engine: Engine) -> None
     with catalog_engine.begin() as connection:
         category_id = connection.scalar(
             text(
-                "INSERT INTO categories (slug, name) VALUES ('coffee', 'Coffee') "
+                "INSERT INTO categories (organization_id, slug, name) "
+                f"VALUES ('{LADELS_ORGANIZATION_ID}', 'coffee', 'Coffee') "
                 "RETURNING id"
             )
         )
         product_id = connection.scalar(
             text(
                 "INSERT INTO products "
-                "(category_id, slug, name, base_price_cents) "
-                "VALUES (:category_id, 'latte', 'Latte', 450) RETURNING id"
+                "(organization_id, category_id, slug, name, base_price_cents) "
+                f"VALUES ('{LADELS_ORGANIZATION_ID}', :category_id, 'latte', 'Latte', 450) RETURNING id"
             ),
             {"category_id": category_id},
         )
         group_id = connection.scalar(
             text(
                 "INSERT INTO modifier_groups "
-                "(key, name, selection_type, is_required, minimum_selections, "
+                "(organization_id, key, name, selection_type, is_required, minimum_selections, "
                 "maximum_selections) "
-                "VALUES ('milk', 'Milk', 'single', false, 0, 1) RETURNING id"
+                f"VALUES ('{LADELS_ORGANIZATION_ID}', 'milk', 'Milk', 'single', false, 0, 1) RETURNING id"
             )
         )
 
     duplicate_or_invalid_statements = [
         (
-            "INSERT INTO categories (slug, name) VALUES ('coffee', 'Duplicate')",
+            "INSERT INTO categories (organization_id, slug, name) "
+            f"VALUES ('{LADELS_ORGANIZATION_ID}', 'coffee', 'Duplicate')",
             {},
         ),
         (
             "INSERT INTO products "
-            "(category_id, slug, name, base_price_cents) "
-            "VALUES (999999, 'orphan', 'Orphan', 100)",
+            "(organization_id, category_id, slug, name, base_price_cents) "
+            f"VALUES ('{LADELS_ORGANIZATION_ID}', 999999, 'orphan', 'Orphan', 100)",
             {},
         ),
         (

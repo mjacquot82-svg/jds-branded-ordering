@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
@@ -60,7 +61,9 @@ class AvailabilityModelValidation:
 class BusinessSettings(AvailabilityModelValidation, Base):
     __tablename__ = "business_settings"
     __table_args__ = (
-        CheckConstraint("id = 1", name="singleton"),
+        UniqueConstraint(
+            "organization_id", name="uq_business_settings_organization_id"
+        ),
         CheckConstraint("btrim(timezone) <> ''", name="timezone_nonblank"),
         CheckConstraint(
             "ordering_mode IN ('schedule', 'force_open', 'force_closed')",
@@ -86,10 +89,12 @@ class BusinessSettings(AvailabilityModelValidation, Base):
     )
 
     id: Mapped[int] = mapped_column(
-        SmallInteger,
+        BigInteger,
         primary_key=True,
-        default=1,
-        server_default="1",
+        autoincrement=True,
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
     )
     timezone: Mapped[str] = mapped_column(String(100))
     ordering_enabled: Mapped[bool] = mapped_column(

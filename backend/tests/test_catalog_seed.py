@@ -18,6 +18,7 @@ from app.catalog.models import (
 )
 from app.catalog.seed import seed_catalog
 from app.catalog.seed_data import GUEST_HOUSE_CATALOG
+from app.tenancy.resolver import LADELS_ORGANIZATION_ID
 from tests.test_migrations import make_alembic_config
 
 
@@ -350,6 +351,7 @@ def test_seed_is_idempotent_and_restores_seed_owned_values(
 def test_seed_does_not_delete_unrelated_data(seed_engine: Engine) -> None:
     with Session(seed_engine) as session:
         unrelated_category = Category(
+            organization_id=LADELS_ORGANIZATION_ID,
             slug="staff-specials",
             name="Staff Specials",
             description=None,
@@ -357,6 +359,7 @@ def test_seed_does_not_delete_unrelated_data(seed_engine: Engine) -> None:
             sort_order=99,
         )
         unrelated_product = Product(
+            organization_id=LADELS_ORGANIZATION_ID,
             category=unrelated_category,
             slug="staff-drink",
             name="Staff Drink",
@@ -377,6 +380,7 @@ def test_seed_does_not_delete_unrelated_data(seed_engine: Engine) -> None:
             )
         )
         unrelated_group = ModifierGroup(
+            organization_id=LADELS_ORGANIZATION_ID,
             key="staff-options",
             name="Staff Options",
             description=None,

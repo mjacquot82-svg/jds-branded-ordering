@@ -39,6 +39,12 @@ from app.orders.service import (
     OrderCreationErrorCode,
     OrderCreationService,
 )
+from app.jds_auth.models import Organization
+from app.tenancy.resolver import (
+    LADELS_ORGANIZATION_ID,
+    LADELS_ORGANIZATION_NAME,
+    LADELS_ORGANIZATION_SLUG,
+)
 from tests.test_migrations import make_alembic_config
 
 
@@ -80,7 +86,20 @@ def local_datetime(hour: int, minute: int = 0) -> datetime:
 
 
 def seed_order_dependencies(session: Session) -> dict[str, int]:
+    organization = session.scalar(
+        select(Organization).where(Organization.slug == LADELS_ORGANIZATION_SLUG)
+    )
+    if organization is None:
+        organization = Organization(
+            id=LADELS_ORGANIZATION_ID,
+            slug=LADELS_ORGANIZATION_SLUG,
+            name=LADELS_ORGANIZATION_NAME,
+        )
+        session.add(organization)
+        session.flush()
+    organization_id = organization.id
     settings = BusinessSettings(
+        organization_id=organization_id,
         timezone="America/New_York",
         ordering_enabled=True,
         minimum_lead_time_minutes=15,
@@ -96,6 +115,7 @@ def seed_order_dependencies(session: Session) -> dict[str, int]:
         )
     )
     category = Category(
+        organization_id=organization_id,
         slug="espresso",
         name="Espresso",
         description=None,
@@ -103,6 +123,7 @@ def seed_order_dependencies(session: Session) -> dict[str, int]:
         sort_order=0,
     )
     latte = Product(
+        organization_id=organization_id,
         category=category,
         slug="latte",
         name="Latte",
@@ -130,6 +151,7 @@ def seed_order_dependencies(session: Session) -> dict[str, int]:
         sort_order=1,
     )
     milk = ModifierGroup(
+        organization_id=organization_id,
         key="milk",
         name="Milk",
         description=None,
@@ -157,6 +179,7 @@ def seed_order_dependencies(session: Session) -> dict[str, int]:
         sort_order=1,
     )
     flavours = ModifierGroup(
+        organization_id=organization_id,
         key="flavours",
         name="Flavour shots",
         description=None,
@@ -185,6 +208,7 @@ def seed_order_dependencies(session: Session) -> dict[str, int]:
         sort_order=1,
     )
     sugar = ModifierGroup(
+        organization_id=organization_id,
         key="sugar",
         name="Sugar",
         description=None,

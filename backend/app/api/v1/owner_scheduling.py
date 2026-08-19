@@ -8,11 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.orders import get_current_time, get_order_session
 from app.api.v1.owner_auth import require_permission, require_read_permission
+from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.api.v1.scheduling import SchedulingOptionsResponse
 from app.availability.models import BusinessClosure, BusinessHour
 from app.availability.repository import AvailabilityRepository
 from app.availability.service import AvailabilityConfigurationError, PickupSchedulingService
 from app.jds_auth.service import AuthPrincipal
+from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/owner/scheduling", tags=["owner-scheduling"])
 
@@ -106,8 +108,7 @@ def scheduling_error(error: Exception) -> None:
     ) from error
 
 
-def build_response(session: Session, now: datetime) -> OwnerSchedulingResponse:
-    repository = AvailabilityRepository(session)
+def build_response(repository: AvailabilityRepository, now: datetime) -> OwnerSchedulingResponse:
     settings = repository.get_business_settings()
     if settings is None:
         raise AvailabilityConfigurationError("Business settings have not been configured.")
@@ -145,10 +146,11 @@ def build_response(session: Session, now: datetime) -> OwnerSchedulingResponse:
 def read_owner_scheduling(
     _: AuthPrincipal = Depends(require_read_permission("availability.manage")),
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
     now: datetime = Depends(get_current_time),
 ) -> OwnerSchedulingResponse:
     try:
-        return build_response(session, now)
+        return build_response(AvailabilityRepository(session, tenant), now)
     except (AvailabilityConfigurationError, SQLAlchemyError) as error:
         scheduling_error(error)
 
@@ -157,11 +159,12 @@ def read_owner_scheduling(
 def read_owner_preview(
     _: AuthPrincipal = Depends(require_read_permission("availability.manage")),
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
     now: datetime = Depends(get_current_time),
 ) -> SchedulingOptionsResponse:
     try:
         return SchedulingOptionsResponse.from_domain(
-            PickupSchedulingService(AvailabilityRepository(session)).options(now=now)
+            PickupSchedulingService(AvailabilityRepository(session, tenant)).options(now=now)
         )
     except (AvailabilityConfigurationError, SQLAlchemyError) as error:
         scheduling_error(error)
@@ -172,16 +175,18 @@ def update_ordering(
     payload: OrderingModeWrite,
     _: AuthPrincipal = Depends(require_permission("availability.manage")),
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
     now: datetime = Depends(get_current_time),
 ) -> OwnerSchedulingResponse:
     try:
-        settings = AvailabilityRepository(session).get_business_settings()
+        repository = AvailabilityRepository(session, tenant)
+        settings = repository.get_business_settings()
         if settings is None:
             raise LookupError("Business settings were not found.")
         settings.ordering_mode = payload.ordering_mode
         settings.ordering_enabled = payload.ordering_mode != "force_closed"
         session.commit()
-        return build_response(session, now)
+        return build_response(repository, now)
     except (SQLAlchemyError, ValueError, LookupError) as error:
         session.rollback()
         scheduling_error(error)
@@ -192,21 +197,25 @@ def update_hours(
     payload: BusinessHoursWrite,
     _: AuthPrincipal = Depends(require_permission("availability.manage")),
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
     now: datetime = Depends(get_current_time),
 ) -> OwnerSchedulingResponse:
     try:
-        repository = AvailabilityRepository(session)
+        repository = AvailabilityRepository(session, tenant)
         existing = {entry.weekday: entry for entry in repository.list_business_hours()}
         for value in payload.hours:
             entry = existing.get(value.weekday)
             if entry is None:
-                entry = BusinessHour(weekday=value.weekday)
+                settings = repository.get_business_settings()
+                if settings is None:
+                    raise LookupError("Business settings were not found.")
+                entry = BusinessHour(settings=settings, weekday=value.weekday)
                 repository.add(entry)
             entry.is_closed = value.is_closed
             entry.opens_at = None if value.is_closed else value.opens_at
             entry.closes_at = None if value.is_closed else value.closes_at
         session.commit()
-        return build_response(session, now)
+        return build_response(repository, now)
     except (SQLAlchemyError, ValueError) as error:
         session.rollback()
         scheduling_error(error)
@@ -217,17 +226,19 @@ def update_preferences(
     payload: SchedulingPreferencesWrite,
     _: AuthPrincipal = Depends(require_permission("availability.manage")),
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
     now: datetime = Depends(get_current_time),
 ) -> OwnerSchedulingResponse:
     try:
-        settings = AvailabilityRepository(session).get_business_settings()
+        repository = AvailabilityRepository(session, tenant)
+        settings = repository.get_business_settings()
         if settings is None:
             raise LookupError("Business settings were not found.")
         settings.minimum_lead_time_minutes = payload.minimum_lead_time_minutes
         settings.pickup_interval_minutes = payload.pickup_interval_minutes
         settings.maximum_advance_days = payload.maximum_advance_days
         session.commit()
-        return build_response(session, now)
+        return build_response(repository, now)
     except (SQLAlchemyError, ValueError, LookupError) as error:
         session.rollback()
         scheduling_error(error)
@@ -241,19 +252,21 @@ def ranges_overlap(first: ClosureWrite, second: BusinessClosure) -> bool:
 
 def save_closure(
     payload: ClosureWrite,
-    session: Session,
+    repository: AvailabilityRepository,
     *,
     closure_id: int | None = None,
 ) -> None:
-    repository = AvailabilityRepository(session)
     for existing in repository.list_business_closures():
         if existing.id != closure_id and ranges_overlap(payload, existing):
             raise ValueError("This closure overlaps an existing closure.")
-    closure = session.get(BusinessClosure, closure_id) if closure_id is not None else None
+    closure = repository.get_business_closure_by_id(closure_id) if closure_id is not None else None
     if closure_id is not None and closure is None:
         raise LookupError("Closure was not found.")
     if closure is None:
-        closure = BusinessClosure(business_settings_id=1, business_date=payload.business_date)
+        settings = repository.get_business_settings()
+        if settings is None:
+            raise LookupError("Business settings were not found.")
+        closure = BusinessClosure(settings=settings, business_date=payload.business_date)
         repository.add(closure)
     closure.business_date = payload.business_date
     closure.reopens_on = payload.reopens_on
@@ -265,12 +278,14 @@ def create_closure(
     payload: ClosureWrite,
     _: AuthPrincipal = Depends(require_permission("availability.manage")),
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
     now: datetime = Depends(get_current_time),
 ) -> OwnerSchedulingResponse:
     try:
-        save_closure(payload, session)
+        repository = AvailabilityRepository(session, tenant)
+        save_closure(payload, repository)
         session.commit()
-        return build_response(session, now)
+        return build_response(repository, now)
     except (SQLAlchemyError, ValueError, LookupError) as error:
         session.rollback()
         scheduling_error(error)
@@ -282,12 +297,14 @@ def update_closure(
     payload: ClosureWrite,
     _: AuthPrincipal = Depends(require_permission("availability.manage")),
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
     now: datetime = Depends(get_current_time),
 ) -> OwnerSchedulingResponse:
     try:
-        save_closure(payload, session, closure_id=closure_id)
+        repository = AvailabilityRepository(session, tenant)
+        save_closure(payload, repository, closure_id=closure_id)
         session.commit()
-        return build_response(session, now)
+        return build_response(repository, now)
     except (SQLAlchemyError, ValueError, LookupError) as error:
         session.rollback()
         scheduling_error(error)
@@ -298,8 +315,10 @@ def delete_closure(
     closure_id: int,
     _: AuthPrincipal = Depends(require_permission("availability.manage")),
     session: Session = Depends(get_order_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
 ) -> Response:
-    closure = session.get(BusinessClosure, closure_id)
+    repository = AvailabilityRepository(session, tenant)
+    closure = repository.get_business_closure_by_id(closure_id)
     if closure is None:
         raise HTTPException(status_code=404, detail="Closure was not found.")
     try:

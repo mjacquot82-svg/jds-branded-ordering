@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.availability.repository import AvailabilityRepository
+from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
 from app.orders.constants import FulfillmentStatus, OrderStatus
 from app.orders.models import Order
 from app.orders.repository import OrderRepository
@@ -102,7 +103,10 @@ class OwnerOrderService:
         return self.order(order_id)
 
     def dashboard(self, *, now: datetime) -> dict:
-        settings = AvailabilityRepository(self._session).get_business_settings()
+        settings = AvailabilityRepository(
+            self._session,
+            resolve_internal_ladels_compatibility_context(self._session),
+        ).get_business_settings()
         if settings is None:
             raise RuntimeError("Business settings are unavailable.")
         local_now = now.astimezone(ZoneInfo(settings.timezone))

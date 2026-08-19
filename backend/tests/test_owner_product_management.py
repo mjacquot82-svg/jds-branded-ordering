@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.catalog.models import Product
 from app.catalog.repository import CatalogRepository
+from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
 from app.catalog.seed import seed_catalog
 from app.catalog.service import CatalogService
 from tests.test_catalog_api import catalog_api_engine
@@ -29,7 +30,9 @@ def test_daily_availability_toggle_immediately_controls_customer_menu(
         assert product is not None
 
         service = CatalogService(
-            CatalogRepository(session),
+            CatalogRepository(
+                session, resolve_internal_ladels_compatibility_context(session)
+            ),
             tax_name="HST",
             tax_rate_millionths=1_300_000,
         )

@@ -455,9 +455,19 @@ async def test_owner_scheduling_uses_authoritative_preview_and_protected_mutatio
     with Session(auth_engine) as session, session.begin():
         session.query(BusinessClosure).delete()
         session.query(BusinessHour).delete()
-        settings = session.get(BusinessSettings, 1)
+        organization_id = session.scalar(
+            select(Organization.id).where(Organization.slug == "the-guest-house")
+        )
+        settings = session.scalar(
+            select(BusinessSettings).where(
+                BusinessSettings.organization_id == organization_id
+            )
+        )
         if settings is None:
-            settings = BusinessSettings(timezone="America/Toronto")
+            settings = BusinessSettings(
+                organization_id=organization_id,
+                timezone="America/Toronto",
+            )
             session.add(settings)
         settings.ordering_enabled = True
         settings.ordering_mode = "schedule"
@@ -465,7 +475,7 @@ async def test_owner_scheduling_uses_authoritative_preview_and_protected_mutatio
         settings.pickup_interval_minutes = 5
         settings.maximum_advance_days = 14
         for weekday in range(7):
-            session.add(BusinessHour(weekday=weekday, is_closed=False, opens_at=time(0), closes_at=time(23, 59)))
+            session.add(BusinessHour(settings=settings, weekday=weekday, is_closed=False, opens_at=time(0), closes_at=time(23, 59)))
 
     login = await owner_login(auth_client)
     csrf_headers = {"Origin": "http://test", "X-CSRF-Token": str(login["csrf_token"])}

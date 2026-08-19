@@ -12,6 +12,7 @@ from app.availability.models import (
     ProductAvailabilityOverride,
 )
 from app.catalog.models import Product
+from app.tenancy.context import TenantContext
 
 
 class AvailabilityRepositoryProtocol(Protocol):
@@ -41,19 +42,40 @@ class AvailabilityRepositoryProtocol(Protocol):
 class AvailabilityRepository:
     """Persistence primitives for sellability and pickup scheduling."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, tenant: TenantContext) -> None:
         self._session = session
+        self._tenant = tenant
+
+    @property
+    def tenant(self) -> TenantContext:
+        return self._tenant
 
     def add(self, entity: object) -> None:
+        if isinstance(entity, BusinessSettings):
+            existing = entity.organization_id
+            if existing is not None and existing != self._tenant.organization_id:
+                raise ValueError("Business settings belong to another organization.")
+            entity.organization_id = self._tenant.organization_id
         self._session.add(entity)
 
     def get_business_settings(self) -> BusinessSettings | None:
-        return self._session.get(BusinessSettings, 1)
+        return self._session.scalar(
+            select(BusinessSettings).where(
+                BusinessSettings.organization_id == self._tenant.organization_id
+            )
+        )
+
+    def _settings_id(self) -> int | None:
+        return self._session.scalar(
+            select(BusinessSettings.id).where(
+                BusinessSettings.organization_id == self._tenant.organization_id
+            )
+        )
 
     def get_business_hour(self, weekday: int) -> BusinessHour | None:
         return self._session.scalar(
             select(BusinessHour).where(
-                BusinessHour.business_settings_id == 1,
+                BusinessHour.business_settings_id == self._settings_id(),
                 BusinessHour.weekday == weekday,
             )
         )
@@ -64,7 +86,7 @@ class AvailabilityRepository:
     ) -> BusinessClosure | None:
         return self._session.scalar(
             select(BusinessClosure).where(
-                BusinessClosure.business_settings_id == 1,
+                BusinessClosure.business_settings_id == self._settings_id(),
                 BusinessClosure.business_date <= business_date,
                 or_(
                     and_(
@@ -80,7 +102,7 @@ class AvailabilityRepository:
         return list(
             self._session.scalars(
                 select(BusinessHour)
-                .where(BusinessHour.business_settings_id == 1)
+                .where(BusinessHour.business_settings_id == self._settings_id())
                 .order_by(BusinessHour.weekday)
             )
         )
@@ -89,8 +111,16 @@ class AvailabilityRepository:
         return list(
             self._session.scalars(
                 select(BusinessClosure)
-                .where(BusinessClosure.business_settings_id == 1)
+                .where(BusinessClosure.business_settings_id == self._settings_id())
                 .order_by(BusinessClosure.business_date, BusinessClosure.id)
+            )
+        )
+
+    def get_business_closure_by_id(self, closure_id: int) -> BusinessClosure | None:
+        return self._session.scalar(
+            select(BusinessClosure).where(
+                BusinessClosure.business_settings_id == self._settings_id(),
+                BusinessClosure.id == closure_id,
             )
         )
 
@@ -98,14 +128,24 @@ class AvailabilityRepository:
         return self._session.scalar(
             select(Product)
             .options(joinedload(Product.category))
-            .where(Product.id == product_id)
+            .where(
+                Product.organization_id == self._tenant.organization_id,
+                Product.id == product_id,
+            )
         )
 
     def get_product_availability(
         self,
         product_id: int,
     ) -> ProductAvailability | None:
-        return self._session.get(ProductAvailability, product_id)
+        return self._session.scalar(
+            select(ProductAvailability)
+            .join(Product, Product.id == ProductAvailability.product_id)
+            .where(
+                Product.organization_id == self._tenant.organization_id,
+                ProductAvailability.product_id == product_id,
+            )
+        )
 
     def get_product_availability_override(
         self,
@@ -113,7 +153,10 @@ class AvailabilityRepository:
         business_date: date,
     ) -> ProductAvailabilityOverride | None:
         return self._session.scalar(
-            select(ProductAvailabilityOverride).where(
+            select(ProductAvailabilityOverride)
+            .join(Product, Product.id == ProductAvailabilityOverride.product_id)
+            .where(
+                Product.organization_id == self._tenant.organization_id,
                 ProductAvailabilityOverride.product_id == product_id,
                 ProductAvailabilityOverride.business_date == business_date,
             )

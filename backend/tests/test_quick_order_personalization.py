@@ -17,6 +17,12 @@ from app.catalog.models import (
 from app.customers.repository import CustomerRepository
 from app.db.base import Base
 from app.orders.models import Order, OrderItem, OrderItemModifier
+from app.jds_auth.models import Organization
+from app.tenancy.resolver import (
+    LADELS_ORGANIZATION_ID,
+    LADELS_ORGANIZATION_NAME,
+    LADELS_ORGANIZATION_SLUG,
+)
 
 
 def _engine():
@@ -31,6 +37,14 @@ def _engine():
     # SQLite does not honor the PostgreSQL-only partial-index predicate.
     with engine.begin() as connection:
         connection.execute(text("DROP INDEX uq_products_single_lunch_special"))
+    with Session(engine) as session, session.begin():
+        session.add(
+            Organization(
+                id=LADELS_ORGANIZATION_ID,
+                slug=LADELS_ORGANIZATION_SLUG,
+                name=LADELS_ORGANIZATION_NAME,
+            )
+        )
     return engine
 
 
@@ -79,12 +93,13 @@ def test_quick_order_uses_paid_quantity_recency_customer_ownership_and_current_c
     now = datetime.now(timezone.utc)
 
     with Session(engine) as session, session.begin():
-        public = Category(id=1, slug="public", name="Public", is_published=True)
-        hidden = Category(id=2, slug="hidden", name="Hidden", is_published=False)
+        public = Category(id=1, organization_id=LADELS_ORGANIZATION_ID, slug="public", name="Public", is_published=True)
+        hidden = Category(id=2, organization_id=LADELS_ORGANIZATION_ID, slug="hidden", name="Hidden", is_published=False)
         session.add_all([public, hidden])
         for product_id in range(1, 12):
             session.add(Product(
                 id=product_id,
+                organization_id=LADELS_ORGANIZATION_ID,
                 category_id=2 if product_id == 11 else 1,
                 slug=f"product-{product_id}",
                 name=f"Product {product_id}",
@@ -120,9 +135,9 @@ def test_quick_order_is_capped_at_six_with_a_deterministic_product_id_tie_break(
     now = datetime.now(timezone.utc)
 
     with Session(engine) as session, session.begin():
-        session.add(Category(id=1, slug="public", name="Public", is_published=True))
+        session.add(Category(id=1, organization_id=LADELS_ORGANIZATION_ID, slug="public", name="Public", is_published=True))
         for product_id in range(1, 9):
-            session.add(Product(id=product_id, category_id=1, slug=f"product-{product_id}", name=f"Product {product_id}", base_price_cents=500, is_published=True))
+            session.add(Product(id=product_id, organization_id=LADELS_ORGANIZATION_ID, category_id=1, slug=f"product-{product_id}", name=f"Product {product_id}", base_price_cents=500, is_published=True))
             _order(session, order_id=product_id, customer_id=customer_id, status="paid", created_at=now, product_id=product_id, quantity=1)
 
     with Session(engine) as session:
@@ -135,9 +150,9 @@ def test_exact_quick_order_preserves_quantity_and_uses_only_current_valid_catalo
     now = datetime.now(timezone.utc)
 
     with Session(engine) as session, session.begin():
-        category = Category(id=1, slug="coffee", name="Coffee", is_published=True)
+        category = Category(id=1, organization_id=LADELS_ORGANIZATION_ID, slug="coffee", name="Coffee", is_published=True)
         product = Product(
-            id=1, category=category, slug="drip-coffee", name="Drip Coffee",
+            id=1, organization_id=LADELS_ORGANIZATION_ID, category=category, slug="drip-coffee", name="Drip Coffee",
             base_price_cents=190, is_published=True,
         )
         variant = ProductVariant(
@@ -145,7 +160,7 @@ def test_exact_quick_order_preserves_quantity_and_uses_only_current_valid_catalo
             price_cents=205, is_active=True,
         )
         milk = ModifierGroup(
-            id=30, key="milk", name="Milk", selection_type=SelectionType.SINGLE,
+            id=30, organization_id=LADELS_ORGANIZATION_ID, key="milk", name="Milk", selection_type=SelectionType.SINGLE,
             is_required=True, minimum_selections=1, maximum_selections=1,
             allow_quantity=False, is_active=True,
         )
@@ -154,7 +169,7 @@ def test_exact_quick_order_preserves_quantity_and_uses_only_current_valid_catalo
             price_adjustment_cents=0, is_active=True,
         )
         sugar = ModifierGroup(
-            id=40, key="sugar", name="Sugar", selection_type=SelectionType.SINGLE,
+            id=40, organization_id=LADELS_ORGANIZATION_ID, key="sugar", name="Sugar", selection_type=SelectionType.SINGLE,
             is_required=True, minimum_selections=1, maximum_selections=5,
             allow_quantity=True, is_active=True,
         )
