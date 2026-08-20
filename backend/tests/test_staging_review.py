@@ -173,7 +173,11 @@ async def test_staging_seed_auth_tenants_fixture_payments_and_noindex(staging_da
         )
         assert login.status_code == 200
         organizations = await client.get("/api/v1/owner/auth/organizations")
-        assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe"}
+        assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe", "new-merchant-demo"}
+        assert login.json()["app_launched"] is True
+        new_merchant = next(item for item in organizations.json() if item["organization_slug"] == "new-merchant-demo")
+        assert new_merchant["app_launched"] is False
+        assert new_merchant["onboarding_current_step"] == "welcome"
         selected_before = login.json()["organization_id"]
         owner_hint = await client.get("/api/v1/owner/business-profile?review_tenant=second-street-cafe")
         assert owner_hint.status_code == 200
@@ -187,6 +191,18 @@ async def test_staging_seed_auth_tenants_fixture_payments_and_noindex(staging_da
             headers={"Origin": STAGING_ORIGIN, "X-CSRF-Token": refreshed_session.json()["csrf_token"]},
         )
         assert switched.status_code == 200
+        switched_new = await client.post(
+            f'/api/v1/owner/auth/organizations/{new_merchant["membership_id"]}/select',
+            headers={"Origin": STAGING_ORIGIN, "X-CSRF-Token": switched.json()["csrf_token"]},
+        )
+        assert switched_new.status_code == 200
+        assert switched_new.json()["app_launched"] is False
+        assert switched_new.json()["onboarding_current_step"] == "welcome"
+        switched = await client.post(
+            f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select',
+            headers={"Origin": STAGING_ORIGIN, "X-CSRF-Token": switched_new.json()["csrf_token"]},
+        )
+        assert switched.json()["app_launched"] is True
         launch = await client.get("/api/v1/owner/storefront/launch-kit")
         assert launch.status_code == 200
         assert launch.json()["url"] == f"{STAGING_ORIGIN}?review_tenant=second-street-cafe"

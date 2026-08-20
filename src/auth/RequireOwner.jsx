@@ -38,6 +38,10 @@ export default function RequireOwner() {
       </div>
     </section>
   );
+  if (["owner", "manager"].includes(session?.role) && session?.app_launched === false) {
+    const step = session.onboarding_current_step || "welcome";
+    return <Navigate replace to={`/setup/${step}`} />;
+  }
   if (session && canAccessOwnerPath(session, location.pathname)) return <>
     <nav className="admin-links operations-nav" aria-label="Operations Portal navigation">
       {businessStatus==="loading"?<span className="current-business">Loading businesses…</span>:businesses.length > 1 ? <label className="business-switcher"><span>Current business</span><select aria-label="Current business" disabled={businessStatus==="switching"} value={businesses.find((item) => item.organization_id === session.organization_id)?.membership_id || ""} onChange={(event) => selectBusiness(event.target.value).catch(()=>{})}>{businesses.map((item) => <option value={item.membership_id} key={item.membership_id}>{item.organization_name}</option>)}</select></label> : businesses.length === 1 ? <span className="current-business">{businesses[0].organization_name}</span> : null}

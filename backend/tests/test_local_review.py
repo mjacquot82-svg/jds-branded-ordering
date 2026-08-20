@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session
 from app.jds_auth.config import AuthSettings
 from app.jds_auth.models import Membership, Organization
 from app.jds_auth.provider import DevelopmentIdentityProvider, InvalidCredentialsError, SupabaseIdentityProvider
-from app.local_review_seed import assert_safe_local_review, seed_local_review
+from app.local_review_seed import NEW_MERCHANT_RESET_CONFIRMATION, assert_safe_local_review, seed_local_review
 from app.main import create_app
-from app.platform.models import DesignVersion
+from app.platform.models import DesignVersion, DesignWorkspace, OnboardingState
 from tests.test_migrations import make_alembic_config
 
 
@@ -61,6 +61,14 @@ def test_local_seed_rejects_unsafe_environment_and_database(monkeypatch) -> None
         assert_safe_local_review("postgresql+psycopg://user:pass@db.production.invalid/app_local_review")
     with pytest.raises(RuntimeError, match="ending in _local_review"):
         assert_safe_local_review("postgresql+psycopg://user:pass@localhost/production")
+    monkeypatch.setenv("JDS_LOCAL_REVIEW_RESET_NEW_MERCHANT", "wrong-confirmation")
+    monkeypatch.setenv("JDS_ENABLE_LOCAL_REVIEW", "true")
+    with pytest.raises(RuntimeError, match="exact synthetic reset confirmation"):
+        seed_local_review("postgresql+psycopg://user:pass@localhost/safe_local_review")
+    monkeypatch.setenv("JDS_ENVIRONMENT", "production")
+    monkeypatch.setenv("JDS_LOCAL_REVIEW_RESET_NEW_MERCHANT", NEW_MERCHANT_RESET_CONFIRMATION)
+    with pytest.raises(RuntimeError, match="development review mode"):
+        seed_local_review("postgresql+psycopg://user:pass@localhost/safe_local_review")
 
 
 @pytest.fixture
@@ -110,6 +118,23 @@ async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped
             session.scalar(select(func.count()).select_from(DesignVersion)),
         )
     assert second == first
+
+    with Session(engine) as session, session.begin():
+        new_merchant = session.scalar(select(Organization).where(Organization.slug == "new-merchant-demo"))
+        onboarding = session.get(OnboardingState, new_merchant.id)
+        onboarding.current_step = "brand"
+        workspace = session.get(DesignWorkspace, new_merchant.id)
+        workspace.draft_config = {**workspace.draft_config, "template":"minimal"}
+    monkeypatch.setenv("JDS_LOCAL_REVIEW_RESET_NEW_MERCHANT", NEW_MERCHANT_RESET_CONFIRMATION)
+    seed_local_review(local_review_database)
+    monkeypatch.delenv("JDS_LOCAL_REVIEW_RESET_NEW_MERCHANT")
+    with Session(engine) as session:
+        reset_merchant = session.scalar(select(Organization).where(Organization.slug == "new-merchant-demo"))
+        reset_onboarding = session.get(OnboardingState, reset_merchant.id)
+        reset_workspace = session.get(DesignWorkspace, reset_merchant.id)
+        assert reset_onboarding.current_step == "welcome"
+        assert reset_onboarding.state == "in_progress"
+        assert reset_workspace.published_version_id is None
 
     review_origin = "https://synthetic-codespace-5173.app.github.dev"
     monkeypatch.setenv("JDS_ENVIRONMENT", "production")
@@ -162,7 +187,11 @@ async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped
         login = await client.post("/api/v1/owner/auth/login", headers=proxy_headers, json={"email": "owner@local.jds.test", "password": "local-review-password"})
         assert login.status_code == 200
         organizations = await client.get("/api/v1/owner/auth/organizations")
-        assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe"}
+        assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe", "new-merchant-demo"}
+        assert login.json()["app_launched"] is True
+        new_merchant = next(item for item in organizations.json() if item["organization_slug"] == "new-merchant-demo")
+        assert new_merchant["app_launched"] is False
+        assert new_merchant["onboarding_current_step"] == "welcome"
         target = next(item for item in organizations.json() if item["organization_slug"] == "second-street-cafe")
         missing_csrf = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers=proxy_headers)
         assert missing_csrf.status_code == 403
@@ -170,7 +199,11 @@ async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped
         switched = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers={**proxy_headers, "X-CSRF-Token": login.json()["csrf_token"]})
         assert switched.status_code == 200
         assert switched.json()["organization_id"] == target["organization_id"]
-        forbidden = await client.post(f'/api/v1/owner/auth/organizations/{uuid4()}/select', headers={**proxy_headers, "X-CSRF-Token": switched.json()["csrf_token"]})
+        switched_new = await client.post(f'/api/v1/owner/auth/organizations/{new_merchant["membership_id"]}/select', headers={**proxy_headers, "X-CSRF-Token": switched.json()["csrf_token"]})
+        assert switched_new.status_code == 200
+        assert switched_new.json()["app_launched"] is False
+        assert switched_new.json()["onboarding_current_step"] == "welcome"
+        forbidden = await client.post(f'/api/v1/owner/auth/organizations/{uuid4()}/select', headers={**proxy_headers, "X-CSRF-Token": switched_new.json()["csrf_token"]})
         assert forbidden.status_code == 403
 
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as public:

@@ -14,7 +14,7 @@ from app.db.engine import create_database_engine
 from app.jds_auth.foundation import ensure_foundation
 from app.jds_auth.models import ExternalIdentity, JdsUser, Membership, Organization, Role
 from app.jds_auth.provider import StagingReviewIdentityProvider
-from app.local_review_seed import SECOND_CAFE_SLUG, _seed_second_catalog, _seed_tenant_details
+from app.local_review_seed import NEW_MERCHANT_RESET_CONFIRMATION, NEW_MERCHANT_SLUG, SECOND_CAFE_SLUG, _reset_new_merchant, _seed_new_merchant, _seed_second_catalog, _seed_tenant_details
 from app.platform.models import BillingPlan, OnboardingState, PlatformGrant
 from app.platform.readiness import onboarding_completed_steps, synchronize_public_readiness
 from app.staging import STAGING_OWNER_EMAIL, assert_staging_seed_safe
@@ -28,6 +28,14 @@ def seed_staging_review(database_url: str) -> None:
     application_key = os.environ["JDS_APPLICATION_KEY"]
     engine = create_database_engine(database_url)
     try:
+        reset_requested = os.getenv("JDS_STAGING_REVIEW_RESET_NEW_MERCHANT", "")
+        if reset_requested:
+            if reset_requested != NEW_MERCHANT_RESET_CONFIRMATION:
+                raise RuntimeError("New Merchant Demo reset requires exact synthetic reset confirmation.")
+            with Session(engine) as session, session.begin():
+                synthetic = session.scalar(select(Organization).where(Organization.slug == NEW_MERCHANT_SLUG))
+                if synthetic is not None:
+                    _reset_new_merchant(session, synthetic)
         with Session(engine) as session:
             seed_catalog(session)
         with Session(engine) as session:
@@ -44,6 +52,13 @@ def seed_staging_review(database_url: str) -> None:
                 application_name="JDS Commerce — STAGING REVIEW",
                 organization_slug=SECOND_CAFE_SLUG,
                 organization_name="Second Street Café — TEST",
+            )
+            _, new_merchant = ensure_foundation(
+                session,
+                application_key=application_key,
+                application_name="JDS Commerce — STAGING REVIEW",
+                organization_slug=NEW_MERCHANT_SLUG,
+                organization_name="New Merchant Demo — TEST",
             )
             owner = session.scalar(select(JdsUser).where(JdsUser.primary_email == STAGING_OWNER_EMAIL))
             if owner is None:
@@ -75,7 +90,7 @@ def seed_staging_review(database_url: str) -> None:
                     entitlements={"designStudio": True, "notifications": True, "loyalty": True},
                 ))
                 session.flush()
-            for organization in (ladels, second):
+            for organization in (ladels, second, new_merchant):
                 membership = session.scalar(select(Membership).where(
                     Membership.organization_id == organization.id,
                     Membership.application_id == application.id,
@@ -99,6 +114,7 @@ def seed_staging_review(database_url: str) -> None:
             _seed_second_catalog(session, second.id)
             _seed_tenant_details(session, ladels, owner, second=False, staging=True, staging_frontend_host=frontend_host)
             _seed_tenant_details(session, second, owner, second=True, staging=True, staging_frontend_host=frontend_host)
+            _seed_new_merchant(session, new_merchant, owner, staging=True)
             session.commit()
         with Session(engine) as session, session.begin():
             organizations = session.scalars(select(Organization).where(Organization.slug.in_(("the-guest-house", SECOND_CAFE_SLUG))))

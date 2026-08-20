@@ -198,7 +198,7 @@ def create_app(
         response = await call_next(request)
         local_review_tenant = request.query_params.get("review_tenant")
         if application.state.local_review_enabled and local_review_tenant in {
-            "the-guest-house", "second-street-cafe",
+            "the-guest-house", "second-street-cafe", "new-merchant-demo",
         }:
             response.set_cookie(
                 "jds_local_review_tenant", local_review_tenant,
@@ -206,7 +206,7 @@ def create_app(
             )
         staging_review_tenant = request.query_params.get("review_tenant")
         if staging_review_enabled and staging_review_tenant in {
-            "the-guest-house", "second-street-cafe",
+            "the-guest-house", "second-street-cafe", "new-merchant-demo",
         }:
             response.set_cookie(
                 "__Host-jds_staging_review_tenant", staging_review_tenant,

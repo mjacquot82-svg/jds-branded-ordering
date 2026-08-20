@@ -2,14 +2,15 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { Home, Search, ShoppingBag, UserRound } from "lucide-react";
 import { useCustomerAuth } from "../auth/CustomerAuthContext.jsx";
 import { useTenant } from "../tenant/TenantContext.jsx";
+import { getLayoutDefinition } from "../design/layoutDefinitions.js";
 
-const customerLinks = [
+function customerLinks(layout) { return [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/menu", label: "Browse", icon: Search },
   { to: "/cart", label: "Cart", icon: ShoppingBag },
-];
+]; }
 
-const operationalPathPrefixes = ["/admin", "/owner", "/staff", "/kitchen"];
+const operationalPathPrefixes = ["/admin", "/owner", "/staff", "/setup", "/kitchen"];
 
 export function isCustomerFacingPath(pathname) {
   return !operationalPathPrefixes.some(
@@ -22,8 +23,10 @@ export default function AppLayout() {
   const tenant = useTenant();
   const { pathname } = useLocation();
   const showCustomerFooter = isCustomerFacingPath(pathname);
+  const setupWizard = pathname === "/setup" || pathname.startsWith("/setup/");
+  const storefrontLayout = getLayoutDefinition(tenant.value?.design?.template);
   const primaryLinks = [
-    ...customerLinks,
+    ...customerLinks(storefrontLayout),
     {
       to: session ? "/account" : "/account/sign-in",
       label: "Account",
@@ -31,8 +34,10 @@ export default function AppLayout() {
     },
   ];
 
+  if (setupWizard) return <div className="app-shell setup-app-shell"><main><Outlet /></main></div>;
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell storefront-layout-${storefrontLayout.id} navigation-${storefrontLayout.navigation}`}>
       {tenant.value?.review?.staging ? (
         <aside className="staging-review-banner" role="status">
           <strong>{tenant.value.review.label}</strong>
@@ -44,6 +49,7 @@ export default function AppLayout() {
       ) : null}
       <header className="site-header">
         <div className="nav-container customer-nav-container">
+          <NavLink className="storefront-header-brand" to="/">{tenant.value?.design?.displayName || tenant.value?.business?.displayName}</NavLink>
           <nav className="desktop-nav" aria-label="Desktop ordering navigation">
             {primaryLinks.map((link) => {
               const Icon = link.icon;
@@ -57,6 +63,7 @@ export default function AppLayout() {
           </nav>
         </div>
       </header>
+      {tenant.value?.design?.announcement?.enabled && tenant.value.design.announcement.text ? <aside className="storefront-announcement">{tenant.value.design.announcement.text}</aside> : null}
 
       <main>
         <Outlet />

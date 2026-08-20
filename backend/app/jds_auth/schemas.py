@@ -84,6 +84,8 @@ class SessionResponse(AuthSchema):
     role: str
     permissions: list[str]
     csrf_token: str
+    app_launched: bool = False
+    onboarding_current_step: str = "welcome"
 
 
 class AuthorizedOrganizationResponse(AuthSchema):
@@ -92,6 +94,8 @@ class AuthorizedOrganizationResponse(AuthSchema):
     organization_slug: str
     organization_name: str
     role: str
+    app_launched: bool = False
+    onboarding_current_step: str = "welcome"
 
 
 class MessageResponse(AuthSchema):

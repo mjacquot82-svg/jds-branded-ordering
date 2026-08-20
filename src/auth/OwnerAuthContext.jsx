@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { fetchAuthorizedOrganizations, fetchOwnerSession, loginOwner, loginStaff, logoutOwner, selectAuthorizedOrganization } from "../services/ownerAuthApi.js";
 import { fetchPlatformCapabilities } from "../services/designStudioApi.js";
+import { ownerEntryPath } from "./ownerAuthRouting.js";
 
 const OwnerAuthContext = createContext(null);
 
@@ -66,7 +67,7 @@ export function OwnerAuthProvider({ children }) {
     setBusinessStatus("switching");setBusinessError("");
     try{const nextSession = await selectAuthorizedOrganization(membershipId, session.csrf_token);
       setSession({ ...nextSession, platform_capabilities: session.platform_capabilities || [] });
-      globalThis.location?.reload?.();return nextSession;
+      globalThis.location?.assign?.(ownerEntryPath(nextSession));return nextSession;
     }catch(error){setBusinessStatus("error");setBusinessError(error.message);await loadBusinesses().catch(()=>{});throw error;}
   }, [loadBusinesses,session]);
 

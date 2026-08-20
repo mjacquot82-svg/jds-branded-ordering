@@ -95,7 +95,7 @@ function ClosureForm({ initialValue = EMPTY_CLOSURE, onCancel, onSave, saving })
   );
 }
 
-export default function SchedulingPage() {
+export default function SchedulingPage({ setupMode = false }) {
   const { session } = useOwnerAuth();
   const [data, setData] = useState(null);
   const [hours, setHours] = useState([]);
@@ -186,8 +186,8 @@ export default function SchedulingPage() {
   const overrideActive = data.ordering_mode !== "schedule";
 
   return (
-    <section className="page-section owner-scheduling-page">
-      <div className="page-heading"><p className="eyebrow">Owner workspace</p><h1>Scheduling</h1><p>Manage when customers can order and when pickups are available.</p></div>
+    <section className={`page-section owner-scheduling-page ${setupMode?"embedded-ordering-step":""}`}>
+      <div className="page-heading"><p className="eyebrow">{setupMode?"Step 5":"Owner workspace"}</p><h1>{setupMode?"When can customers order?":"Scheduling"}</h1><p>{setupMode?"Choose your usual hours, pickup timing, and how much preparation time you need.":"Manage when customers can order and when pickups are available."}</p></div>
 
       {overrideActive ? <div className={`owner-override-notice ${data.ordering_mode === "force_closed" ? "paused" : "open"}`} role="status"><AlertTriangle aria-hidden="true" size={22} /><div><strong>{data.ordering_mode === "force_closed" ? "Online orders are temporarily paused." : "Online orders are temporarily being accepted."}</strong><p>Regular business hours are being overridden until you change it.</p></div><button className="secondary-button" disabled={busy === "ordering"} type="button" onClick={() => chooseOrdering("schedule")}>Return to Business Hours</button></div> : null}
 

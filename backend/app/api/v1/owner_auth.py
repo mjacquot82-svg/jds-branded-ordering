@@ -46,7 +46,7 @@ from app.jds_auth.service import (
     SessionInvalid,
     utc_now,
 )
-from app.platform.models import StorefrontHostname
+from app.platform.models import OnboardingState, StorefrontHostname
 
 router = APIRouter(prefix="/owner/auth", tags=["owner-auth"])
 _TENANT_HEADERS = ("x-tenant-id", "x-organization-id", "x-tenant-slug", "x-organization-slug")
@@ -174,8 +174,17 @@ def require_read_permission(permission: str) -> Callable[..., AuthPrincipal]:
     return dependency
 
 
-def session_response(principal: AuthPrincipal, csrf_token: str) -> SessionResponse:
-    return SessionResponse(user_id=str(principal.user_id), email=principal.email, display_name=principal.display_name, organization_id=str(principal.organization_id), role=principal.role, permissions=sorted(principal.permissions), csrf_token=csrf_token)
+def session_response(principal: AuthPrincipal, csrf_token: str, session: Session | None = None) -> SessionResponse:
+    onboarding = session.get(OnboardingState, principal.organization_id) if session is not None else None
+    return SessionResponse(
+        user_id=str(principal.user_id), email=principal.email,
+        display_name=principal.display_name, organization_id=str(principal.organization_id),
+        role=principal.role, permissions=sorted(principal.permissions), csrf_token=csrf_token,
+        # Initial setup completion is durable. A later operational-readiness
+        # problem must never turn an established merchant back into a new one.
+        app_launched=bool(onboarding and onboarding.state == "complete"),
+        onboarding_current_step=onboarding.current_step if onboarding else "welcome",
+    )
 
 
 @router.post("/login", response_model=SessionResponse)
@@ -192,7 +201,7 @@ def login(payload: LoginRequest, response: Response, request: Request, _: None =
         auth_error(503, "authentication_unavailable", "Owner authentication is unavailable.")
     response.set_cookie(settings.session_cookie_name, issued.token, max_age=settings.session_absolute_hours * 3600, secure=settings.secure_cookies, httponly=True, samesite="lax", path="/")
     response.headers["Cache-Control"] = "no-store"
-    return session_response(issued.principal, issued.csrf_token)
+    return session_response(issued.principal, issued.csrf_token, service._session)
 
 
 @router.get("/session", response_model=SessionResponse)
@@ -203,7 +212,7 @@ def read_session(request: Request, service: AuthenticationService = Depends(get_
         auth_error(401, "unauthenticated", "Authentication is required.")
     try:
         principal, csrf = service.rotate_csrf(token, now=now)
-        return session_response(principal, csrf)
+        return session_response(principal, csrf, service._session)
     except SessionInvalid:
         auth_error(401, "session_expired", "The owner session is invalid or expired.")
 
@@ -220,6 +229,11 @@ def authorized_organizations(
             organization_slug=organization.slug,
             organization_name=organization.name,
             role=role.key,
+            app_launched=bool(
+                (onboarding := service._session.get(OnboardingState, organization.id))
+                and onboarding.state == "complete"
+            ),
+            onboarding_current_step=onboarding.current_step if onboarding else "welcome",
         )
         for membership, organization, role in service.workforce_organizations(principal)
     ]
@@ -244,7 +258,7 @@ def select_organization(
         auth_error(403, "membership_inactive", "The selected organization is not authorized.")
     response.set_cookie(settings.session_cookie_name, issued.token, max_age=settings.session_absolute_hours * 3600, secure=settings.secure_cookies, httponly=True, samesite="lax", path="/")
     response.headers["Cache-Control"] = "no-store"
-    return session_response(issued.principal, issued.csrf_token)
+    return session_response(issued.principal, issued.csrf_token, service._session)
 
 
 @router.post("/logout", response_model=MessageResponse)

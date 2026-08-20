@@ -107,7 +107,7 @@ def staff_login(
         raise HTTPException(status_code=401, detail={"code": "authentication_failed", "message": "Staff member or PIN is invalid."})
     response.set_cookie(settings.session_cookie_name, issued.token, max_age=settings.session_absolute_hours * 3600, secure=settings.secure_cookies, httponly=True, samesite="lax", path="/")
     response.headers["Cache-Control"] = "no-store"
-    return session_response(issued.principal, issued.csrf_token)
+    return session_response(issued.principal, issued.csrf_token, service._session)
 
 
 @router.get("/owner/staff", response_model=list[StaffAccountResponse])

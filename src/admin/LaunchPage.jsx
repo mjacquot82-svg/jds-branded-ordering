@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchEntitlements, fetchLaunchKit, fetchReadiness, fetchStorefront } from "../services/designStudioApi.js";
+import { useNavigate } from "react-router-dom";
+import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
+import { fetchEntitlements, fetchLaunchKit, fetchReadiness, fetchStorefront, publishDesign } from "../services/designStudioApi.js";
 
 const checkNames = {
   organization: "Business is active",
@@ -11,6 +13,15 @@ const checkNames = {
   catalog: "Published menu",
   published_design: "Published design",
   clover: "Clover connection",
+};
+const checkActions = {
+  business_profile: ["Add your business details", "/admin/setup#business"],
+  verified_hostname: ["Choose your ordering-app address", "/admin/setup#business"],
+  fulfillment: ["Choose when customers can order", "/admin/scheduling"],
+  hours: ["Add your business hours", "/admin/scheduling"],
+  catalog: ["Add at least one menu item", "/admin/products"],
+  published_design: ["Review and publish your design", "/admin/design/preview"],
+  clover: ["Connect Clover before accepting payments", "/admin/setup#payments"],
 };
 const subscriptionMessages = {
   unconfigured: "Billing is not enabled in this environment. All V1 features remain available.",
@@ -23,15 +34,23 @@ const subscriptionMessages = {
   none: "No subscription is assigned yet.",
 };
 
-export default function LaunchPage() {
+export default function LaunchPage({ setupMode = false }) {
+  const { refreshSession, session } = useOwnerAuth();
+  const navigate=useNavigate();
   const [state,setState]=useState({status:"loading"});
-  useEffect(()=>{Promise.all([fetchReadiness(),fetchStorefront(),fetchEntitlements()]).then(async([readiness,storefront,entitlements])=>{let kit=null;if(readiness.publicReady){kit=await fetchLaunchKit();}setState({status:"ready",readiness,storefront,entitlements,kit});}).catch((error)=>setState({status:"error",error:error.message}));},[]);
+  async function load(){try{const [readiness,storefront,entitlements]=await Promise.all([fetchReadiness(),fetchStorefront(),fetchEntitlements()]);let kit=null;if(readiness.publicReady)kit=await fetchLaunchKit();setState({status:"ready",readiness,storefront,entitlements,kit});}catch(error){setState({status:"error",error:error.message});}}
+  useEffect(()=>{load();},[]);
   if(state.status==="loading")return <section className="page-section launch-page"><h1>Preparing your launch area…</h1><p>Checking your storefront and launch assets.</p></section>;
   if(state.status==="error")return <section className="page-section launch-page"><h1>Launch area unavailable</h1><p role="alert">{state.error}</p><button className="secondary-button" type="button" onClick={()=>globalThis.location?.reload?.()}>Try again</button></section>;
   const {readiness,storefront,entitlements,kit}=state;
-  return <section className="page-section launch-page"><header><p className="eyebrow">Share your storefront</p><h1>Launch</h1><p>Your storefront stays private until every server-verified launch check is complete.</p></header>
-    <div className="launch-grid"><section className="operations-panel"><h2>{readiness.publicReady?"Ready to share":"Finish setup before sharing"}</h2><ul className="launch-checks">{Object.entries(readiness.checks).map(([key,ready])=><li className={ready?"ready":"pending"} key={key}><span aria-hidden="true">{ready?"✓":"○"}</span><span><strong>{checkNames[key]||key.replaceAll("_"," ")}</strong><small>{ready?"Ready":"Still needed"}</small></span></li>)}</ul>{!readiness.publicReady?<Link className="primary-button" to="/admin/setup">Continue setup</Link>:null}</section>
-      <section className="operations-panel launch-assets"><h2>Customer launch kit</h2>{kit?<><label>Storefront URL<input readOnly value={kit.url}/></label><img src={kit.qrUrl} alt={`QR code for ${storefront.slug}`}/><div className="design-actions"><a className="primary-button" href={kit.printUrl} target="_blank" rel="noreferrer">Open printable sign</a><a className="secondary-button" href={kit.qrUrl} download={`${storefront.slug}-qr.svg`}>Download QR code</a></div><p>Place the sign near your counter or entrance so customers can scan and order from their phones.</p></>:<div className="preview-empty"><h3>Launch assets unlock when ready</h3><p>Complete the checks shown here, then return to download your QR code and printable sign.</p></div>}</section>
+  const commerceReady=["business_profile","fulfillment","hours","catalog","clover"].every((key)=>readiness.checks[key]);
+  const wizardActions={business_profile:"/setup/business",verified_hostname:"/setup/business",fulfillment:"/setup/ordering",hours:"/setup/ordering",catalog:"/setup/catalog",published_design:"/setup/preview",clover:"/setup/payments"};
+  const firstMissing=Object.keys(readiness.checks).find((key)=>!readiness.checks[key]);
+  async function publish(){if(!globalThis.confirm?.("Make the design you reviewed your live design?"))return;try{setState({...state,status:"publishing"});await publishDesign(session.csrf_token);await load();}catch(error){setState({...state,status:"ready",error:error.message});}}
+  async function enterApplication(){await refreshSession();navigate("/admin",{replace:true});}
+  return <section className={`page-section launch-page ${setupMode?"embedded-launch-step":""}`}><header><p className="eyebrow">{readiness.publicReady&&setupMode?"You’re live!":"Your final step"}</p><h1>{readiness.publicReady?setupMode?"You created your ordering app.":"Your ordering app is ready.":"Let’s get your app ready to launch."}</h1><p>{readiness.publicReady&&setupMode?"Share it with customers, open your storefront, or enter your owner dashboard.":"Everything here is checked against your saved app. Your storefront stays private until every launch check passes."}</p></header>
+    {state.error?<p className="owner-page-message error" role="alert">{state.error}</p>:null}<div className="launch-grid"><section className="operations-panel"><h2>{readiness.publicReady?"Here’s what your customers can use":"A few things still need attention"}</h2><ul className="launch-checks">{Object.entries(readiness.checks).map(([key,ready])=>{const [label,adminTo]=checkActions[key]||[checkNames[key]||key.replaceAll("_"," "),"/admin/setup"];const to=setupMode?(wizardActions[key]||"/setup/business"):adminTo;return <li className={ready?"ready":"pending"} key={key}><span aria-hidden="true">{ready?"✓":"○"}</span><span><strong>{label}</strong><small>{ready?"Ready":"Still needed"}</small></span>{!ready&&key!=="published_design"?<Link to={to}>Fix this</Link>:null}</li>;})}</ul>{!readiness.checks.published_design&&commerceReady?<button className="primary-button" type="button" onClick={publish}>Launch my app</button>:!readiness.publicReady?<Link className="primary-button" to={setupMode?(wizardActions[firstMissing]||"/setup/business"):"/admin/setup"}>Continue building my app</Link>:null}</section>
+      <section className="operations-panel launch-assets"><h2>Customer launch kit</h2>{kit?<><label>Storefront URL<input readOnly value={kit.url}/></label><img src={kit.qrUrl} alt={`QR code for ${storefront.slug}`}/><div className="design-actions"><a className="primary-button" href={kit.url} target="_blank" rel="noreferrer">Open my app</a><a className="secondary-button" href={kit.printUrl} target="_blank" rel="noreferrer">Open printable sign</a><a className="secondary-button" href={kit.qrUrl} download={`${storefront.slug}-qr.svg`}>Download QR code</a>{setupMode?<button className="primary-button" type="button" onClick={enterApplication}>Go to dashboard</button>:null}</div><p>Place the sign near your counter or entrance so customers can scan and order from their phones.</p></>:<div className="preview-empty"><h3>Launch assets unlock when ready</h3><p>Complete the checks shown here, then return to download your QR code and printable sign.</p></div>}</section>
     </div><section className="operations-panel subscription-summary"><h2>Plan and feature access</h2><strong>{(entitlements.plan||"V1 access").replaceAll("-"," ")}</strong><p>{subscriptionMessages[entitlements.state]||`Subscription status: ${entitlements.state.replaceAll("_"," ")}.`}</p><ul>{Object.entries(entitlements.features).filter(([,enabled])=>enabled).map(([feature])=><li key={feature}>{feature.replace(/([A-Z])/g," $1").replace(/^./,(letter)=>letter.toUpperCase())}</li>)}</ul></section>
   </section>;
 }

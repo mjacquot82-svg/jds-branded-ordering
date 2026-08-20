@@ -26,6 +26,12 @@ import PlatformAdminPage from "./admin/PlatformAdminPage.jsx";
 import DesignPreviewPage from "./admin/DesignPreviewPage.jsx";
 import CustomersPage from "./admin/CustomersPage.jsx";
 import LaunchPage from "./admin/LaunchPage.jsx";
+import RequireSetup from "./auth/RequireSetup.jsx";
+import SetupWizard from "./setup/SetupWizard.jsx";
+
+function OwnerHome() {
+  return <AdminDashboard />;
+}
 
 export default function App() {
   return (
@@ -46,8 +52,11 @@ export default function App() {
         <Route element={<OwnerAuthBoundary />}>
           <Route path="owner/login" element={<OwnerLoginPage />} />
           <Route path="staff" element={<StaffLoginPage />} />
+          <Route element={<RequireSetup />}>
+            <Route path="setup/:step?" element={<SetupWizard />} />
+          </Route>
           <Route path="admin" element={<RequireOwner />}>
-            <Route index element={<AdminDashboard />} />
+            <Route index element={<OwnerHome />} />
             <Route path="orders" element={<OrdersPage />} />
             <Route path="customers" element={<CustomersPage />} />
             <Route path="products" element={<ProductsPage />} />

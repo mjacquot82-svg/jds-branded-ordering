@@ -163,6 +163,12 @@ def test_public_resolution_rechecks_readiness_and_isolates_tenants(platform_db):
         )
         alpha_product.is_published = False
         session.commit()
+        result = synchronize_public_readiness(session, a)
+        session.commit()
+        onboarding = session.get(OnboardingState, a)
+        assert result.public_ready is False
+        assert onboarding.public_ready is False
+        assert onboarding.state == "complete"
         with pytest.raises(TenantResolutionError, match="not ready"):
             resolve_storefront_context(session, host=alpha_host)
         assert resolve_storefront_context(session, host=beta_host).organization_id == b
@@ -258,16 +264,27 @@ def test_draft_publish_and_revert_are_isolated_and_append_only(platform_db):
     with Session(engine) as session:
         # Actor is optional at the model layer for migration/system actions.
         service_a = DesignService(session, context(a, "alpha")); workspace_a = service_a.workspace(); session.commit()
-        first = deepcopy(DEFAULT_CONFIG); first["displayName"] = "Alpha Café"
+        commerce_before = (
+            tuple(session.scalars(select(Category.id).where(Category.organization_id == a))),
+            tuple(session.scalars(select(Product.id).where(Product.organization_id == a))),
+        )
+        first = deepcopy(DEFAULT_CONFIG); first["displayName"] = "Alpha Café"; first["template"] = "modern"
         workspace_a = service_a.save(first, workspace_a.revision, actor)
         published = service_a.publish(actor)
-        second = deepcopy(first); second["displayName"] = "Alpha Draft Only"
+        second = deepcopy(first); second["displayName"] = "Alpha Draft Only"; second["template"] = "minimal"
         service_a.save(second, workspace_a.revision, actor)
         assert session.get(DesignVersion, published.id).config["displayName"] == "Alpha Café"
+        assert session.get(DesignVersion, published.id).config["template"] == "modern"
+        assert service_a.workspace().draft_config["template"] == "minimal"
+        assert commerce_before == (
+            tuple(session.scalars(select(Category.id).where(Category.organization_id == a))),
+            tuple(session.scalars(select(Product.id).where(Product.organization_id == a))),
+        )
         service_b = DesignService(session, context(b, "beta")); workspace_b = service_b.workspace(); session.commit()
         with pytest.raises(DesignValidationError): service_b.revert(published.id, actor)
         reverted = service_a.revert(published.id, actor)
         assert reverted.id != published.id and reverted.source_version_id == published.id
+        assert reverted.config["template"] == "modern"
         assert workspace_b.published_version_id is None
 
 

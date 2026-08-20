@@ -34,11 +34,23 @@ class MediaInput(Strict):
     alt_text: str = Field(default="", max_length=300)
     byte_size: int = Field(gt=0, le=10_000_000)
     checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+class BusinessAddressInput(Strict):
+    street: str = Field(default="", max_length=240)
+    city: str = Field(default="", max_length=120)
+    region: str = Field(default="", max_length=120)
+    postal_code: str = Field(default="", max_length=30)
+    country: str = Field(default="CA", max_length=80)
+class BusinessSocialsInput(Strict):
+    instagram: str = Field(default="", max_length=500)
+    facebook: str = Field(default="", max_length=500)
+    website: str = Field(default="", max_length=500)
 class BusinessInput(Strict):
     display_name: str = Field(min_length=1, max_length=200)
     legal_name: str | None = Field(default=None, max_length=240)
     contact_email: str | None = Field(default=None, max_length=320)
     phone: str | None = Field(default=None, max_length=30)
+    address: BusinessAddressInput = Field(default_factory=BusinessAddressInput)
+    socials: BusinessSocialsInput = Field(default_factory=BusinessSocialsInput)
     timezone: str = Field(min_length=1, max_length=100)
     currency: str = Field(default="CAD", pattern=r"^[A-Z]{3}$")
     pickup_instructions: str = Field(default="", max_length=1000)
@@ -135,9 +147,10 @@ def onboarding(tenant: TenantContext = Depends(authenticated_owner_tenant), sess
     return {"state":item.state,"currentStep":item.current_step,"completedSteps":item.completed_steps,"publicReady":item.public_ready,"revision":item.revision}
 
 @router.get("/owner/readiness")
-def readiness(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+def readiness(request: Request, tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     result = evaluate_storefront_readiness(session, tenant.organization_id)
-    return {"publicReady": result.public_ready, "checks": result.checks}
+    review_mode = "staging" if getattr(request.app.state,"staging_review_enabled",False) else "local" if getattr(request.app.state,"local_review_enabled",False) else None
+    return {"publicReady": result.public_ready, "checks": result.checks, "reviewMode":review_mode}
 
 @router.post("/owner/readiness/recheck")
 def recheck_readiness(principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -208,7 +221,7 @@ def disable_storefront(hostname_id: UUID, principal: AuthPrincipal = Depends(csr
     return Response(status_code=204)
 
 def business_payload(item: BusinessProfile) -> dict:
-    return {"display_name":item.display_name,"legal_name":item.legal_name,"contact_email":item.contact_email,"phone":item.phone,"timezone":item.timezone,"currency":item.currency,"pickup_instructions":item.pickup_instructions,"fulfillment_wording":item.fulfillment_wording}
+    return {"display_name":item.display_name,"legal_name":item.legal_name,"contact_email":item.contact_email,"phone":item.phone,"address":item.address or {},"socials":item.socials or {},"timezone":item.timezone,"currency":item.currency,"pickup_instructions":item.pickup_instructions,"fulfillment_wording":item.fulfillment_wording}
 
 @router.get("/owner/business-profile")
 def owner_business_profile(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -241,10 +254,11 @@ def save_onboarding(payload: OnboardingInput, _: AuthPrincipal = Depends(csrf_pr
             return {"state":item.state,"currentStep":item.current_step,"completedSteps":item.completed_steps,"publicReady":item.public_ready,"revision":item.revision}
         raise HTTPException(409, detail="Onboarding changed in another session.")
     allowed={"business","storefront","hours","fulfillment","design","catalog","clover"}
-    if not set(payload.completed_steps)<=allowed or payload.current_step not in allowed|{"complete"}: raise HTTPException(422,detail="Invalid onboarding checkpoint.")
+    journey_steps={"welcome","look","brand","business","catalog","ordering","payments","preview","launch","complete"}
+    if not set(payload.completed_steps)<=allowed or payload.current_step not in journey_steps|allowed: raise HTTPException(422,detail="Invalid onboarding checkpoint.")
     item.completed_steps=derived_steps; item.current_step=payload.current_step; item.revision+=1
     # Checklist state is progress UX only; public availability is authoritative data.
-    item.state="complete" if allowed<=set(derived_steps) else "in_progress"
+    item.state="complete" if item.state == "complete" or allowed<=set(derived_steps) else "in_progress"
     organization=session.get(Organization,tenant.organization_id)
     if organization and item.state=="complete" and organization.lifecycle_status=="onboarding": organization.lifecycle_status="active"
     synchronize_public_readiness(session, tenant.organization_id)
