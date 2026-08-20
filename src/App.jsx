@@ -25,6 +25,7 @@ import OnboardingPage from "./admin/OnboardingPage.jsx";
 import PlatformAdminPage from "./admin/PlatformAdminPage.jsx";
 import DesignPreviewPage from "./admin/DesignPreviewPage.jsx";
 import CustomersPage from "./admin/CustomersPage.jsx";
+import LaunchPage from "./admin/LaunchPage.jsx";
 
 export default function App() {
   return (
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="design" element={<DesignStudioPage />} />
             <Route path="design/preview" element={<DesignPreviewPage />} />
             <Route path="setup" element={<OnboardingPage />} />
+            <Route path="launch" element={<LaunchPage />} />
             <Route path="platform" element={<PlatformAdminPage />} />
             <Route path="staff" element={<StaffPage />} />
             <Route path="*" element={<Navigate replace to="/admin" />} />

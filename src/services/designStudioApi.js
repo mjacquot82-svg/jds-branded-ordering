@@ -23,6 +23,7 @@ export const recheckReadiness = (csrf) => request("/owner/readiness/recheck",{me
 export const fetchStorefront = () => request("/owner/storefront");
 export const saveStorefront = (slug,csrf) => request("/owner/storefront",{method:"PUT",headers:{"X-CSRF-Token":csrf},body:JSON.stringify({slug})});
 export const fetchLaunchKit = () => request("/owner/storefront/launch-kit");
+export const fetchEntitlements = () => request("/owner/entitlements");
 export const fetchMedia = () => request("/owner/media");
 export const archiveMedia = (mediaId, csrf) => request(`/owner/media/${mediaId}`, { method: "DELETE", headers: { "X-CSRF-Token": csrf } });
 export async function uploadMedia(file, altText, csrf) {

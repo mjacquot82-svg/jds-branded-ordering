@@ -21,6 +21,7 @@ from app.api.v1.platform import (
     disable_storefront,
     entitlements,
     launch_kit,
+    platform_organization_detail,
     platform_organizations,
     provision_organization,
     retry_storefront,
@@ -238,6 +239,13 @@ def test_platform_visibility_requires_an_explicit_grant_and_is_audited(platform_
         session.add(PlatformGrant(user_id=actor,capability="platform.organizations.read",is_active=True));session.commit()
         result = platform_organizations(principal, session)
         assert {item["name"] for item in result} >= {"Alpha Café", "Beta Café"}
+        detail = platform_organization_detail(a, principal, session)
+        assert detail["id"] == str(a)
+        assert detail["readiness"]["publicReady"] is False
+        assert "No owner membership is assigned." in detail["warnings"]
+        assert detail["clover"] == []
+        assert detail["subscription"] is None
+        assert "access_token" not in repr(detail)
         assert session.scalar(select(OperationalAuditEvent.id).where(OperationalAuditEvent.scope=="platform",OperationalAuditEvent.action=="platform.organizations_viewed")) is not None
 
 
