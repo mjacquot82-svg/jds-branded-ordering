@@ -92,10 +92,17 @@ def resolve_internal_ladels_compatibility_context(session: Session) -> TenantCon
     )
 
 
-def resolve_local_review_context(session: Session, slug: str) -> TenantContext:
-    """Resolve one of the two fixed local review storefronts; never used publicly."""
-    if os.getenv("JDS_ENVIRONMENT", "").lower() != "development" or os.getenv("JDS_ENABLE_LOCAL_REVIEW", "false").lower() != "true":
-        raise TenantResolutionError("Local review storefronts are disabled.")
+def resolve_local_review_context(session: Session, slug: str, *, staging: bool = False) -> TenantContext:
+    """Resolve a fixed synthetic review storefront in an explicitly guarded mode."""
+    enabled = (
+        os.getenv("JDS_ENVIRONMENT", "").lower() == "staging"
+        and os.getenv("JDS_ENABLE_STAGING_REVIEW", "false").lower() == "true"
+        if staging
+        else os.getenv("JDS_ENVIRONMENT", "").lower() == "development"
+        and os.getenv("JDS_ENABLE_LOCAL_REVIEW", "false").lower() == "true"
+    )
+    if not enabled:
+        raise TenantResolutionError("Review storefronts are disabled.")
     allowed = frozenset({"the-guest-house", "second-street-cafe"})
     normalized = slug.strip().lower()
     if normalized not in allowed:

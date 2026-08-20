@@ -105,6 +105,15 @@ def require_trusted_origin(request: Request, settings: AuthSettings = Depends(ge
         and origin == getattr(request.app.state, "local_review_origin", "")
     ):
         return
+    if getattr(request.app.state, "local_review_enabled", False):
+        forwarded_host = request.headers.get("x-forwarded-host", "").lower()
+        forwarded_proto = request.headers.get("x-forwarded-proto", "").lower()
+        forwarded_origin = f"{forwarded_proto}://{forwarded_host}"
+        if (
+            origin == getattr(request.app.state, "local_review_proxy_origin", "")
+            and forwarded_origin == getattr(request.app.state, "local_review_origin", "")
+        ):
+            return
     parsed=urlparse(origin or "")
     request_host=(request.url.hostname or "").lower()
     if parsed.scheme == "https" and parsed.hostname == request_host and session.scalar(select(StorefrontHostname.id).where(StorefrontHostname.hostname==request_host,StorefrontHostname.status=="verified")) is not None:

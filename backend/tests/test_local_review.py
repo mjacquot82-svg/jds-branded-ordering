@@ -35,6 +35,7 @@ def test_development_auth_refuses_production_activation(monkeypatch) -> None:
     monkeypatch.setenv("JDS_ENABLE_LOCAL_REVIEW", "true")
     monkeypatch.setenv("JDS_LOCAL_AUTH_PASSWORD", "local-review-password")
     monkeypatch.setenv("JDS_LOCAL_REVIEW_ORIGIN", "https://synthetic-codespace-5173.app.github.dev")
+    monkeypatch.setenv("JDS_LOCAL_REVIEW_PROXY_ORIGIN", "http://localhost:5173")
     with pytest.raises(RuntimeError, match="explicit local development"):
         create_app()
 
@@ -77,6 +78,7 @@ def local_review_database(postgresql_url: str, monkeypatch) -> Iterator[str]:
     monkeypatch.setenv("JDS_LOCAL_AUTH_EMAIL", "owner@local.jds.test")
     monkeypatch.setenv("JDS_LOCAL_AUTH_PASSWORD", "local-review-password")
     monkeypatch.setenv("JDS_LOCAL_REVIEW_ORIGIN", "https://synthetic-codespace-5173.app.github.dev")
+    monkeypatch.setenv("JDS_LOCAL_REVIEW_PROXY_ORIGIN", "http://localhost:5173")
     monkeypatch.setenv("JDS_AUTH_SESSION_PEPPER", "local-review-pepper-0123456789abcdef")
     monkeypatch.setenv("FRONTEND_URL", "http://test")
     command.upgrade(make_alembic_config(database_url), "head")
@@ -135,18 +137,40 @@ async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped
         assert rejected.status_code == 401
         unrelated = await client.post("/api/v1/owner/auth/login", headers={"Origin": "https://attacker.example"}, json={"email": "owner@local.jds.test", "password": "local-review-password"})
         assert unrelated.status_code == 403
-        login = await client.post("/api/v1/owner/auth/login", headers={"Origin": review_origin}, json={"email": "owner@local.jds.test", "password": "local-review-password"})
+        forged_forwarding = await client.post("/api/v1/owner/auth/login", headers={"Origin": "http://localhost:5173", "X-Forwarded-Host": "attacker.example", "X-Forwarded-Proto": "https"}, json={"email": "owner@local.jds.test", "password": "local-review-password"})
+        assert forged_forwarding.status_code == 403
+        proxy_headers = {"Origin": "http://localhost:5173", "X-Forwarded-Host": "synthetic-codespace-5173.app.github.dev", "X-Forwarded-Proto": "https"}
+        diagnostics = await client.get(
+            "/api/v1/local-review/request-diagnostics",
+            headers={
+                **proxy_headers,
+                "Forwarded": 'for=127.0.0.1;host="synthetic-codespace-5173.app.github.dev";proto=https',
+                "Referer": f"{review_origin}/owner/login",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+        assert diagnostics.status_code == 200
+        assert diagnostics.json()["headers"] == {
+            "origin": "http://localhost:5173",
+            "host": "test",
+            "x-forwarded-host": "synthetic-codespace-5173.app.github.dev",
+            "x-forwarded-proto": "https",
+            "forwarded": 'for=127.0.0.1;host="synthetic-codespace-5173.app.github.dev";proto=https',
+            "referer": f"{review_origin}/owner/login",
+            "sec-fetch-site": "same-origin",
+        }
+        login = await client.post("/api/v1/owner/auth/login", headers=proxy_headers, json={"email": "owner@local.jds.test", "password": "local-review-password"})
         assert login.status_code == 200
         organizations = await client.get("/api/v1/owner/auth/organizations")
         assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe"}
         target = next(item for item in organizations.json() if item["organization_slug"] == "second-street-cafe")
-        missing_csrf = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers={"Origin": review_origin})
+        missing_csrf = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers=proxy_headers)
         assert missing_csrf.status_code == 403
         assert missing_csrf.json()["detail"]["code"] == "csrf_invalid"
-        switched = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers={"Origin": review_origin, "X-CSRF-Token": login.json()["csrf_token"]})
+        switched = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers={**proxy_headers, "X-CSRF-Token": login.json()["csrf_token"]})
         assert switched.status_code == 200
         assert switched.json()["organization_id"] == target["organization_id"]
-        forbidden = await client.post(f'/api/v1/owner/auth/organizations/{uuid4()}/select', headers={"Origin": review_origin, "X-CSRF-Token": switched.json()["csrf_token"]})
+        forbidden = await client.post(f'/api/v1/owner/auth/organizations/{uuid4()}/select', headers={**proxy_headers, "X-CSRF-Token": switched.json()["csrf_token"]})
         assert forbidden.status_code == 403
 
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as public:

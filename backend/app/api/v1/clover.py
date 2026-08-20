@@ -37,7 +37,21 @@ from app.jds_auth.service import AuthPrincipal
 from app.orders.pricing import calculate_tax_cents
 from app.tenancy.context import TenantContext
 
-router = APIRouter(prefix="/clover", tags=["clover"])
+
+def reject_staging_clover(request: Request) -> None:
+    if (
+        getattr(request.app.state, "staging_review_enabled", False)
+        and getattr(request.app.state, "payment_mode", "") == "fixture-disabled"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "staging_payments_disabled",
+                "message": "STAGING — real payments and Clover connections are disabled.",
+            },
+        )
+
+router = APIRouter(prefix="/clover", tags=["clover"], dependencies=[Depends(reject_staging_clover)])
 logger = logging.getLogger(__name__)
 OAUTH_STATE_COOKIE = "guesthouse_clover_oauth_state"
 MAX_WEBHOOK_BODY_BYTES = 64 * 1024
@@ -200,7 +214,8 @@ def _record_payment_event(
     return event
 
 
-def get_settings() -> CloverSettings:
+def get_settings(request: Request) -> CloverSettings:
+    reject_staging_clover(request)
     settings = CloverSettings.from_env()
     try:
         settings.validate()

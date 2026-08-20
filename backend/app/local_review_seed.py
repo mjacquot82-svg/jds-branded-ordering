@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.availability.models import BusinessHour, BusinessSettings
+from app.availability.models import BusinessClosure, BusinessHour, BusinessSettings
 from app.catalog.models import Category, ModifierGroup, ModifierOption, Product, ProductModifierGroup, SelectionType
 from app.catalog.seed import seed_catalog
 from app.clover.models import CloverInstallation
@@ -85,25 +85,46 @@ def _seed_second_catalog(session: Session, organization_id) -> None:
             session.add(ProductModifierGroup(product_id=product.id, modifier_group_id=group.id, is_active=True, sort_order=0))
 
 
-def _seed_tenant_details(session: Session, organization, owner: JdsUser, *, second: bool) -> None:
+def _seed_tenant_details(
+    session: Session,
+    organization,
+    owner: JdsUser,
+    *,
+    second: bool,
+    staging: bool = False,
+    staging_frontend_host: str | None = None,
+) -> None:
     profile = session.get(BusinessProfile, organization.id)
     if profile is None:
         profile = BusinessProfile(organization_id=organization.id, display_name=organization.name); session.add(profile)
-    profile.display_name = "Second Street Café" if second else "The Guest House"
-    profile.legal_name = "Synthetic Local Review Merchant" if second else "Ladel's / The Guest House"
-    profile.contact_email = "hello@second-street.local.test" if second else "hello@local.jds.test"
+    base_name = "Second Street Café" if second else "The Guest House"
+    profile.display_name = f"{base_name} — TEST" if staging else base_name
+    profile.legal_name = "Synthetic STAGING Review Merchant — NOT A REAL BUSINESS" if staging else ("Synthetic Local Review Merchant" if second else "Ladel's / The Guest House")
+    profile.contact_email = "noreply@staging-review.jds.invalid" if staging else ("hello@second-street.local.test" if second else "hello@local.jds.test")
     profile.timezone = "America/Toronto"; profile.currency = "CAD"
     profile.pickup_instructions = "Pick up at the blue review counter." if second else "Pick up your order at the café counter."
     _seed_hours(session, organization.id, opens=time(7 if second else 8), closes=time(15 if second else 16))
     installation = session.scalar(select(CloverInstallation).where(CloverInstallation.organization_id == organization.id, CloverInstallation.environment == "sandbox"))
     if installation is None:
-        installation = CloverInstallation(organization_id=organization.id, merchant_id=f"local-{organization.slug}", environment="sandbox", app_id="local-review", access_token_encrypted="synthetic-local-token", refresh_token_encrypted="synthetic-local-refresh", access_token_expires_at=datetime.now(timezone.utc) + timedelta(days=3650))
+        installation = CloverInstallation(organization_id=organization.id, merchant_id=f"{'fixture-disabled' if staging else 'local'}-{organization.slug}", environment="sandbox", app_id="staging-fixture-disabled" if staging else "local-review", access_token_encrypted="fixture-disabled-not-a-token" if staging else "synthetic-local-token", refresh_token_encrypted="fixture-disabled-not-a-refresh-token" if staging else "synthetic-local-refresh", access_token_expires_at=datetime.now(timezone.utc) + timedelta(days=3650))
         session.add(installation)
     installation.connection_state = "connected"
-    local_hostname = "second-street.localhost" if second else "the-guest-house.localhost"
+    local_hostname = (
+        "second-street-cafe.staging.invalid"
+        if staging and second
+        else staging_frontend_host
+        if staging and staging_frontend_host
+        else "second-street.localhost"
+        if second
+        else "the-guest-house.localhost"
+    )
     hostname = session.scalar(select(StorefrontHostname).where(StorefrontHostname.hostname == local_hostname))
     if hostname is None:
         session.add(StorefrontHostname(organization_id=organization.id, hostname=local_hostname, status="verified", is_canonical=True, verified_at=datetime.now(timezone.utc)))
+    settings = session.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == organization.id))
+    closure = session.scalar(select(BusinessClosure).where(BusinessClosure.organization_id == organization.id, BusinessClosure.business_date == date(2099, 1, 1)))
+    if closure is None and settings is not None:
+        session.add(BusinessClosure(organization_id=organization.id, business_settings_id=settings.id, business_date=date(2099, 1, 1), reopens_on=date(2099, 1, 2), reason="Synthetic staging closure fixture" if staging else "Synthetic local review closure fixture"))
     subscription = session.get(OrganizationSubscription, organization.id)
     if subscription is None:
         session.add(OrganizationSubscription(organization_id=organization.id, plan_key="engagement", state="active", provider="local"))
@@ -113,7 +134,7 @@ def _seed_tenant_details(session: Session, organization, owner: JdsUser, *, seco
     desired.update({
         "template": "modern" if second else "cozy",
         "displayName": profile.display_name,
-        "tagline": "Bright coffee, baked locally" if second else "Café & Pantry",
+        "tagline": ("STAGING — NO REAL TRANSACTIONS" if staging else ("Bright coffee, baked locally" if second else "Café & Pantry")),
         "typography": "modern" if second else "classic",
         "colors": ({"primary":"#234f4c","accent":"#d9894d","background":"#f4f0e8","surface":"#ffffff","text":"#18302e"} if second else DEFAULT_CONFIG["colors"]),
         "pwa": ({"shortName":"Second St","themeColor":"#234f4c","backgroundColor":"#f4f0e8"} if second else {"shortName":"Guest House","themeColor":"#6f7d5f","backgroundColor":"#f7f0e6"}),

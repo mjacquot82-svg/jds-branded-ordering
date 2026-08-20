@@ -40,9 +40,18 @@ def ladels_compatibility_tenant(
         local_slug = request.query_params.get("review_tenant") or request.cookies.get("jds_local_review_tenant")
         if local_slug and getattr(request.app.state, "local_review_enabled", False):
             return resolve_local_review_context(session, local_slug)
+        staging_slug = request.query_params.get("review_tenant") or request.cookies.get("__Host-jds_staging_review_tenant")
+        if staging_slug and getattr(request.app.state, "staging_review_enabled", False):
+            return resolve_local_review_context(session, staging_slug, staging=True)
         return resolve_storefront_context(
             session,
-            host=request.url.hostname,
+            host=(
+                request.headers.get("x-forwarded-host", "").split(",", 1)[0]
+                if getattr(request.app.state, "staging_review_enabled", False)
+                and request.headers.get("x-forwarded-host", "").split(":", 1)[0].lower()
+                in getattr(request.app.state, "staging_allowed_hosts", frozenset())
+                else request.url.hostname
+            ),
             frontend_url=frontend_url,
             headers=request.headers,
             query_params=request.query_params,

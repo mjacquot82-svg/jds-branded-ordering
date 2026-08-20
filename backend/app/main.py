@@ -7,19 +7,21 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 from urllib.parse import urlparse
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api.v1.router import router as api_v1_router
 from app.db.engine import create_database_engine
 from app.db.health import database_is_available
 from app.db.session import create_session_factory
 from app.jds_auth.config import AuthSettings
-from app.jds_auth.provider import DevelopmentIdentityProvider, IdentityProvider, SupabaseIdentityProvider
+from app.jds_auth.provider import DevelopmentIdentityProvider, IdentityProvider, StagingReviewIdentityProvider, SupabaseIdentityProvider
+from app.platform.media import LocalMediaStorage
 from app.push.config import PushSettings
 from app.push.trigger import drain_push_outbox
+from app.staging import staging_review_requested, validate_staging_media_root, validate_staging_runtime
 
 APP_NAME = "guesthouse-backend"
 APP_VERSION = "0.1.0"
@@ -71,6 +73,18 @@ def create_app(
     auth_provider_mode = os.getenv("JDS_AUTH_PROVIDER", "supabase").strip().lower()
     local_review_enabled = os.getenv("JDS_ENABLE_LOCAL_REVIEW", "false").lower() == "true"
     local_review_origin = os.getenv("JDS_LOCAL_REVIEW_ORIGIN", "").rstrip("/")
+    local_review_proxy_origin = os.getenv("JDS_LOCAL_REVIEW_PROXY_ORIGIN", "").rstrip("/")
+    staging_review_enabled = staging_review_requested() and runtime_environment == "staging"
+    staging_password = ""
+    staging_hosts: frozenset[str] = frozenset()
+    if staging_review_requested() and runtime_environment == "production":
+        raise RuntimeError("Production refuses staging review mode.")
+    if staging_review_enabled and auth_provider is not None:
+        raise RuntimeError("Staging review refuses an injected identity provider.")
+    if staging_review_enabled or (auth_provider is None and auth_provider_mode == "staging-review"):
+        if not resolved_database_url:
+            raise RuntimeError("Staging review requires DATABASE_URL.")
+        _, staging_password, staging_hosts = validate_staging_runtime(resolved_database_url)
     if auth_provider is None and auth_provider_mode == "development":
         if runtime_environment != "development" or not local_review_enabled:
             raise RuntimeError("Development authentication requires explicit local development review mode.")
@@ -93,10 +107,23 @@ def create_app(
             raise RuntimeError("Development authentication requires an explicit local review origin.")
         if parsed_review_origin.scheme == "http" and parsed_review_origin.hostname not in {"localhost", "127.0.0.1", "test"}:
             raise RuntimeError("Non-local development review origins must use HTTPS.")
+        parsed_proxy_origin = urlparse(local_review_proxy_origin)
+        if (
+            not local_review_proxy_origin
+            or parsed_proxy_origin.scheme != "http"
+            or parsed_proxy_origin.hostname not in {"localhost", "127.0.0.1"}
+            or parsed_proxy_origin.username
+            or parsed_proxy_origin.password
+            or parsed_proxy_origin.path not in {"", "/"}
+            or parsed_proxy_origin.params
+            or parsed_proxy_origin.query
+            or parsed_proxy_origin.fragment
+        ):
+            raise RuntimeError("Development authentication requires an explicit loopback proxy origin.")
 
     resolved_auth_settings = auth_settings
     if resolved_auth_settings is None:
-        if auth_provider_mode == "development":
+        if auth_provider_mode in {"development", "staging-review"}:
             session_pepper = os.getenv("JDS_AUTH_SESSION_PEPPER", "")
             frontend_url = os.getenv("FRONTEND_URL", "")
             if len(session_pepper) < 32 or not frontend_url:
@@ -104,6 +131,8 @@ def create_app(
             resolved_auth_settings = AuthSettings(
                 supabase_url="", supabase_publishable_key="", supabase_secret_key="",
                 session_pepper=session_pepper, frontend_url=frontend_url,
+                application_key=os.getenv("JDS_APPLICATION_KEY", "jds-commerce"),
+                organization_slug=os.getenv("JDS_ORGANIZATION_SLUG", "the-guest-house"),
                 secure_cookies=frontend_url.startswith("https://"),
             )
         else:
@@ -118,6 +147,8 @@ def create_app(
         application.state.auth_provider = DevelopmentIdentityProvider(
             email=local_email, password=local_password,
         )
+    elif auth_provider_mode == "staging-review":
+        application.state.auth_provider = StagingReviewIdentityProvider(password=staging_password)
     else:
         application.state.auth_provider = (
             SupabaseIdentityProvider(resolved_auth_settings)
@@ -125,11 +156,21 @@ def create_app(
         )
     application.state.local_review_enabled = local_review_enabled and runtime_environment == "development"
     application.state.local_review_origin = local_review_origin if application.state.local_review_enabled else ""
+    application.state.local_review_proxy_origin = local_review_proxy_origin if application.state.local_review_enabled else ""
+    application.state.staging_review_enabled = staging_review_enabled
+    application.state.staging_allowed_hosts = staging_hosts
+    application.state.payment_mode = os.getenv("JDS_PAYMENT_MODE", "production").strip().lower()
+    application.state.outbound_integrations_enabled = os.getenv("JDS_OUTBOUND_INTEGRATIONS_ENABLED", "true").lower() == "true"
     application.state.push_settings = PushSettings.from_env()
+    if staging_review_enabled:
+        application.state.media_storage = LocalMediaStorage(validate_staging_media_root())
     frontend_url = os.getenv("FRONTEND_URL") or (
         resolved_auth_settings.frontend_url if resolved_auth_settings else None
     )
-    allowed_origins = [origin for origin in {frontend_url, application.state.local_review_origin} if origin]
+    allowed_origins = [origin for origin in {
+        frontend_url, application.state.local_review_origin,
+        application.state.local_review_proxy_origin,
+    } if origin]
     application.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
@@ -163,10 +204,36 @@ def create_app(
                 "jds_local_review_tenant", local_review_tenant,
                 httponly=True, secure=False, samesite="lax", path="/",
             )
+        staging_review_tenant = request.query_params.get("review_tenant")
+        if staging_review_enabled and staging_review_tenant in {
+            "the-guest-house", "second-street-cafe",
+        }:
+            response.set_cookie(
+                "__Host-jds_staging_review_tenant", staging_review_tenant,
+                httponly=True, secure=True, samesite="lax", path="/",
+            )
+        if staging_review_enabled:
+            response.headers["X-Robots-Tag"] = "noindex, nofollow"
+            response.headers["X-JDS-Environment"] = "staging-review"
         response.headers["X-Request-Id"] = request_id
         return response
 
     application.include_router(api_v1_router)
+
+    @application.get("/api/v1/local-review/request-diagnostics")
+    async def local_review_request_diagnostics(request: Request) -> dict[str, object]:
+        """Expose only non-secret routing metadata for hands-on local review."""
+        if not application.state.local_review_enabled:
+            raise HTTPException(status_code=404, detail="Not found.")
+        header_names = (
+            "origin", "host", "x-forwarded-host", "x-forwarded-proto",
+            "forwarded", "referer", "sec-fetch-site",
+        )
+        return {
+            "local_review": True,
+            "path": request.url.path,
+            "headers": {name: request.headers.get(name) for name in header_names},
+        }
 
     @application.get("/health/live")
     async def liveness() -> dict[str, str]:
@@ -175,6 +242,11 @@ def create_app(
             "service": APP_NAME,
             "version": APP_VERSION,
         }
+
+    @application.get("/robots.txt", include_in_schema=False)
+    def robots() -> PlainTextResponse:
+        body = "User-agent: *\nDisallow: /\n" if staging_review_enabled else "User-agent: *\nAllow: /\n"
+        return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=300"})
 
     @application.get("/health/ready")
     def readiness(request: Request) -> JSONResponse:

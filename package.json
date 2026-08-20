@@ -2,6 +2,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
+    "build:staging": "vite build && node scripts/write-staging-redirects.js",
     "preview": "vite preview",
     "test:frontend": "node --test tests/frontend/*.test.js"
   },

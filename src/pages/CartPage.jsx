@@ -26,6 +26,7 @@ import {
   resolveSchedulingSelection,
 } from "../services/schedulingApi.js";
 import { readTenantLocalStorage, writeTenantLocalStorage } from "../services/tenantBrowserState.js";
+import { useTenant } from "../tenant/TenantContext.jsx";
 
 function formatPrice(price) {
   return new Intl.NumberFormat("en-CA", {
@@ -83,6 +84,8 @@ function formatReadyTime(date, timeZone) {
 }
 
 export default function CartPage() {
+  const tenant = useTenant();
+  const stagingPaymentsDisabled = tenant.value?.review?.paymentMode === "fixture-disabled";
   const { session } = useCustomerAuth();
   const orderingCustomer = isOrderingCustomerSession(session);
   const { status, catalog, reload } = useCustomerCatalog();
@@ -363,7 +366,7 @@ export default function CartPage() {
         <div className="page-heading cart-heading">
           <span className="eyebrow">Order accepted</span>
           <h1>The café has your order</h1>
-          <p>Your pickup time is confirmed. Payment is the only step left.</p>
+          <p>{stagingPaymentsDisabled ? "This synthetic order is for product review only. Real payment is disabled." : "Your pickup time is confirmed. Payment is the only step left."}</p>
         </div>
 
         <div className="saved-order-status" role="status" aria-live="polite">
@@ -416,12 +419,12 @@ export default function CartPage() {
           <button
             aria-busy={isPlacingOrder}
             className="primary-button"
-            disabled={isPlacingOrder}
+            disabled={isPlacingOrder || stagingPaymentsDisabled}
             type="button"
             onClick={retryPayment}
           >
             <CreditCard size={17} strokeWidth={2.4} />
-            {isPlacingOrder ? "Starting secure payment…" : "Complete secure payment"}
+            {stagingPaymentsDisabled ? "Real payments disabled in staging" : isPlacingOrder ? "Starting secure payment…" : "Complete secure payment"}
           </button>
         </div>
       </section>

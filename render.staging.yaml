@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: jds-branded-ordering-staging-review-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install .
+    preDeployCommand: python -m app.db.migrate
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health/ready
+    autoDeploy: false
+    disk:
+      name: jds-staging-review-media
+      mountPath: /var/data/jds-staging-media
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: jds-branded-ordering-staging-review-db
+          property: connectionString
+      - key: JDS_LOCAL_MEDIA_ROOT
+        value: /var/data/jds-staging-media
+
+databases:
+  - name: jds-branded-ordering-staging-review-db
+    databaseName: jds_branded_ordering_staging_review
+    user: jds_staging_review

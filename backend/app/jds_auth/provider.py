@@ -124,6 +124,56 @@ class DevelopmentIdentityProvider:
         raise IdentityProviderError("Invitations are unavailable in local review mode.")
 
 
+class StagingReviewIdentityProvider:
+    """One fixed synthetic identity; activation is guarded by the app factory."""
+
+    ISSUER = "https://staging-review-auth.jds.invalid"
+    SUBJECT = "jds-staging-review-owner"
+
+    def __init__(self, *, password: str) -> None:
+        self._password = password
+
+    def authenticate_password(self, email: str, password: str) -> ProviderAuthentication:
+        from app.staging import STAGING_OWNER_EMAIL
+
+        if not (
+            secrets.compare_digest(email.strip().lower(), STAGING_OWNER_EMAIL)
+            and secrets.compare_digest(password, self._password)
+        ):
+            raise InvalidCredentialsError("Authentication failed.")
+        return ProviderAuthentication(
+            ProviderIdentity(
+                issuer=self.ISSUER,
+                subject=self.SUBJECT,
+                email=STAGING_OWNER_EMAIL,
+                email_verified=True,
+                display_name="Synthetic Staging Review Owner",
+            ),
+            "staging-review-session-evidence",
+        )
+
+    def register_user(self, email: str, password: str, redirect_url: str) -> ProviderIdentity:
+        raise IdentityProviderError("Registration is unavailable in staging review mode.")
+
+    def request_password_reset(self, email: str, redirect_url: str) -> None:
+        raise IdentityProviderError("Password recovery is unavailable in staging review mode.")
+
+    def verify_email_token(self, token_hash: str, token_type: str) -> ProviderAuthentication:
+        raise IdentityProviderError("Email tokens are unavailable in staging review mode.")
+
+    def authenticate_access_token(self, access_token: str) -> ProviderAuthentication:
+        raise InvalidCredentialsError("Access tokens are unavailable in staging review mode.")
+
+    def resend_verification(self, email: str, redirect_url: str) -> None:
+        raise IdentityProviderError("Email delivery is unavailable in staging review mode.")
+
+    def update_password(self, access_token: str, password: str) -> None:
+        raise IdentityProviderError("Password changes are unavailable in staging review mode.")
+
+    def invite_user(self, email: str, redirect_url: str) -> str:
+        raise IdentityProviderError("Invitations are unavailable in staging review mode.")
+
+
 class SupabaseIdentityProvider:
     """Minimal provider adapter; domain services never depend on Supabase shapes."""
 

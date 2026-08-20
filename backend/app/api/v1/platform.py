@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from html import escape
+import os
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse
@@ -56,14 +57,15 @@ def media_storage(request: Request) -> MediaStorage:
     return getattr(request.app.state, "media_storage", None) or default_media_storage()
 
 @router.get("/storefront/bootstrap")
-def storefront_bootstrap(response: Response, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+def storefront_bootstrap(request: Request, response: Response, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     workspace = session.get(DesignWorkspace, tenant.organization_id)
     version = session.get(DesignVersion, workspace.published_version_id) if workspace and workspace.published_version_id else None
     profile = session.get(BusinessProfile, tenant.organization_id)
     host = session.scalar(select(StorefrontHostname).where(StorefrontHostname.organization_id == tenant.organization_id, StorefrontHostname.is_canonical.is_(True), StorefrontHostname.status == "verified"))
     response.headers["Cache-Control"] = f"public, max-age=60" if version else "no-store"
     response.headers["Vary"] = "Host"
-    return {"tenant": {"id": str(tenant.organization_id), "slug": tenant.organization_slug, "canonicalHost": host.hostname if host else None}, "business": {"displayName": profile.display_name if profile else tenant.organization_slug, "timezone": profile.timezone if profile else "America/Toronto", "currency": profile.currency if profile else "CAD", "pickupInstructions": profile.pickup_instructions if profile else ""}, "design": version.config if version else DEFAULT_CONFIG, "designVersion": version.version_number if version else 0}
+    staging = bool(getattr(request.app.state, "staging_review_enabled", False))
+    return {"tenant": {"id": str(tenant.organization_id), "slug": tenant.organization_slug, "canonicalHost": host.hostname if host else None}, "business": {"displayName": profile.display_name if profile else tenant.organization_slug, "timezone": profile.timezone if profile else "America/Toronto", "currency": profile.currency if profile else "CAD", "pickupInstructions": profile.pickup_instructions if profile else ""}, "design": version.config if version else DEFAULT_CONFIG, "designVersion": version.version_number if version else 0, "review": {"staging": staging, "label": "STAGING — NO REAL TRANSACTIONS" if staging else None, "paymentMode": getattr(request.app.state, "payment_mode", "production") if staging else "production"}}
 
 @router.get("/storefront/manifest.webmanifest")
 def manifest(response: Response, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -152,21 +154,24 @@ def owner_storefront(tenant: TenantContext = Depends(authenticated_owner_tenant)
 def launch_kit(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     hostname=session.scalar(select(StorefrontHostname.hostname).where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.status=="verified",StorefrontHostname.is_canonical.is_(True)))
     if not hostname: raise HTTPException(409,detail="Verify a canonical storefront before generating launch assets.")
-    url=storefront_url(hostname)
+    url=(f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true" else storefront_url(hostname))
     return {"url":url,"qrUrl":"/api/v1/owner/storefront/launch-kit/qr.svg","printUrl":"/api/v1/owner/storefront/launch-kit/print"}
 
 @router.get("/owner/storefront/launch-kit/qr.svg")
 def launch_qr(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> Response:
     hostname=session.scalar(select(StorefrontHostname.hostname).where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.status=="verified",StorefrontHostname.is_canonical.is_(True)))
     if not hostname: raise HTTPException(409,detail="Verify a canonical storefront first.")
-    return Response(content=launch_qr_svg(storefront_url(hostname)),media_type="image/svg+xml",headers={"Cache-Control":"private, no-store"})
+    url=(f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true" else storefront_url(hostname))
+    return Response(content=launch_qr_svg(url),media_type="image/svg+xml",headers={"Cache-Control":"private, no-store"})
 
 @router.get("/owner/storefront/launch-kit/print", response_class=HTMLResponse)
 def launch_print(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> HTMLResponse:
     hostname=session.scalar(select(StorefrontHostname.hostname).where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.status=="verified",StorefrontHostname.is_canonical.is_(True)))
     profile=session.get(BusinessProfile,tenant.organization_id)
     if not hostname or profile is None: raise HTTPException(409,detail="Complete storefront launch setup first.")
-    name=escape(profile.display_name);url=escape(storefront_url(hostname))
+    staging=os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true"
+    staging_url=f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if staging else ""
+    name=escape(profile.display_name);url=escape(staging_url if staging else storefront_url(hostname))
     body=f"""<!doctype html><html><head><title>{name} launch sign</title><style>body{{font-family:system-ui;text-align:center;padding:8vh;color:#222}}h1{{font-size:3rem}}img{{width:min(60vw,420px)}}p{{font-size:1.4rem}}@media print{{button{{display:none}}}}</style></head><body><h1>Order ahead from {name}</h1><img src='/api/v1/owner/storefront/launch-kit/qr.svg' alt='QR code for {name}'><p>{url}</p><button onclick='print()'>Print sign</button></body></html>"""
     return HTMLResponse(body,headers={"Cache-Control":"private, no-store"})
 

@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { Home, Search, ShoppingBag, UserRound } from "lucide-react";
 import { useCustomerAuth } from "../auth/CustomerAuthContext.jsx";
+import { useTenant } from "../tenant/TenantContext.jsx";
 
 const customerLinks = [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -18,6 +19,7 @@ export function isCustomerFacingPath(pathname) {
 
 export default function AppLayout() {
   const { session } = useCustomerAuth();
+  const tenant = useTenant();
   const { pathname } = useLocation();
   const showCustomerFooter = isCustomerFacingPath(pathname);
   const primaryLinks = [
@@ -31,6 +33,15 @@ export default function AppLayout() {
 
   return (
     <div className="app-shell">
+      {tenant.value?.review?.staging ? (
+        <aside className="staging-review-banner" role="status">
+          <strong>{tenant.value.review.label}</strong>
+          <nav aria-label="Synthetic staging storefronts">
+            <a href="/?review_tenant=the-guest-house">The Guest House TEST</a>
+            <a href="/?review_tenant=second-street-cafe">Second Street Café TEST</a>
+          </nav>
+        </aside>
+      ) : null}
       <header className="site-header">
         <div className="nav-container customer-nav-container">
           <nav className="desktop-nav" aria-label="Desktop ordering navigation">

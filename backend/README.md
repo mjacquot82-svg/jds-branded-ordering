@@ -124,6 +124,7 @@ export JDS_AUTH_PROVIDER=development
 export JDS_LOCAL_AUTH_EMAIL=owner@local.jds.test
 export JDS_LOCAL_AUTH_PASSWORD=local-review-password
 export JDS_LOCAL_REVIEW_ORIGIN=http://localhost:5173
+export JDS_LOCAL_REVIEW_PROXY_ORIGIN=http://localhost:5173
 export JDS_AUTH_SESSION_PEPPER=local-review-pepper-0123456789abcdef
 export FRONTEND_URL=http://localhost:5173
 
