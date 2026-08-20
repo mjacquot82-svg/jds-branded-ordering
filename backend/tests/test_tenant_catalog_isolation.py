@@ -19,6 +19,7 @@ from app.tenancy.context import TenantResolutionSource
 from app.tenancy.resolver import (
     LADELS_ORGANIZATION_SLUG,
     TenantResolutionError,
+    resolve_internal_ladels_compatibility_context,
     resolve_ladels_compatibility_context,
     resolve_owner_tenant_context,
 )
@@ -130,7 +131,7 @@ def test_compatibility_resolution_fails_closed_for_unknown_or_conflicting_contex
     tenant_catalog_engine: Engine,
 ) -> None:
     with Session(tenant_catalog_engine) as session:
-        context = resolve_ladels_compatibility_context(session, host="test")
+        context = resolve_internal_ladels_compatibility_context(session)
         assert context.organization_slug == LADELS_ORGANIZATION_SLUG
 
         with pytest.raises(TenantResolutionError, match="not a known"):

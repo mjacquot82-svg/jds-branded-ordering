@@ -21,6 +21,9 @@ from app.catalog.repository import CatalogRepository
 from app.catalog.seed import seed_catalog
 from app.catalog.service import CatalogService
 from app.main import create_app
+from app.api.v1.catalog import ladels_compatibility_tenant
+from app.tenancy.context import TenantContext, TenantResolutionSource
+from app.tenancy.resolver import LADELS_ORGANIZATION_ID, LADELS_ORGANIZATION_SLUG
 from app.tenancy.resolver import resolve_internal_ladels_compatibility_context
 from tests.test_migrations import make_alembic_config
 
@@ -58,6 +61,11 @@ async def catalog_client(
     catalog_api_engine: Engine,
 ) -> AsyncIterator[AsyncClient]:
     application = create_app(database_url=postgresql_url)
+    application.dependency_overrides[ladels_compatibility_tenant] = lambda: TenantContext(
+        organization_id=LADELS_ORGANIZATION_ID,
+        organization_slug=LADELS_ORGANIZATION_SLUG,
+        source=TenantResolutionSource.LADELS_COMPATIBILITY,
+    )
     transport = ASGITransport(app=application)
 
     try:
@@ -262,6 +270,7 @@ async def test_catalog_rejects_client_tenant_hints_and_unknown_hosts(
     with Session(catalog_api_engine) as session:
         seed_catalog(session)
 
+    catalog_client._transport.app.dependency_overrides.pop(ladels_compatibility_tenant)
     conflicting = await catalog_client.get(
         "/api/v1/catalog", headers={"X-Tenant-ID": "client-selected"}
     )

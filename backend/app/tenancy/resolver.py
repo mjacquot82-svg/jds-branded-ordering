@@ -72,6 +72,8 @@ def resolve_ladels_compatibility_context(
         raise TenantResolutionError("This host is not a known Ladel's compatibility surface.")
 
     organization = _ladels_organization(session)
+    if not evaluate_storefront_readiness(session, organization.id).public_ready:
+        raise TenantResolutionError("Storefront is not ready.")
     return TenantContext(
         organization_id=organization.id,
         organization_slug=organization.slug,

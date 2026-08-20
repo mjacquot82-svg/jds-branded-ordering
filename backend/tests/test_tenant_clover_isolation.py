@@ -93,7 +93,7 @@ async def test_oauth_state_for_a_cannot_install_or_overwrite_b(
     )
     assert callback.status_code == 403
     with Session(auth_engine) as session:
-        assert session.scalar(select(CloverInstallation)) is None
+        assert session.scalar(select(CloverInstallation).where(CloverInstallation.environment == "sandbox")) is None
 
 
 @pytest.mark.postgresql

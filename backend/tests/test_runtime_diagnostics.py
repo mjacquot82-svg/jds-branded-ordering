@@ -7,7 +7,8 @@ from app.jds_auth.provider import (
     ProviderAuthentication,
     ProviderIdentity,
 )
-from app.api.v1.customer_auth import current_customer
+from app.api.v1.customer_auth import current_customer, get_customer_auth_service
+from app.api.v1.catalog import ladels_compatibility_tenant
 from app.jds_auth.config import AuthSettings
 from app.jds_auth.service import AuthPrincipal
 from app.main import create_app
@@ -30,7 +31,7 @@ class DiagnosticsProvider:
 
 
 def diagnostics_app(postgresql_url: str):
-    return create_app(
+    app = create_app(
         database_url=postgresql_url,
         auth_settings=AuthSettings(
             supabase_url="https://identity.example.test",
@@ -42,12 +43,15 @@ def diagnostics_app(postgresql_url: str):
         ),
         auth_provider=DiagnosticsProvider(),
     )
+    app.dependency_overrides[ladels_compatibility_tenant] = lambda: object()
+    return app
 
 
 @pytest.mark.anyio
 @pytest.mark.postgresql
 async def test_database_diagnostics_requires_authentication(postgresql_url: str) -> None:
     app = diagnostics_app(postgresql_url)
+    app.dependency_overrides[get_customer_auth_service] = lambda: object()
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:

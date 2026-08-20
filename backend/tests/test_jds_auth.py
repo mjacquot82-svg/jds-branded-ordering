@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator, Iterator
 from datetime import date, datetime, time, timedelta, timezone
 import logging
 from urllib.parse import parse_qs, urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import httpx
@@ -33,6 +33,15 @@ from app.jds_auth.models import (
 from app.jds_auth.provider import IdentityProviderError, InvalidCredentialsError, ProviderAuthentication, ProviderIdentity, SupabaseIdentityProvider
 from app.jds_auth.schemas import CustomerPasswordCompletionRequest, CustomerRegistrationRequest, PasswordCompletionRequest
 from app.jds_auth.security import hash_secret
+from app.api.v1.catalog import ladels_compatibility_tenant
+from app.api.v1.customer_auth import get_customer_auth_service
+from app.availability.models import BusinessHour, BusinessSettings
+from app.catalog.models import Category, Product
+from app.clover.models import CloverInstallation
+from app.platform.design import DesignService
+from app.platform.models import BusinessProfile, StorefrontHostname
+from app.tenancy.context import TenantContext, TenantResolutionSource
+from app.tenancy.resolver import LADELS_ORGANIZATION_ID
 from app.main import create_app
 from app.catalog.models import Product
 from app.catalog.seed import seed_catalog
@@ -149,39 +158,35 @@ def seed_owner(engine: Engine, provider: FakeIdentityProvider) -> None:
             organization_slug="the-guest-house",
             organization_name="The Guest House",
         )
-        owner_role = session.scalar(
-            select(Role).where(
-                Role.application_id == application.id,
-                Role.key == "owner",
-            )
-        )
+        owner_role = session.scalar(select(Role).where(Role.application_id == application.id, Role.key == "owner"))
         assert owner_role is not None
-        user = JdsUser(
-            primary_email=provider.identity.email,
-            display_name="Owner User",
-            email_verified_at=datetime.now(timezone.utc),
-        )
-        session.add(user)
+        user = JdsUser(primary_email=provider.identity.email, display_name="Owner User", email_verified_at=datetime.now(timezone.utc))
+        session.add(user); session.flush()
+        session.add_all([
+            ExternalIdentity(user_id=user.id, issuer=provider.identity.issuer, subject=provider.identity.subject, provider="supabase", provider_email=provider.identity.email),
+            Membership(organization_id=organization.id, application_id=application.id, user_id=user.id, role_id=owner_role.id, status="active", joined_at=datetime.now(timezone.utc)),
+        ])
+
+
+def seed_ready_public_ladels(engine: Engine) -> None:
+    """Public customer-auth tests use a real ready storefront, not a resolver bypass."""
+    with Session(engine) as session:
+        organization = session.scalar(select(Organization).where(Organization.slug == "the-guest-house"))
+        actor = session.scalar(select(JdsUser).where(JdsUser.primary_email == "owner@example.com"))
+        settings = BusinessSettings(organization_id=organization.id, timezone="America/Toronto", ordering_enabled=True)
+        session.add(settings); session.flush()
+        session.add_all(BusinessHour(organization_id=organization.id, business_settings_id=settings.id, weekday=day, is_closed=False, opens_at=time(8), closes_at=time(16)) for day in range(7))
+        category = Category(organization_id=organization.id, slug="auth-ready", name="Ready menu", is_published=True)
+        session.add(category); session.flush()
+        session.add_all([
+            Product(organization_id=organization.id, category_id=category.id, slug="auth-ready", name="Ready product", base_price_cents=500, is_published=True),
+            BusinessProfile(organization_id=organization.id, display_name="The Guest House", pickup_instructions="Pick up at the counter."),
+            StorefrontHostname(organization_id=organization.id, hostname="test", status="verified", is_canonical=True),
+            CloverInstallation(organization_id=organization.id, merchant_id=f"auth-ready-{uuid4().hex}", environment="readiness", app_id="auth-test", access_token_encrypted="fixture-access", refresh_token_encrypted="fixture-refresh", access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1), connection_state="connected"),
+        ])
         session.flush()
-        session.add_all(
-            [
-                ExternalIdentity(
-                    user_id=user.id,
-                    issuer=provider.identity.issuer,
-                    subject=provider.identity.subject,
-                    provider="supabase",
-                    provider_email=provider.identity.email,
-                ),
-                Membership(
-                    organization_id=organization.id,
-                    application_id=application.id,
-                    user_id=user.id,
-                    role_id=owner_role.id,
-                    status="active",
-                    joined_at=datetime.now(timezone.utc),
-                ),
-            ]
-        )
+        tenant = TenantContext(organization_id=organization.id, organization_slug=organization.slug, source=TenantResolutionSource.AUTHENTICATED_MEMBERSHIP)
+        DesignService(session, tenant).publish(actor.id)
 
 
 @pytest.fixture
@@ -192,6 +197,7 @@ async def auth_client(
     fake_provider: FakeIdentityProvider,
 ) -> AsyncIterator[AsyncClient]:
     seed_owner(auth_engine, fake_provider)
+    seed_ready_public_ladels(auth_engine)
     application = create_app(
         database_url=postgresql_url,
         auth_settings=auth_settings,
@@ -1422,6 +1428,8 @@ async def test_anonymous_order_and_clover_checkout_are_rejected_before_side_effe
         ))
     with Session(auth_engine) as session:
         ids = seed_order_dependencies(session)
+    auth_client._transport.app.dependency_overrides[ladels_compatibility_tenant] = lambda: TenantContext(organization_id=LADELS_ORGANIZATION_ID, organization_slug="the-guest-house", source=TenantResolutionSource.LADELS_COMPATIBILITY)
+    auth_client._transport.app.dependency_overrides[get_customer_auth_service] = lambda: object()
     clover_calls = 0
 
     def forbidden_clover_call(*_: object, **__: object) -> dict:

@@ -24,7 +24,7 @@ class JdsApplication(Timestamped, Base):
 
 class Organization(Timestamped, Base):
     __tablename__ = "organizations"
-    __table_args__ = (CheckConstraint("lifecycle_status IN ('onboarding','active','suspended','archived')", name="lifecycle_status"),)
+    __table_args__ = (CheckConstraint("lifecycle_status IN ('onboarding','active','suspended','archived')", name="ck_organizations_lifecycle_status"),)
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     slug: Mapped[str] = mapped_column(String(100), unique=True)
     name: Mapped[str] = mapped_column(String(200))

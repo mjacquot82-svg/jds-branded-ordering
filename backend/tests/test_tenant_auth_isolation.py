@@ -107,6 +107,8 @@ async def test_multi_business_switch_changes_catalog_profile_orders_and_design_w
     )
     organization_a = UUID(login_a["organization_id"])
     with Session(auth_engine) as session:
+        session.execute(Product.__table__.delete().where(Product.organization_id == organization_a))
+        session.execute(Category.__table__.delete().where(Category.organization_id == organization_a))
         actor = session.scalar(
             select(JdsUser).where(JdsUser.primary_email == "owner@example.com")
         )
@@ -132,11 +134,6 @@ async def test_multi_business_switch_changes_catalog_profile_orders_and_design_w
                         base_price_cents=500,
                         is_published=True,
                     ),
-                    BusinessProfile(
-                        organization_id=organization_id,
-                        display_name=f"{prefix} Café",
-                        pickup_instructions=f"{prefix} counter",
-                    ),
                     CustomerRelationship(
                         organization_id=organization_id,
                         user_id=actor.id,
@@ -147,6 +144,12 @@ async def test_multi_business_switch_changes_catalog_profile_orders_and_design_w
                 ]
             )
             session.flush()
+            profile = session.get(BusinessProfile, organization_id)
+            if profile is None:
+                profile = BusinessProfile(organization_id=organization_id, display_name=f"{prefix} Café")
+                session.add(profile)
+            profile.display_name = f"{prefix} Café"
+            profile.pickup_instructions = f"{prefix} counter"
             tenant = resolve_owner_tenant_context(
                 session, principal_organization_id=organization_id
             )

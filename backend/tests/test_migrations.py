@@ -189,6 +189,67 @@ def test_catalog_models_match_migration(postgresql_url: str) -> None:
 
 
 @pytest.mark.postgresql
+@pytest.mark.parametrize(
+    "platform_area",
+    ["business_profile", "onboarding", "design", "subscription", "audit", "notification", "loyalty"],
+)
+def test_v1_platform_downgrade_refuses_every_nonbaseline_tenant_area(
+    postgresql_url: str, platform_area: str,
+) -> None:
+    """No V1 data-loss guard may depend on a representative hostname/customer/media row."""
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260822_25")
+    engine = create_engine(postgresql_url)
+    organization_id, user_id = uuid4(), uuid4()
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("INSERT INTO organizations (id, slug, name) VALUES (:id, :slug, 'Guard-only tenant')"), {"id": organization_id, "slug": f"guard-{uuid4().hex}"})
+            connection.execute(text("INSERT INTO jds_users (id, primary_email, display_name) VALUES (:id, :email, 'Guard User')"), {"id": user_id, "email": f"guard-{uuid4().hex}@example.com"})
+        command.upgrade(config, "20260823_26")
+        with engine.begin() as connection:
+            if platform_area == "business_profile":
+                connection.execute(text("INSERT INTO organization_business_profiles (organization_id, display_name) VALUES (:id, 'Guard Café')"), {"id": organization_id})
+            elif platform_area == "onboarding":
+                connection.execute(text("INSERT INTO organization_onboarding (organization_id) VALUES (:id)"), {"id": organization_id})
+            elif platform_area == "design":
+                connection.execute(text("INSERT INTO design_versions (id, organization_id, version_number, source_revision, config) VALUES (:version, :id, 1, 1, '{}'::json)"), {"version": uuid4(), "id": organization_id})
+            elif platform_area == "subscription":
+                connection.execute(text("INSERT INTO organization_subscriptions (organization_id, plan_key) VALUES (:id, 'core')"), {"id": organization_id})
+            elif platform_area == "audit":
+                connection.execute(text("INSERT INTO operational_audit_events (id, organization_id, scope, action, outcome) VALUES (:event, :id, 'tenant', 'guard.test', 'success')"), {"event": uuid4(), "id": organization_id})
+            elif platform_area == "notification":
+                connection.execute(text("INSERT INTO customer_notification_preferences (id, organization_id, customer_user_id, notification_kind) VALUES (:row, :id, :user, 'lunch_special')"), {"row": uuid4(), "id": organization_id, "user": user_id})
+            else:
+                category_id = connection.scalar(text("INSERT INTO categories (organization_id, slug, name) VALUES (:id, 'guard', 'Guard') RETURNING id"), {"id": organization_id})
+                product_id = connection.scalar(text("INSERT INTO products (organization_id, category_id, slug, name, base_price_cents) VALUES (:id, :category, 'guard', 'Guard', 100) RETURNING id"), {"id": organization_id, "category": category_id})
+                program_id = uuid4()
+                connection.execute(text("INSERT INTO loyalty_programs (id, organization_id, slug, name, description, reward_description) VALUES (:program, :id, 'guard', 'Guard', '', 'Guard')"), {"program": program_id, "id": organization_id})
+                connection.execute(text("INSERT INTO loyalty_program_products (id, organization_id, loyalty_program_id, product_id) VALUES (:row, :id, :program, :product)"), {"row": uuid4(), "id": organization_id, "program": program_id, "product": product_id})
+
+        with pytest.raises(SQLAlchemyError, match="cannot safely downgrade V1"):
+            command.downgrade(config, "20260822_25")
+
+        # The three former representative tables are deliberately empty for B-H.
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT count(*) FROM storefront_hostnames WHERE organization_id=:id"), {"id": organization_id}) == 0
+            assert connection.scalar(text("SELECT count(*) FROM organization_customers WHERE organization_id=:id"), {"id": organization_id}) == 0
+            assert connection.scalar(text("SELECT count(*) FROM media_assets WHERE organization_id=:id"), {"id": organization_id}) == 0
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM operational_audit_events WHERE organization_id=:id OR organization_id IS NULL"), {"id": organization_id})
+            connection.execute(text("DELETE FROM loyalty_program_products WHERE organization_id=:id"), {"id": organization_id})
+            connection.execute(text("DELETE FROM loyalty_programs WHERE organization_id=:id"), {"id": organization_id})
+            connection.execute(text("DELETE FROM products WHERE organization_id=:id"), {"id": organization_id})
+            connection.execute(text("DELETE FROM categories WHERE organization_id=:id"), {"id": organization_id})
+            connection.execute(text("DELETE FROM organizations WHERE id=:id"), {"id": organization_id})
+            connection.execute(text("DELETE FROM jds_users WHERE id=:id"), {"id": user_id})
+        engine.dispose()
+        command.downgrade(config, "base")
+        command.upgrade(config, "head")
+
+
+@pytest.mark.postgresql
 def test_customer_relationship_value_repair_merges_missing_legacy_fields_safely(
     postgresql_url: str,
 ) -> None:
@@ -335,6 +396,18 @@ def test_customer_relationship_value_repair_merges_missing_legacy_fields_safely(
             }
     finally:
         with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM organization_customers WHERE user_id = ANY(:user_ids)"),
+                {"user_ids": list(user_ids.values())},
+            )
+            connection.execute(
+                text("DELETE FROM customer_profiles WHERE user_id = ANY(:user_ids)"),
+                {"user_ids": list(user_ids.values())},
+            )
+            connection.execute(
+                text("DELETE FROM jds_users WHERE id = ANY(:user_ids)"),
+                {"user_ids": list(user_ids.values())},
+            )
             connection.execute(
                 text(
                     "DELETE FROM organization_customers "

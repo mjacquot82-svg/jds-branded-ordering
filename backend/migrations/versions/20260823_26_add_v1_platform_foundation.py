@@ -174,12 +174,60 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The expand migration can be removed only while all new data belongs to the
-    # compatibility tenant. Refuse a downgrade that would discard real tenant state.
-    op.execute(f"""DO $$ BEGIN
-      IF EXISTS (SELECT 1 FROM storefront_hostnames WHERE organization_id <> {LADELS})
-         OR EXISTS (SELECT 1 FROM organization_customers WHERE organization_id <> {LADELS})
-         OR EXISTS (SELECT 1 FROM media_assets WHERE organization_id <> {LADELS})
+    # This revision is still local and unpublished.  Keep the protection at the
+    # boundary that actually destroys/de-scopes the data: a later revision's
+    # downgrade would run before this function and could not protect it.
+    #
+    # Permit only the exact compatibility seed created above (or the absence of
+    # deployment seeds removed by revision 27).  Anything else is application
+    # data that an older schema cannot represent without loss or ambiguity.
+    op.get_bind().exec_driver_sql(f"""DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM organizations WHERE lifecycle_status <> 'active')
+         OR EXISTS (
+              SELECT 1 FROM organization_customers c
+              LEFT JOIN customer_profiles p ON p.user_id = c.user_id
+              LEFT JOIN jds_users u ON u.id = c.user_id
+              WHERE c.organization_id <> {LADELS} OR p.user_id IS NULL
+                 OR c.display_name IS DISTINCT FROM u.display_name
+                 OR c.phone IS DISTINCT FROM p.phone
+                 OR c.preferred_pickup_minutes IS DISTINCT FROM p.preferred_pickup_minutes
+                 OR c.preferred_pickup_notes IS DISTINCT FROM p.preferred_pickup_notes
+                 OR c.communication_metadata::jsonb <> '{{}}'::jsonb
+         )
+         OR EXISTS (SELECT 1 FROM storefront_hostnames WHERE organization_id <> {LADELS}
+              OR hostname <> 'the-guest-house.jdsstudio.ca' OR status <> 'verified' OR is_canonical IS NOT TRUE)
+         OR EXISTS (SELECT 1 FROM organization_business_profiles WHERE organization_id <> {LADELS}
+              OR display_name <> 'The Guest House' OR legal_name IS DISTINCT FROM 'Ladel''s / The Guest House'
+              OR contact_email IS NOT NULL OR phone IS NOT NULL OR address::jsonb <> '{{}}'::jsonb OR socials::jsonb <> '{{}}'::jsonb
+              OR timezone <> 'America/Toronto' OR currency <> 'CAD' OR tax_display_policy <> 'exclusive'
+              OR pickup_instructions <> 'Pick up your order at the café counter.' OR fulfillment_wording <> 'Pickup'
+              OR operational_copy::jsonb <> '{{}}'::jsonb)
+         OR EXISTS (SELECT 1 FROM media_assets)
+         OR EXISTS (SELECT 1 FROM design_versions WHERE organization_id <> {LADELS} OR version_number <> 1
+              OR source_revision <> 1 OR published_by_user_id IS NOT NULL OR source_version_id IS NOT NULL)
+         OR (SELECT count(*) FROM design_versions) > 1
+         OR EXISTS (SELECT 1 FROM design_workspaces WHERE organization_id <> {LADELS} OR revision <> 1 OR updated_by_user_id IS NOT NULL)
+         OR (SELECT count(*) FROM design_workspaces) > 1
+         OR EXISTS (SELECT 1 FROM design_publications WHERE organization_id <> {LADELS} OR action <> 'publish' OR actor_user_id IS NOT NULL)
+         OR (SELECT count(*) FROM design_publications) > 1
+         OR EXISTS (SELECT 1 FROM organization_onboarding WHERE organization_id <> {LADELS}
+              OR state <> 'complete' OR completed_steps::jsonb <> '["business","storefront","hours","fulfillment","design","catalog","clover"]'::jsonb
+              OR current_step <> 'complete' OR public_ready IS NOT TRUE OR revision <> 1)
+         OR EXISTS (SELECT 1 FROM platform_grants)
+         OR EXISTS (SELECT 1 FROM billing_plans WHERE NOT (
+              (key = 'core' AND name = 'Core' AND is_active IS TRUE AND entitlements::jsonb = '{{"designStudio":true,"notifications":false,"loyalty":false}}'::jsonb)
+              OR (key = 'engagement' AND name = 'Engagement' AND is_active IS TRUE AND entitlements::jsonb = '{{"designStudio":true,"notifications":true,"loyalty":true}}'::jsonb)))
+         OR (SELECT count(*) FROM billing_plans) NOT IN (0, 2)
+         OR EXISTS (SELECT 1 FROM organization_subscriptions WHERE organization_id <> {LADELS}
+              OR plan_key <> 'engagement' OR state <> 'active' OR provider <> 'local'
+              OR provider_customer_ref IS NOT NULL OR trial_ends_at IS NOT NULL OR grace_ends_at IS NOT NULL)
+         OR (SELECT count(*) FROM organization_subscriptions) > 1
+         OR EXISTS (SELECT 1 FROM operational_audit_events)
+         OR EXISTS (SELECT 1 FROM customer_notification_preferences WHERE organization_id <> {LADELS})
+         OR EXISTS (SELECT 1 FROM web_push_subscriptions WHERE organization_id <> {LADELS})
+         OR EXISTS (SELECT 1 FROM push_delivery_attempts WHERE organization_id <> {LADELS})
+         OR EXISTS (SELECT 1 FROM loyalty_program_products WHERE organization_id <> {LADELS})
+         OR EXISTS (SELECT 1 FROM customer_loyalty_events WHERE organization_id <> {LADELS})
       THEN RAISE EXCEPTION 'cannot safely downgrade V1 multi-tenant platform data'; END IF;
     END $$""")
     for table, (fk_name, ix_name) in {"customer_loyalty_events": ("fk_cle_org", "ix_customer_loyalty_events_organization_id"), "loyalty_program_products": ("fk_lpp_org", "ix_loyalty_program_products_organization_id")}.items():

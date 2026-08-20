@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.availability.models import ProductAvailabilityOverride
 from app.api.v1.clover import _active_credential, create_hosted_checkout, get_settings
+from app.api.v1.catalog import ladels_compatibility_tenant
 from app.api.v1.customer_auth import current_ordering_customer
 from app.api.v1.orders import get_current_time
 from app.clover.client import CloverApiError, CloverClient, CloverTokenPair
@@ -68,6 +69,7 @@ def orders_api(
         session.commit()
 
     application = create_app(postgresql_url)
+    application.dependency_overrides[ladels_compatibility_tenant] = lambda: LADELS_TENANT
     application.dependency_overrides[get_current_time] = lambda: local_datetime(8)
     application.dependency_overrides[current_ordering_customer] = lambda: customer
     with TestClient(application) as client:

@@ -36,7 +36,11 @@ from app.platform.readiness import synchronize_public_readiness
 from app.platform.assets import launch_qr_svg, tenant_icon_png
 from app.push.models import CustomerNotificationPreference, WebPushSubscription
 from app.tenancy.context import TenantContext, TenantResolutionSource
-from app.tenancy.resolver import TenantResolutionError, resolve_storefront_context
+from app.tenancy.resolver import (
+    TenantResolutionError,
+    resolve_internal_ladels_compatibility_context,
+    resolve_storefront_context,
+)
 from tests.test_migrations import make_alembic_config
 
 
@@ -169,12 +173,63 @@ def test_public_resolution_rechecks_readiness_and_isolates_tenants(platform_db):
 
 
 @pytest.mark.postgresql
-def test_legacy_ladels_compatibility_is_narrow_and_intentional(platform_db):
-    engine, _ = platform_db
+def test_public_legacy_ladels_compatibility_rechecks_readiness(platform_db, monkeypatch):
+    engine, (_, b, actor, _, beta_host) = platform_db
+    legacy_host = f"legacy-{uuid4().hex}.example"
+    monkeypatch.setenv("JDS_LEGACY_LADELS_HOSTS", legacy_host)
     with Session(engine) as session:
-        legacy = resolve_storefront_context(session, host="localhost")
+        ladels = session.scalar(select(Organization).where(Organization.slug == "the-guest-house"))
+        make_storefront_operationally_ready(session, b, actor)
+
+        profile = session.get(BusinessProfile, ladels.id)
+        if profile is None:
+            profile = BusinessProfile(organization_id=ladels.id, display_name="The Guest House")
+            session.add(profile)
+        profile.pickup_instructions = "Pick up at the café counter."
+        settings = session.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == ladels.id))
+        if settings is None:
+            settings = BusinessSettings(organization_id=ladels.id, timezone="America/Toronto")
+            session.add(settings)
+            session.flush()
+        settings.ordering_enabled = True
+        existing_days = set(session.scalars(select(BusinessHour.weekday).where(BusinessHour.organization_id == ladels.id)))
+        session.add_all(BusinessHour(organization_id=ladels.id, business_settings_id=settings.id, weekday=day, is_closed=False, opens_at=time(8), closes_at=time(16)) for day in set(range(7)) - existing_days)
+        product = session.scalar(select(Product).where(Product.organization_id == ladels.id).limit(1))
+        if product is None:
+            category = Category(organization_id=ladels.id, slug=f"legacy-ready-{uuid4().hex}", name="Ready menu", is_published=True)
+            session.add(category)
+            session.flush()
+            product = Product(organization_id=ladels.id, category_id=category.id, slug="legacy-ready", name="Ready product", base_price_cents=500)
+            session.add(product)
+        product.is_published = True
+        canonical = session.scalar(select(StorefrontHostname).where(StorefrontHostname.organization_id == ladels.id, StorefrontHostname.status == "verified", StorefrontHostname.is_canonical.is_(True)))
+        if canonical is None:
+            session.add(StorefrontHostname(organization_id=ladels.id, hostname=f"canonical-{uuid4().hex}.example", status="verified", is_canonical=True))
+        installation = session.scalar(select(CloverInstallation).where(CloverInstallation.organization_id == ladels.id, CloverInstallation.environment == "sandbox"))
+        if installation is None:
+            installation = CloverInstallation(organization_id=ladels.id, merchant_id=f"legacy-ready-{uuid4().hex}", environment="sandbox", app_id="readiness-test", access_token_encrypted="fixture-access", refresh_token_encrypted="fixture-refresh", access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1))
+            session.add(installation)
+        installation.connection_state = "connected"
+        workspace = DesignService(session, context(ladels.id, "the-guest-house")).workspace()
+        session.flush()
+        if workspace.published_version_id is None:
+            DesignService(session, context(ladels.id, "the-guest-house")).publish(actor)
+        session.commit()
+
+        legacy = resolve_storefront_context(session, host=legacy_host)
         assert legacy.source == TenantResolutionSource.LADELS_COMPATIBILITY
         assert legacy.organization_slug == "the-guest-house"
+
+        product.is_published = False
+        session.commit()
+        with pytest.raises(TenantResolutionError, match="not ready"):
+            resolve_storefront_context(session, host=legacy_host)
+        assert resolve_internal_ladels_compatibility_context(session).organization_id == ladels.id
+        assert resolve_storefront_context(session, host=beta_host).organization_id == b
+
+        product.is_published = True
+        session.commit()
+        assert resolve_storefront_context(session, host=legacy_host).organization_id == ladels.id
         with pytest.raises(TenantResolutionError, match="known Ladel"):
             resolve_storefront_context(session, host="unverified-legacy.example")
 
