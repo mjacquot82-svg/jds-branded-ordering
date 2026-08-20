@@ -106,6 +106,39 @@ uvicorn app.main:app --reload
 
 The backend is available at `http://127.0.0.1:8000`.
 
+## Safe local V1 review
+
+Local review uses a fixed synthetic owner and never contacts Supabase or Clover.
+It is enabled only when both `JDS_ENVIRONMENT=development` and
+`JDS_ENABLE_LOCAL_REVIEW=true` are explicit. The seed additionally refuses any
+database that is not on localhost or whose name does not end in
+`_local_review`.
+
+After creating a disposable PostgreSQL database and applying migrations:
+
+```bash
+export DATABASE_URL="postgresql+psycopg://guesthouse:password@127.0.0.1:5432/jds_v1_local_review"
+export JDS_ENVIRONMENT=development
+export JDS_ENABLE_LOCAL_REVIEW=true
+export JDS_AUTH_PROVIDER=development
+export JDS_LOCAL_AUTH_EMAIL=owner@local.jds.test
+export JDS_LOCAL_AUTH_PASSWORD=local-review-password
+export JDS_AUTH_SESSION_PEPPER=local-review-pepper-0123456789abcdef
+export FRONTEND_URL=http://localhost:5173
+
+alembic upgrade head
+python -m app.local_review_seed
+uvicorn app.main:app --reload
+```
+
+Start the frontend with the documented `npm run dev` command. Vite proxies
+local `/api` and `/health` requests to `http://127.0.0.1:8000`; override only
+with `JDS_LOCAL_BACKEND_URL` when the backend intentionally uses another local
+port. Open `/?review_tenant=the-guest-house` or
+`/?review_tenant=second-street-cafe` to select a local public storefront. The
+owner signs in at `/owner/login` and switches businesses through the authorized
+business selector.
+
 ## Clover
 
 OAuth v2 and Hosted Checkout configuration is documented in

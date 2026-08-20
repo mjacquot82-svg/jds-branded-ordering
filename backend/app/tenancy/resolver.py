@@ -92,6 +92,24 @@ def resolve_internal_ladels_compatibility_context(session: Session) -> TenantCon
     )
 
 
+def resolve_local_review_context(session: Session, slug: str) -> TenantContext:
+    """Resolve one of the two fixed local review storefronts; never used publicly."""
+    if os.getenv("JDS_ENVIRONMENT", "").lower() != "development" or os.getenv("JDS_ENABLE_LOCAL_REVIEW", "false").lower() != "true":
+        raise TenantResolutionError("Local review storefronts are disabled.")
+    allowed = frozenset({"the-guest-house", "second-street-cafe"})
+    normalized = slug.strip().lower()
+    if normalized not in allowed:
+        raise TenantResolutionError("Unknown local review storefront.")
+    organization = session.scalar(select(Organization).where(Organization.slug == normalized))
+    if organization is None or not evaluate_storefront_readiness(session, organization.id).public_ready:
+        raise TenantResolutionError("Storefront is not ready.")
+    return TenantContext(
+        organization_id=organization.id,
+        organization_slug=organization.slug,
+        source=TenantResolutionSource.VERIFIED_HOSTNAME,
+    )
+
+
 def resolve_storefront_context(
     session: Session, *, host: str | None, frontend_url: str | None = None,
     headers: object | None = None, query_params: object | None = None,

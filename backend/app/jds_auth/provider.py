@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import logging
+import secrets
 import re
 from typing import Protocol
 
@@ -72,6 +73,55 @@ class IdentityProvider(Protocol):
     def resend_verification(self, email: str, redirect_url: str) -> None: ...
     def update_password(self, access_token: str, password: str) -> None: ...
     def invite_user(self, email: str, redirect_url: str) -> str: ...
+
+
+class DevelopmentIdentityProvider:
+    """Fixed local identity adapter; enabled only by the guarded app factory."""
+
+    ISSUER = "https://local-auth.jds.test"
+    SUBJECT = "jds-local-review-owner"
+
+    def __init__(self, *, email: str, password: str) -> None:
+        self._email = email.strip().lower()
+        self._password = password
+
+    def authenticate_password(self, email: str, password: str) -> ProviderAuthentication:
+        if not (
+            secrets.compare_digest(email.strip().lower(), self._email)
+            and secrets.compare_digest(password, self._password)
+        ):
+            raise InvalidCredentialsError("Authentication failed.")
+        return ProviderAuthentication(
+            ProviderIdentity(
+                issuer=self.ISSUER,
+                subject=self.SUBJECT,
+                email=self._email,
+                email_verified=True,
+                display_name="Local Review Owner",
+            ),
+            "local-review-session-evidence",
+        )
+
+    def register_user(self, email: str, password: str, redirect_url: str) -> ProviderIdentity:
+        raise IdentityProviderError("Registration is unavailable in local review mode.")
+
+    def request_password_reset(self, email: str, redirect_url: str) -> None:
+        return None
+
+    def verify_email_token(self, token_hash: str, token_type: str) -> ProviderAuthentication:
+        raise IdentityProviderError("Email tokens are unavailable in local review mode.")
+
+    def authenticate_access_token(self, access_token: str) -> ProviderAuthentication:
+        raise InvalidCredentialsError("Access tokens are unavailable in local review mode.")
+
+    def resend_verification(self, email: str, redirect_url: str) -> None:
+        return None
+
+    def update_password(self, access_token: str, password: str) -> None:
+        raise IdentityProviderError("Password changes are unavailable in local review mode.")
+
+    def invite_user(self, email: str, redirect_url: str) -> str:
+        raise IdentityProviderError("Invitations are unavailable in local review mode.")
 
 
 class SupabaseIdentityProvider:

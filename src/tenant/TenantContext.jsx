@@ -8,7 +8,9 @@ export function TenantProvider({ children }) {
   const operationsRoute = /^\/(admin|owner|staff)(\/|$)/.test(globalThis.location?.pathname || "");
   useEffect(() => {
     let active = true;
-    fetch("/api/v1/storefront/bootstrap", { cache: "no-store", credentials: "same-origin" })
+    const reviewTenant = new URLSearchParams(globalThis.location?.search || "").get("review_tenant");
+    const bootstrapUrl = `/api/v1/storefront/bootstrap${reviewTenant ? `?review_tenant=${encodeURIComponent(reviewTenant)}` : ""}`;
+    fetch(bootstrapUrl, { cache: "no-store", credentials: "same-origin" })
       .then(async (response) => { if (!response.ok) throw new Error("Storefront unavailable"); return response.json(); })
       .then((value) => {
         if (!active) return;

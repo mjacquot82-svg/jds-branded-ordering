@@ -12,7 +12,7 @@ from app.catalog.service import CatalogService
 from app.availability.repository import AvailabilityRepository
 from app.orders.pricing import DEFAULT_TAX_NAME, DEFAULT_TAX_RATE_MILLIONTHS
 from app.tenancy.context import TenantContext
-from app.tenancy.resolver import TenantResolutionError, resolve_storefront_context
+from app.tenancy.resolver import TenantResolutionError, resolve_local_review_context, resolve_storefront_context
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -37,6 +37,9 @@ def ladels_compatibility_tenant(
     settings = request.app.state.auth_settings
     frontend_url = settings.frontend_url if settings is not None else os.getenv("FRONTEND_URL")
     try:
+        local_slug = request.query_params.get("review_tenant") or request.cookies.get("jds_local_review_tenant")
+        if local_slug and getattr(request.app.state, "local_review_enabled", False):
+            return resolve_local_review_context(session, local_slug)
         return resolve_storefront_context(
             session,
             host=request.url.hostname,
