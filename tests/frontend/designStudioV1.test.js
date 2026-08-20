@@ -21,6 +21,11 @@ test("Design Studio supports section visibility, ordering, PWA appearance, and c
   assert.match(studio, /moveSection/);
   assert.match(studio, /backgroundColor/);
   assert.match(studio, /4\.5:1 contrast/);
+  assert.match(studio, /Unsaved changes/);
+  assert.match(studio, /Save your draft before publishing/);
+  assert.match(studio, /Publish this saved design/);
+  assert.match(studio, /archiveMedia/);
+  assert.match(studio, /Images assigned to this draft or a live design are protected/);
 });
 
 test("private full preview follows draft section order and never offers checkout", () => {
