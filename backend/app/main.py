@@ -5,6 +5,7 @@ import uuid
 from contextlib import suppress
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -69,6 +70,7 @@ def create_app(
     runtime_environment = os.getenv("JDS_ENVIRONMENT", "").strip().lower()
     auth_provider_mode = os.getenv("JDS_AUTH_PROVIDER", "supabase").strip().lower()
     local_review_enabled = os.getenv("JDS_ENABLE_LOCAL_REVIEW", "false").lower() == "true"
+    local_review_origin = os.getenv("JDS_LOCAL_REVIEW_ORIGIN", "").rstrip("/")
     if auth_provider is None and auth_provider_mode == "development":
         if runtime_environment != "development" or not local_review_enabled:
             raise RuntimeError("Development authentication requires explicit local development review mode.")
@@ -76,6 +78,21 @@ def create_app(
         local_password = os.getenv("JDS_LOCAL_AUTH_PASSWORD", "")
         if local_email != "owner@local.jds.test" or len(local_password) < 15:
             raise RuntimeError("Development authentication requires the fixed local owner and a 15-character password.")
+        parsed_review_origin = urlparse(local_review_origin)
+        if (
+            not local_review_origin
+            or parsed_review_origin.scheme not in {"http", "https"}
+            or not parsed_review_origin.hostname
+            or parsed_review_origin.username
+            or parsed_review_origin.password
+            or parsed_review_origin.path not in {"", "/"}
+            or parsed_review_origin.params
+            or parsed_review_origin.query
+            or parsed_review_origin.fragment
+        ):
+            raise RuntimeError("Development authentication requires an explicit local review origin.")
+        if parsed_review_origin.scheme == "http" and parsed_review_origin.hostname not in {"localhost", "127.0.0.1", "test"}:
+            raise RuntimeError("Non-local development review origins must use HTTPS.")
 
     resolved_auth_settings = auth_settings
     if resolved_auth_settings is None:
@@ -107,11 +124,12 @@ def create_app(
             if resolved_auth_settings is not None else None
         )
     application.state.local_review_enabled = local_review_enabled and runtime_environment == "development"
+    application.state.local_review_origin = local_review_origin if application.state.local_review_enabled else ""
     application.state.push_settings = PushSettings.from_env()
     frontend_url = os.getenv("FRONTEND_URL") or (
         resolved_auth_settings.frontend_url if resolved_auth_settings else None
     )
-    allowed_origins = [frontend_url] if frontend_url else []
+    allowed_origins = [origin for origin in {frontend_url, application.state.local_review_origin} if origin]
     application.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,

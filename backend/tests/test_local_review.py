@@ -34,6 +34,7 @@ def test_development_auth_refuses_production_activation(monkeypatch) -> None:
     monkeypatch.setenv("JDS_ENVIRONMENT", "production")
     monkeypatch.setenv("JDS_ENABLE_LOCAL_REVIEW", "true")
     monkeypatch.setenv("JDS_LOCAL_AUTH_PASSWORD", "local-review-password")
+    monkeypatch.setenv("JDS_LOCAL_REVIEW_ORIGIN", "https://synthetic-codespace-5173.app.github.dev")
     with pytest.raises(RuntimeError, match="explicit local development"):
         create_app()
 
@@ -75,6 +76,7 @@ def local_review_database(postgresql_url: str, monkeypatch) -> Iterator[str]:
     monkeypatch.setenv("JDS_AUTH_PROVIDER", "development")
     monkeypatch.setenv("JDS_LOCAL_AUTH_EMAIL", "owner@local.jds.test")
     monkeypatch.setenv("JDS_LOCAL_AUTH_PASSWORD", "local-review-password")
+    monkeypatch.setenv("JDS_LOCAL_REVIEW_ORIGIN", "https://synthetic-codespace-5173.app.github.dev")
     monkeypatch.setenv("JDS_AUTH_SESSION_PEPPER", "local-review-pepper-0123456789abcdef")
     monkeypatch.setenv("FRONTEND_URL", "http://test")
     command.upgrade(make_alembic_config(database_url), "head")
@@ -89,7 +91,7 @@ def local_review_database(postgresql_url: str, monkeypatch) -> Iterator[str]:
 
 @pytest.mark.anyio
 @pytest.mark.postgresql
-async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped(local_review_database: str) -> None:
+async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped(local_review_database: str, monkeypatch) -> None:
     seed_local_review(local_review_database)
     engine = create_engine(local_review_database)
     with Session(engine) as session:
@@ -107,19 +109,44 @@ async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped
         )
     assert second == first
 
+    review_origin = "https://synthetic-codespace-5173.app.github.dev"
+    monkeypatch.setenv("JDS_ENVIRONMENT", "production")
+    production_app = create_app(
+        database_url=local_review_database,
+        auth_settings=AuthSettings(
+            supabase_url="https://identity.example.test", supabase_publishable_key="public",
+            supabase_secret_key="secret", session_pepper="p" * 48,
+            frontend_url="http://test", secure_cookies=False,
+        ),
+        auth_provider=DevelopmentIdentityProvider(
+            email="owner@local.jds.test", password="local-review-password",
+        ),
+    )
+    async with AsyncClient(transport=ASGITransport(app=production_app), base_url="http://test") as production:
+        denied = await production.post("/api/v1/owner/auth/login", headers={"Origin": review_origin}, json={"email": "owner@local.jds.test", "password": "local-review-password"})
+        assert denied.status_code == 403
+        assert denied.json()["detail"]["code"] == "origin_invalid"
+    production_app.state.db_engine.dispose()
+    monkeypatch.setenv("JDS_ENVIRONMENT", "development")
+
     application = create_app(database_url=local_review_database)
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:
         rejected = await client.post("/api/v1/owner/auth/login", headers={"Origin": "http://test"}, json={"email": "other@local.jds.test", "password": "local-review-password"})
         assert rejected.status_code == 401
-        login = await client.post("/api/v1/owner/auth/login", headers={"Origin": "http://test"}, json={"email": "owner@local.jds.test", "password": "local-review-password"})
+        unrelated = await client.post("/api/v1/owner/auth/login", headers={"Origin": "https://attacker.example"}, json={"email": "owner@local.jds.test", "password": "local-review-password"})
+        assert unrelated.status_code == 403
+        login = await client.post("/api/v1/owner/auth/login", headers={"Origin": review_origin}, json={"email": "owner@local.jds.test", "password": "local-review-password"})
         assert login.status_code == 200
         organizations = await client.get("/api/v1/owner/auth/organizations")
         assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe"}
         target = next(item for item in organizations.json() if item["organization_slug"] == "second-street-cafe")
-        switched = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers={"Origin": "http://test", "X-CSRF-Token": login.json()["csrf_token"]})
+        missing_csrf = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers={"Origin": review_origin})
+        assert missing_csrf.status_code == 403
+        assert missing_csrf.json()["detail"]["code"] == "csrf_invalid"
+        switched = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers={"Origin": review_origin, "X-CSRF-Token": login.json()["csrf_token"]})
         assert switched.status_code == 200
         assert switched.json()["organization_id"] == target["organization_id"]
-        forbidden = await client.post(f'/api/v1/owner/auth/organizations/{uuid4()}/select', headers={"Origin": "http://test", "X-CSRF-Token": switched.json()["csrf_token"]})
+        forbidden = await client.post(f'/api/v1/owner/auth/organizations/{uuid4()}/select', headers={"Origin": review_origin, "X-CSRF-Token": switched.json()["csrf_token"]})
         assert forbidden.status_code == 403
 
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as public:
