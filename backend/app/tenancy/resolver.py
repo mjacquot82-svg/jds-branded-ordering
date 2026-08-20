@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.jds_auth.models import Membership, Organization
-from app.platform.models import OnboardingState, StorefrontHostname
+from app.platform.models import StorefrontHostname
+from app.platform.readiness import evaluate_storefront_readiness
 from app.tenancy.context import TenantContext, TenantResolutionSource
 
 LADELS_ORGANIZATION_ID = UUID("cd802008-80c6-5719-81ef-9b2310b16512")
@@ -110,15 +111,10 @@ def resolve_storefront_context(
             session, host=host, frontend_url=frontend_url, headers=headers,
             query_params=query_params,
         )
-    organization = session.scalar(
-        select(Organization).join(OnboardingState, OnboardingState.organization_id == Organization.id).where(
-            Organization.id == mapping.organization_id,
-            Organization.is_active.is_(True),
-            Organization.lifecycle_status == "active",
-            OnboardingState.public_ready.is_(True),
-        )
-    )
-    if organization is None:
+    organization = session.get(Organization, mapping.organization_id)
+    if organization is None or not evaluate_storefront_readiness(
+        session, mapping.organization_id
+    ).public_ready:
         raise TenantResolutionError("Storefront is not ready.")
     return TenantContext(
         organization_id=organization.id,

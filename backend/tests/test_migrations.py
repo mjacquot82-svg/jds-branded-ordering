@@ -49,7 +49,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     config = make_alembic_config(postgresql_url)
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260819_28"]
+    assert script.get_heads() == ["20260820_29"]
 
     command.downgrade(config, "base")
     command.upgrade(config, "head")
@@ -58,7 +58,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     try:
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_28"
+            assert context.get_current_revision() == "20260820_29"
 
         assert set(inspect(engine).get_table_names()) >= {
             "alembic_version",
@@ -186,6 +186,209 @@ def test_catalog_models_match_migration(postgresql_url: str) -> None:
         engine.dispose()
 
     assert differences == []
+
+
+@pytest.mark.postgresql
+def test_customer_relationship_value_repair_merges_missing_legacy_fields_safely(
+    postgresql_url: str,
+) -> None:
+    """Cover missing, migration-27, newer, and unrelated-tenant relationships."""
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260819_27")
+    engine = create_engine(postgresql_url)
+    user_ids = {case: uuid4() for case in ("missing", "empty", "newer")}
+    unrelated_tenant_id = uuid4()
+    try:
+        with engine.begin() as connection:
+            ladels_id = connection.scalar(
+                text("SELECT id FROM organizations WHERE slug = 'the-guest-house'")
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO organizations (id, slug, name) "
+                    "VALUES (:id, 'unrelated-cafe', 'Unrelated Café')"
+                ),
+                {"id": unrelated_tenant_id},
+            )
+            for case, user_id in user_ids.items():
+                connection.execute(
+                    text(
+                        "INSERT INTO jds_users (id, primary_email, display_name) "
+                        "VALUES (:id, :email, :name)"
+                    ),
+                    {
+                        "id": user_id,
+                        "email": f"migration-{case}@example.com",
+                        "name": f"Legacy {case.title()}",
+                    },
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO customer_profiles "
+                        "(user_id, phone, preferred_pickup_minutes, preferred_pickup_notes) "
+                        "VALUES (:id, :phone, :minutes, :notes)"
+                    ),
+                    {
+                        "id": user_id,
+                        "phone": f"+15195550{len(case):03d}",
+                        "minutes": 10 + len(case),
+                        "notes": f"Legacy {case} pickup",
+                    },
+                )
+
+            # Migration 27 may have produced this empty relationship before 28.
+            connection.execute(
+                text(
+                    "INSERT INTO organization_customers "
+                    "(id, organization_id, user_id, display_name, phone) "
+                    "VALUES (:id, :organization_id, :user_id, NULL, '')"
+                ),
+                {
+                    "id": uuid4(),
+                    "organization_id": ladels_id,
+                    "user_id": user_ids["empty"],
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO organization_customers "
+                    "(id, organization_id, user_id, display_name, phone, "
+                    "preferred_pickup_minutes, preferred_pickup_notes) "
+                    "VALUES (:id, :organization_id, :user_id, 'Newer Name', "
+                    "'+15195559999', 45, 'Newer pickup preference')"
+                ),
+                {
+                    "id": uuid4(),
+                    "organization_id": ladels_id,
+                    "user_id": user_ids["newer"],
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO organization_customers "
+                    "(id, organization_id, user_id, display_name, phone, "
+                    "preferred_pickup_minutes, preferred_pickup_notes) "
+                    "VALUES (:id, :organization_id, :user_id, 'Other Tenant', "
+                    "'+15195558888', 60, 'Other tenant preference')"
+                ),
+                {
+                    "id": uuid4(),
+                    "organization_id": unrelated_tenant_id,
+                    "user_id": user_ids["empty"],
+                },
+            )
+
+        command.upgrade(config, "20260819_28")
+        with engine.connect() as connection:
+            # Demonstrate the exact conflict left by migration 28.
+            assert connection.scalar(
+                text(
+                    "SELECT phone FROM organization_customers "
+                    "WHERE organization_id = :organization_id AND user_id = :user_id"
+                ),
+                {"organization_id": ladels_id, "user_id": user_ids["empty"]},
+            ) == ""
+
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            relationships = {
+                row["user_id"]: row
+                for row in connection.execute(
+                    text(
+                        "SELECT user_id, display_name, phone, "
+                        "preferred_pickup_minutes, preferred_pickup_notes "
+                        "FROM organization_customers "
+                        "WHERE organization_id = :organization_id"
+                    ),
+                    {"organization_id": ladels_id},
+                ).mappings()
+                if row["user_id"] in set(user_ids.values())
+            }
+            assert relationships[user_ids["missing"]]["phone"] == "+15195550007"
+            assert relationships[user_ids["missing"]]["preferred_pickup_minutes"] == 17
+            assert relationships[user_ids["missing"]]["preferred_pickup_notes"] == "Legacy missing pickup"
+            assert relationships[user_ids["empty"]]["display_name"] == "Legacy Empty"
+            assert relationships[user_ids["empty"]]["phone"] == "+15195550005"
+            assert relationships[user_ids["empty"]]["preferred_pickup_minutes"] == 15
+            assert relationships[user_ids["empty"]]["preferred_pickup_notes"] == "Legacy empty pickup"
+            assert relationships[user_ids["newer"]]["display_name"] == "Newer Name"
+            assert relationships[user_ids["newer"]]["phone"] == "+15195559999"
+            assert relationships[user_ids["newer"]]["preferred_pickup_minutes"] == 45
+            assert relationships[user_ids["newer"]]["preferred_pickup_notes"] == "Newer pickup preference"
+            unrelated = connection.execute(
+                text(
+                    "SELECT display_name, phone, preferred_pickup_minutes, "
+                    "preferred_pickup_notes FROM organization_customers "
+                    "WHERE organization_id = :organization_id AND user_id = :user_id"
+                ),
+                {
+                    "organization_id": unrelated_tenant_id,
+                    "user_id": user_ids["empty"],
+                },
+            ).mappings().one()
+            assert dict(unrelated) == {
+                "display_name": "Other Tenant",
+                "phone": "+15195558888",
+                "preferred_pickup_minutes": 60,
+                "preferred_pickup_notes": "Other tenant preference",
+            }
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DELETE FROM organization_customers "
+                    "WHERE organization_id = :organization_id"
+                ),
+                {"organization_id": unrelated_tenant_id},
+            )
+            connection.execute(
+                text("DELETE FROM organizations WHERE id = :id"),
+                {"id": unrelated_tenant_id},
+            )
+        engine.dispose()
+        command.downgrade(config, "base")
+        command.upgrade(config, "head")
+
+
+@pytest.mark.postgresql
+def test_customer_relationship_value_repair_fails_on_ambiguous_ladels_mapping(
+    postgresql_url: str,
+) -> None:
+    config = make_alembic_config(postgresql_url)
+    command.downgrade(config, "base")
+    command.upgrade(config, "20260819_28")
+    engine = create_engine(postgresql_url)
+    duplicate_id = uuid4()
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE organizations DROP CONSTRAINT uq_organizations_slug"))
+            connection.execute(
+                text(
+                    "INSERT INTO organizations (id, slug, name) "
+                    "VALUES (:id, 'the-guest-house', 'Ambiguous legacy tenant')"
+                ),
+                {"id": duplicate_id},
+            )
+
+        with pytest.raises(SQLAlchemyError, match="expected exactly one Ladel"):
+            command.upgrade(config, "head")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM organizations WHERE id = :id"), {"id": duplicate_id}
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE organizations ADD CONSTRAINT uq_organizations_slug "
+                    "UNIQUE (slug)"
+                )
+            )
+        command.upgrade(config, "head")
+    finally:
+        engine.dispose()
+        command.downgrade(config, "base")
+        command.upgrade(config, "head")
 
 
 @pytest.mark.postgresql
@@ -321,7 +524,7 @@ def test_tenant_availability_migration_backfills_and_enforces_ownership(
         command.upgrade(config, "head")
         inspector = inspect(engine)
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "20260819_28"
+            assert MigrationContext.configure(connection).get_current_revision() == "20260820_29"
             for table_name in (
                 "business_hours",
                 "business_closures",
@@ -432,7 +635,7 @@ def test_tenant_order_migration_backfills_constraints_and_refuses_unsafe_downgra
                 text("SELECT organization_id FROM orders WHERE id = :id"),
                 {"id": order_id},
             ) == organization_id
-            assert MigrationContext.configure(connection).get_current_revision() == "20260819_28"
+            assert MigrationContext.configure(connection).get_current_revision() == "20260820_29"
         assert {c["name"] for c in inspector.get_unique_constraints("orders")} >= {
             "uq_orders_organization_idempotency_key",
             "uq_orders_organization_public_access_token",
@@ -557,7 +760,7 @@ def test_clover_tenant_migration_backfills_tokens_and_refuses_unsafe_downgrade(
         assert row["id"] is not None
         assert row["access_token_encrypted"] == encrypted_access
         assert row["refresh_token_encrypted"] == encrypted_refresh
-        assert MigrationContext.configure(connection).get_current_revision() == "20260819_28"
+        assert MigrationContext.configure(connection).get_current_revision() == "20260820_29"
 
     with engine.begin() as connection:
         tenant_b = uuid4()
@@ -620,7 +823,7 @@ def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_28"
+            assert context.get_current_revision() == "20260820_29"
             assert connection.scalar(
                 text(
                     "SELECT name FROM categories "
@@ -677,7 +880,7 @@ def test_migration_bootstrap_reconciles_catalog_and_orders_without_data_loss(
         inspector = inspect(engine)
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_28"
+            assert context.get_current_revision() == "20260820_29"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "
@@ -757,7 +960,7 @@ def test_migration_bootstrap_resumes_interrupted_order_reconciliation(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260819_28"
+            assert context.get_current_revision() == "20260820_29"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "

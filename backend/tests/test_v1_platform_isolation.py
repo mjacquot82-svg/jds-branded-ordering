@@ -72,10 +72,72 @@ def context(organization_id, slug):
     return TenantContext(organization_id=organization_id, organization_slug=slug, source=TenantResolutionSource.AUTHENTICATED_MEMBERSHIP)
 
 
+def make_storefront_operationally_ready(session: Session, organization_id, actor) -> None:
+    settings = BusinessSettings(
+        organization_id=organization_id,
+        timezone="America/Toronto",
+        ordering_enabled=True,
+    )
+    session.add(settings)
+    session.flush()
+    session.add_all(
+        BusinessHour(
+            organization_id=organization_id,
+            business_settings_id=settings.id,
+            weekday=weekday,
+            is_closed=False,
+            opens_at=time(8),
+            closes_at=time(16),
+        )
+        for weekday in range(7)
+    )
+    category = Category(
+        organization_id=organization_id,
+        slug=f"ready-{uuid4().hex}",
+        name="Ready menu",
+        is_published=True,
+    )
+    session.add(category)
+    session.flush()
+    session.add_all([
+        Product(
+            organization_id=organization_id,
+            category_id=category.id,
+            slug="ready-product",
+            name="Ready product",
+            base_price_cents=500,
+            is_published=True,
+        ),
+        BusinessProfile(
+            organization_id=organization_id,
+            display_name="Ready Café",
+            timezone="America/Toronto",
+            currency="CAD",
+            pickup_instructions="Pick up at the counter.",
+        ),
+        CloverInstallation(
+            organization_id=organization_id,
+            merchant_id=f"ready-{uuid4().hex}",
+            environment="sandbox",
+            app_id="readiness-test",
+            access_token_encrypted="fixture-access",
+            refresh_token_encrypted="fixture-refresh",
+            access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            connection_state="connected",
+        ),
+    ])
+    session.flush()
+    DesignService(session, context(organization_id, "ready")).publish(actor)
+    synchronize_public_readiness(session, organization_id)
+    session.commit()
+
+
 @pytest.mark.postgresql
 def test_verified_hostname_resolution_is_exact_and_unknown_hosts_fail_closed(platform_db):
-    engine, (a, b, _, alpha_host, beta_host) = platform_db
+    engine, (a, b, actor, alpha_host, beta_host) = platform_db
     with Session(engine) as session:
+        make_storefront_operationally_ready(session, a, actor)
+        make_storefront_operationally_ready(session, b, actor)
         assert resolve_storefront_context(session, host=alpha_host).organization_id == a
         assert resolve_storefront_context(session, host=beta_host).organization_id == b
         with pytest.raises(TenantResolutionError):
@@ -83,21 +145,37 @@ def test_verified_hostname_resolution_is_exact_and_unknown_hosts_fail_closed(pla
 
 
 @pytest.mark.postgresql
-def test_verified_hostname_never_bypasses_authoritative_readiness(platform_db):
-    engine, (a, _, _, alpha_host, _) = platform_db
+def test_public_resolution_rechecks_readiness_and_isolates_tenants(platform_db):
+    engine, (a, b, actor, alpha_host, beta_host) = platform_db
     with Session(engine) as session:
-        onboarding = session.get(OnboardingState, a)
-        onboarding.public_ready = False
-        session.commit()
-        with pytest.raises(TenantResolutionError, match="not ready"):
-            resolve_storefront_context(session, host=alpha_host)
+        make_storefront_operationally_ready(session, a, actor)
+        make_storefront_operationally_ready(session, b, actor)
+        assert resolve_storefront_context(session, host=alpha_host).organization_id == a
+        assert resolve_storefront_context(session, host=beta_host).organization_id == b
 
-        onboarding.public_ready = True
-        organization = session.get(Organization, a)
-        organization.lifecycle_status = "suspended"
+        alpha_product = session.scalar(
+            select(Product).where(Product.organization_id == a)
+        )
+        alpha_product.is_published = False
         session.commit()
         with pytest.raises(TenantResolutionError, match="not ready"):
             resolve_storefront_context(session, host=alpha_host)
+        assert resolve_storefront_context(session, host=beta_host).organization_id == b
+
+        alpha_product.is_published = True
+        session.commit()
+        assert resolve_storefront_context(session, host=alpha_host).organization_id == a
+
+
+@pytest.mark.postgresql
+def test_legacy_ladels_compatibility_is_narrow_and_intentional(platform_db):
+    engine, _ = platform_db
+    with Session(engine) as session:
+        legacy = resolve_storefront_context(session, host="localhost")
+        assert legacy.source == TenantResolutionSource.LADELS_COMPATIBILITY
+        assert legacy.organization_slug == "the-guest-house"
+        with pytest.raises(TenantResolutionError, match="known Ladel"):
+            resolve_storefront_context(session, host="unverified-legacy.example")
 
 
 @pytest.mark.postgresql

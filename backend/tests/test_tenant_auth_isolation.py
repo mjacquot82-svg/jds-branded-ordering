@@ -17,6 +17,7 @@ from app.platform.models import CustomerRelationship, OnboardingState, Storefron
 from app.tenancy.resolver import resolve_owner_tenant_context
 from tests.test_jds_auth import auth_client, auth_engine, auth_settings, fake_provider  # noqa: F401
 from tests.test_tenant_order_isolation import order_for
+from tests.test_v1_platform_isolation import make_storefront_operationally_ready
 
 
 async def _login(client):
@@ -248,6 +249,13 @@ async def test_verified_customer_can_establish_independent_second_storefront_rel
             StorefrontHostname(organization_id=second.id,hostname=second_host,status="verified",is_canonical=True),
         ])
         second_id = second.id
+    with Session(auth_engine) as session:
+        actor = session.scalar(
+            select(JdsUser).where(
+                JdsUser.primary_email == "shared-storefront@example.com"
+            )
+        )
+        make_storefront_operationally_ready(session, second_id, actor.id)
     login = await auth_client.post(
         "/api/v1/customer/auth/login",
         headers={"Host":second_host,"Origin":"http://test"},
