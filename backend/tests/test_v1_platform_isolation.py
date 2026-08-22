@@ -18,22 +18,30 @@ from app.catalog.models import Category, Product
 from app.clover.models import CloverInstallation
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
 from app.api.v1.platform import (
+    BusinessInput,
     OnboardingInput,
     ProvisionOrganizationInput,
+    StorefrontSlugInput,
+    business_payload,
+    choose_storefront,
     disable_storefront,
     entitlements,
     launch_kit,
+    owner_business_profile,
+    owner_storefront,
     initial_launch,
     platform_organization_detail,
     platform_organizations,
     provision_organization,
     retry_storefront,
+    save_business_profile,
     save_onboarding,
 )
 from app.jds_auth.service import AuthPrincipal
 from app.loyalty.models import CustomerLoyaltyEvent, LoyaltyProgram
 from app.platform.models import BillingPlan, BusinessProfile, CustomerRelationship, DesignMediaReference, DesignVersion, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
 from app.platform.media import local_media_path, persist_local_image
+from app.platform.config import hosted_storefront_hostname, standard_storefront_hostname
 from app.platform.entitlements import enforce_entitlement
 from app.platform.readiness import synchronize_public_readiness
 from app.platform.assets import launch_qr_svg, tenant_icon_png, tenant_media_icon_png
@@ -78,6 +86,12 @@ def platform_db(postgresql_url):
 
 def context(organization_id, slug):
     return TenantContext(organization_id=organization_id, organization_slug=slug, source=TenantResolutionSource.AUTHENTICATED_MEMBERSHIP)
+
+
+def test_standard_merchant_address_is_separate_from_runtime_routing(monkeypatch):
+    monkeypatch.setenv("JDS_STOREFRONT_BASE_DOMAIN","localhost")
+    assert hosted_storefront_hostname("marcs-drip") == "marcs-drip.localhost"
+    assert standard_storefront_hostname("marcs-drip") == "marcs-drip.order.jdsstudio.ca"
 
 
 def make_storefront_operationally_ready(session: Session, organization_id, actor) -> None:
@@ -423,6 +437,61 @@ def test_onboarding_checklist_cannot_override_server_readiness(platform_db):
         assert session.get(OnboardingState,a).public_ready is False
 
 
+@pytest.mark.postgresql
+def test_step2_creates_missing_authoritative_business_profile(platform_db):
+    engine,(a,_,actor,_,_)=platform_db
+    with Session(engine) as session:
+        assert session.get(BusinessProfile,a) is None
+        service=DesignService(session,context(a,"alpha"));workspace=service.workspace();config=deepcopy(workspace.draft_config);config["displayName"]="Marc's Drip"
+        service.save(config,workspace.revision,actor)
+        assert session.get(BusinessProfile,a).display_name == "Marc's Drip"
+
+
+@pytest.mark.postgresql
+def test_step2_name_is_step3_authority_without_changing_internal_or_installed_app_names(platform_db):
+    engine,(a,_,actor,_,_)=platform_db
+    principal=AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="owner@example.com",display_name="Owner",role="owner",permissions=frozenset(),assurance_level="password")
+    with Session(engine) as session:
+        organization=session.get(Organization,a);internal_name=organization.name
+        profile=BusinessProfile(organization_id=a,display_name="Synthetic Admin Name",contact_email="new-merchant@review.jds.invalid",timezone="America/Toronto",currency="CAD",fulfillment_wording="Pickup")
+        session.add(profile);session.commit()
+        service=DesignService(session,context(a,"alpha"));workspace=service.workspace();config=deepcopy(workspace.draft_config)
+        config["displayName"]="Marc's Drip";config["pwa"]["shortName"]="Marc's Home Screen"
+        service.save(config,workspace.revision,actor)
+        assert session.get(BusinessProfile,a).display_name == "Marc's Drip"
+        assert owner_business_profile(context(a,"alpha"),session)["display_name"] == "Marc's Drip"
+        assert owner_business_profile(context(a,"alpha"),session)["contact_email"] is None
+        corrected=save_business_profile(BusinessInput(display_name="Marc's Coffee",contact_email=None,phone=None,address={"street":"12 King St","city":"Guelph","region":"ON","postal_code":"","country":"CA"},socials={"instagram":"https://instagram.com/marcscoffee","facebook":"","website":""},timezone="America/Toronto",currency="CAD",pickup_instructions="",fulfillment_wording="Collection"),principal,context(a,"alpha"),session)
+        refreshed=DesignService(session,context(a,"alpha")).workspace().draft_config
+        assert corrected["display_name"] == refreshed["displayName"] == "Marc's Coffee"
+        assert refreshed["pwa"]["shortName"] == "Marc's Home Screen"
+        assert session.get(Organization,a).name == internal_name
+        assert corrected["address"]["city"] == "Guelph" and corrected["socials"]["instagram"].endswith("marcscoffee")
+
+
+def test_synthetic_customer_profile_values_are_never_presented_as_merchant_data():
+    profile=BusinessProfile(organization_id=uuid4(),display_name="Review",contact_email="new-merchant@review.jds.invalid",address={},socials={"instagram":"https://social.review.invalid/demo","facebook":"https://facebook.com/yourbusiness"},timezone="America/Toronto",currency="CAD",pickup_instructions="",fulfillment_wording="Pickup")
+    result=business_payload(profile)
+    assert result["contact_email"] is None
+    assert result["socials"] == {"instagram":"","facebook":""}
+
+
+@pytest.mark.postgresql
+def test_storefront_uniqueness_and_tenant_scope_remain_authoritative(platform_db,monkeypatch):
+    engine,(a,b,actor,_,_)=platform_db
+    principal=AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="owner@example.com",display_name="Owner",role="owner",permissions=frozenset(),assurance_level="password")
+    monkeypatch.setenv("JDS_STOREFRONT_BASE_DOMAIN","orders.example.test")
+    with Session(engine) as session:
+        storefront=owner_storefront(context(a,"alpha"),session)
+        assert storefront["merchantAddressSuffix"] == ".order.jdsstudio.ca"
+        assert storefront["configuredHostname"].endswith(".orders.example.test")
+        beta=session.get(Organization,b)
+        with pytest.raises(HTTPException) as unavailable:
+            choose_storefront(StorefrontSlugInput(slug=beta.slug),principal,context(a,"alpha"),session)
+        assert unavailable.value.status_code == 409
+        assert session.get(Organization,b).slug == beta.slug
+
+
 def test_local_media_storage_keys_are_tenant_and_asset_scoped(tmp_path, monkeypatch):
     monkeypatch.setenv("JDS_LOCAL_MEDIA_ROOT", str(tmp_path))
     tenant_a, tenant_b, asset = uuid4(), uuid4(), uuid4()
@@ -452,6 +521,40 @@ def test_uploaded_app_icon_is_resized_without_mutating_original(tmp_path):
     shifted=tenant_media_icon_png(path,512,"#ffffff",{"x":15,"y":80,"zoom":1.4})
     assert centered.startswith(b"\x89PNG") and shifted.startswith(b"\x89PNG") and centered!=shifted
     assert path.read_bytes()==original
+
+
+@pytest.mark.postgresql
+def test_image_position_contracts_save_and_reload_per_slot(platform_db):
+    engine,(organization_id,_,actor,_,_)=platform_db
+    with Session(engine) as session:
+        service=DesignService(session,context(organization_id,"alpha"));workspace=service.workspace();session.commit()
+        config=deepcopy(DEFAULT_CONFIG)
+        config["imagePositions"]={"logo":{"x":0,"y":100,"zoom":1},"hero":{"x":75,"y":20,"zoom":1.25},"appIcon":{"x":50,"y":50,"zoom":.4}}
+        service.save(config,workspace.revision,actor);session.commit()
+        assert service.workspace().draft_config["imagePositions"]==config["imagePositions"]
+        for app_icon in ({"x":12,"y":88,"zoom":.75},{"x":100,"y":0,"zoom":1},{"x":50,"y":50,"zoom":3}):
+            workspace=service.workspace();next_config=deepcopy(workspace.draft_config);next_config["imagePositions"]["appIcon"]=app_icon
+            service.save(next_config,workspace.revision,actor);session.commit()
+            assert service.workspace().draft_config["imagePositions"]["appIcon"]==app_icon
+
+
+@pytest.mark.postgresql
+def test_design_save_keeps_authoritative_contrast_requirement(platform_db):
+    engine,(organization_id,_,actor,_,_)=platform_db
+    with Session(engine) as session:
+        service=DesignService(session,context(organization_id,"alpha"));workspace=service.workspace();config=deepcopy(workspace.draft_config)
+        config["colors"]["text"]="#ffffff";config["colors"]["background"]="#ffffff";config["colors"]["surface"]="#ffffff"
+        with pytest.raises(DesignValidationError,match="stronger contrast"):
+            service.save(config,workspace.revision,actor)
+
+
+@pytest.mark.postgresql
+@pytest.mark.parametrize(("slot","position","label"),[("logo",{"x":50,"y":50,"zoom":.95},"Header Logo"),("hero",{"x":50,"y":50,"zoom":3.05},"Hero Image"),("appIcon",{"x":50,"y":50,"zoom":.35},"App Icon"),("appIcon",{"x":101,"y":50,"zoom":1},"App Icon")])
+def test_invalid_image_positions_remain_slot_specific(platform_db,slot,position,label):
+    engine,(organization_id,_,actor,_,_)=platform_db
+    with Session(engine) as session:
+        service=DesignService(session,context(organization_id,"alpha"));workspace=service.workspace();session.commit();config=deepcopy(workspace.draft_config);config["imagePositions"][slot]=position
+        with pytest.raises(DesignValidationError,match=label): service.save(config,workspace.revision,actor)
 
 
 def test_media_app_icon_uses_literal_center_crop_at_192_and_512(tmp_path):

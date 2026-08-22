@@ -1,4 +1,9 @@
 export const defaultImagePosition=Object.freeze({x:50,y:50,zoom:1});
+export const imagePositionContracts=Object.freeze({
+  logo:Object.freeze({minX:0,maxX:100,minY:0,maxY:100,minZoom:1,maxZoom:3}),
+  hero:Object.freeze({minX:0,maxX:100,minY:0,maxY:100,minZoom:1,maxZoom:3}),
+  appIcon:Object.freeze({minX:0,maxX:100,minY:0,maxY:100,minZoom:.4,maxZoom:3}),
+});
 
 export function slotImageStyle(position=defaultImagePosition,fit="cover"){
   return Object.freeze({

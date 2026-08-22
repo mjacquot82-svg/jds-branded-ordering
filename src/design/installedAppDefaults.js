@@ -12,3 +12,10 @@ export function withInstalledAppDefaults(config) {
   branding.headerMode=branding.headerMode||(branding.showLogo===false?"tagline":"logo");
   return { ...config, heroContent: config.heroContent==="cta"||config.heroContent==="tagline-cta"?"cta":"image", branding, appIconMediaId: config.appIconMediaId || null, imagePositions: config.imagePositions || {logo:{x:50,y:50,zoom:1},hero:{x:50,y:50,zoom:1},appIcon:{x:50,y:50,zoom:1}}, pwa: next };
 }
+
+export function resetToLayoutColors(config,layout) {
+  const colors={...layout.defaultColors};const pwa={...config.pwa};
+  if(pwa.themeColor===config.colors.primary||pwa.themeColor==="#6f7d5f")pwa.themeColor=colors.primary;
+  if(pwa.backgroundColor===config.colors.background||pwa.backgroundColor==="#f7f0e6")pwa.backgroundColor=colors.background;
+  return {...config,colors,pwa};
+}

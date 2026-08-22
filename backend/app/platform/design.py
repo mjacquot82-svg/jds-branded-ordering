@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from copy import deepcopy
 from uuid import UUID
@@ -8,7 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.jds_auth.models import Organization
-from app.platform.models import DesignMediaReference, DesignPublication, DesignVersion, DesignWorkspace, MediaAsset, OperationalAuditEvent
+from app.platform.models import BusinessProfile, DesignMediaReference, DesignPublication, DesignVersion, DesignWorkspace, MediaAsset, OperationalAuditEvent
 from app.tenancy.context import TenantContext
 
 TEMPLATES = frozenset({"modern", "minimal", "cozy"})
@@ -16,6 +17,11 @@ FONTS = frozenset({"modern", "classic", "friendly"})
 BUTTONS = frozenset({"rounded", "square", "pill"})
 HERO_CONTENT = frozenset({"image", "tagline", "cta", "tagline-cta"})
 HEADER_MODES = frozenset({"logo", "tagline"})
+IMAGE_POSITION_CONTRACTS = {
+    "logo": {"label": "Header Logo", "min_zoom": 1, "max_zoom": 3},
+    "hero": {"label": "Hero Image", "min_zoom": 1, "max_zoom": 3},
+    "appIcon": {"label": "App Icon", "min_zoom": .4, "max_zoom": 3},
+}
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 DEFAULT_CONFIG = {
     "template": "cozy", "displayName": "Your business", "tagline": "Order ahead",
@@ -79,9 +85,12 @@ def validate_design(session: Session, tenant: TenantContext, candidate: dict) ->
     positions=config.get("imagePositions")
     if not isinstance(positions,dict) or set(positions)!={"logo","hero","appIcon"}:
         raise DesignValidationError("Image positioning is invalid.")
-    for position in positions.values():
-        if not isinstance(position,dict) or set(position)!={"x","y","zoom"} or not all(isinstance(position.get(key),(int,float)) for key in ("x","y","zoom")) or not (0<=position["x"]<=100 and 0<=position["y"]<=100 and 1<=position["zoom"]<=3):
-            raise DesignValidationError("Image positioning is invalid.")
+    for slot,contract in IMAGE_POSITION_CONTRACTS.items():
+        position=positions.get(slot)
+        numeric=isinstance(position,dict) and set(position)=={"x","y","zoom"} and all(isinstance(position.get(key),(int,float)) and not isinstance(position.get(key),bool) and math.isfinite(position[key]) for key in ("x","y","zoom"))
+        valid=numeric and 0<=position["x"]<=100 and 0<=position["y"]<=100 and contract["min_zoom"]<=position["zoom"]<=contract["max_zoom"]
+        if not valid:
+            raise DesignValidationError(f"Your {contract['label']} position could not be saved. Reset its position or adjust it and try again.")
     announcement=config.get("announcement",DEFAULT_CONFIG["announcement"])
     if not isinstance(announcement,dict) or set(announcement)!={"enabled","text"} or not isinstance(announcement.get("enabled"),bool) or not isinstance(announcement.get("text"),str) or len(announcement["text"])>180:
         raise DesignValidationError("Announcement configuration is invalid.")
@@ -128,6 +137,14 @@ class DesignService:
         item = self.workspace(lock=True)
         if item.revision != expected_revision: raise DesignValidationError("Draft changed in another session.")
         item.draft_config = validate_design(self.session, self.tenant, config)
+        profile = self.session.get(BusinessProfile, self.tenant.organization_id)
+        customer_name = item.draft_config["displayName"].strip()
+        if customer_name not in {"Your business", "Order ahead"}:
+            if profile is None:
+                profile = BusinessProfile(organization_id=self.tenant.organization_id, display_name=customer_name)
+                self.session.add(profile)
+            else:
+                profile.display_name = customer_name
         item.revision += 1; item.updated_by_user_id = actor
         self._replace_media_references(item.draft_config, scope="draft")
         self._audit("design.draft_saved", actor, "workspace", str(item.revision)); self.session.commit()

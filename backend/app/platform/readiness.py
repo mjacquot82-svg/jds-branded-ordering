@@ -29,8 +29,8 @@ def evaluate_storefront_readiness(session: Session, organization_id: UUID) -> Re
     checks = {
         "organization": bool(organization and organization.is_active and organization.lifecycle_status == "active"),
         "business_profile": bool(
-            profile and profile.display_name.strip() and profile.pickup_instructions.strip()
-            and profile.timezone.strip() and profile.currency.strip()
+            profile and profile.display_name.strip() and profile.timezone.strip()
+            and profile.currency.strip() and profile.fulfillment_wording.strip()
         ),
         "verified_hostname": session.scalar(select(func.count()).select_from(StorefrontHostname).where(
             StorefrontHostname.organization_id == organization_id,

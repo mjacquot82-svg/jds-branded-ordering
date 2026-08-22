@@ -4,10 +4,10 @@ import LayoutPhonePreview, { FocusedHeaderBrandingPreview } from "../design/Layo
 import PositionedSlotImage from "../design/PositionedSlotImage.jsx";
 import AppIconComposition from "../design/AppIconComposition.jsx";
 import AppIconCropEditor from "../design/AppIconCropEditor.jsx";
-import { installedAppName, withInstalledAppDefaults } from "../design/installedAppDefaults.js";
+import { installedAppName, resetToLayoutColors, withInstalledAppDefaults } from "../design/installedAppDefaults.js";
 import { imageRequirementForSlot, inspectImageFile, validateImageForSlot } from "../design/imageRequirements.js";
 import VisualDesignerDiagnostics from "../design/VisualDesignerDiagnostics.jsx";
-import { createMediaUrlIndex, headerBrandingMode, resolveAssignedMediaUrl } from "../design/imageSlotRendering.js";
+import { createMediaUrlIndex, headerBrandingMode, imagePositionContracts, resolveAssignedMediaUrl } from "../design/imageSlotRendering.js";
 import { describeLayoutCapabilities, getLayoutDefinition, layoutChoices, layoutComparisonRows } from "../design/layoutDefinitions.js";
 import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
 import { archiveMedia, fetchDesignDraft, fetchDesignVersions, fetchMedia, fetchReadiness, publishDesign, revertDesign, saveDesignDraft, uploadMedia } from "../services/designStudioApi.js";
@@ -26,7 +26,9 @@ function contrast(a,b){const values=[luminance(a),luminance(b)].sort((left,right
 export default function DesignStudioPage({guided=false,onContinue,wizardStep=null}){
   const {session}=useOwnerAuth();const {categories,products}=useCatalogProducts();
   const designerRef=useRef(null);
+  const saveInFlightRef=useRef(false);
   const [draft,setDraft]=useState(null);const [savedConfig,setSavedConfig]=useState(null);const [status,setStatus]=useState("loading");const [message,setMessage]=useState("");
+  const [saveError,setSaveError]=useState("");
   const [versions,setVersions]=useState([]);const [media,setMedia]=useState([]);const [uploading,setUploading]=useState(false);const [readiness,setReadiness]=useState(null);const [mobileView,setMobileView]=useState("edit");const [imageFeedback,setImageFeedback]=useState({});
   const [activeSlot,setActiveSlot]=useState(null);const [showLayoutAreas,setShowLayoutAreas]=useState(false);
   const mediaById=useMemo(()=>createMediaUrlIndex(media),[media]);
@@ -47,7 +49,7 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
   const toggleSection=(section,enabled)=>update({sections:enabled?[...config.sections,section]:config.sections.filter((item)=>item!==section)});
   const mediaUrl=(id)=>resolveAssignedMediaUrl(mediaById,id);
   async function selectLayout(template){if(template===config.template||status!=="ready")return;const nextConfig={...config,template};setDraft((value)=>({...value,config:nextConfig}));if(wizardStep!=="look")return;try{setStatus("saving");setMessage("");const value=await saveDesignDraft({revision:draft.revision,config:nextConfig},session.csrf_token);setDraft(value);setSavedConfig(value.config);setMessage(`${layoutChoices.find((item)=>item.id===template)?.name} layout selected. You’ll add your brand next.`);setStatus("ready");}catch(error){setDraft((value)=>({...value,config:savedConfig}));setMessage(error.message);setStatus("error");}}
-  async function save(){try{setStatus("saving");const value=await saveDesignDraft({revision:draft.revision,config},session.csrf_token);setDraft(value);setSavedConfig(value.config);setMessage("Design saved. Your live app is unchanged until you publish.");setStatus("ready");}catch(error){setMessage(error.message);setStatus("error");}}
+  async function save(){if(saveInFlightRef.current||status!=="ready"||!dirty)return;saveInFlightRef.current=true;setSaveError("");try{setStatus("saving");const value=await saveDesignDraft({revision:draft.revision,config},session.csrf_token);setDraft(value);setSavedConfig(value.config);setMessage("Design saved. Your live app is unchanged until you publish.");setStatus("ready");}catch(error){setMessage(error.message);setSaveError(error.message);setStatus("ready");}finally{saveInFlightRef.current=false;}}
   async function publish(){if(dirty){setMessage("Save your changes before publishing so the app you reviewed is the version that goes live.");return;}if(!globalThis.confirm?.("Publish this saved design to your customer app now?"))return;try{setStatus("publishing");const value=await publishDesign(session.csrf_token);await refreshVersions();setReadiness(await fetchReadiness());setMessage(`Version ${value.version} is now live. Your menu, prices, and orders were not changed.`);setStatus("ready");}catch(error){setMessage(error.message);setStatus("error");}}
   async function revert(item){if(!globalThis.confirm?.(`Restore version ${item.version}? Your menu and orders will not change.`))return;try{setStatus("publishing");const value=await revertDesign(item.id,session.csrf_token);const[nextDraft]=await Promise.all([fetchDesignDraft(),refreshVersions()]);setDraft(nextDraft);setSavedConfig(nextDraft.config);setMessage(`Version ${value.version} is live, restored from version ${item.version}.`);setStatus("ready");}catch(error){setMessage(error.message);setStatus("error");}}
   const slotRequirement=(slot)=>imageRequirementForSlot(selectedLayout.id,slot);
@@ -64,11 +66,11 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
   const selectedLayout=getLayoutDefinition(config.template);const showLayoutControls=wizardStep!=="brand";const showCustomization=wizardStep!=="look";
   const positionControls=(slot)=>
 <div className={`image-position-controls position-${slot}`}><strong>Position your {slot==="appIcon"?"app icon":slot==="logo"?"header logo":slot}</strong>
-<label>Left / right<input type="range" min="0" max="100" value={config.imagePositions[slot].x} onChange={(event)=>updatePosition(slot,{x:Number(event.target.value)})}/>
+<label>Left / right<input type="range" min={imagePositionContracts[slot].minX} max={imagePositionContracts[slot].maxX} value={config.imagePositions[slot].x} onChange={(event)=>updatePosition(slot,{x:Number(event.target.value)})}/>
 </label>
-<label>Up / down<input type="range" min="0" max="100" value={config.imagePositions[slot].y} onChange={(event)=>updatePosition(slot,{y:Number(event.target.value)})}/>
+<label>Up / down<input type="range" min={imagePositionContracts[slot].minY} max={imagePositionContracts[slot].maxY} value={config.imagePositions[slot].y} onChange={(event)=>updatePosition(slot,{y:Number(event.target.value)})}/>
 </label>
-<label>Zoom<input type="range" min={slot==="appIcon"?".4":"1"} max="3" step=".05" value={config.imagePositions[slot].zoom} onChange={(event)=>updatePosition(slot,{zoom:Number(event.target.value)})}/>
+<label>Zoom<input type="range" min={imagePositionContracts[slot].minZoom} max={imagePositionContracts[slot].maxZoom} step=".05" value={config.imagePositions[slot].zoom} onChange={(event)=>updatePosition(slot,{zoom:Number(event.target.value)})}/>
 </label>
 <button className="text-button" type="button" onClick={()=>resetPosition(slot)}>Reset position</button>
 <small>Position is saved with your design; the original image is never changed.</small>
@@ -89,7 +91,7 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
 <p>{wizardStep==="look"?"Choose how your ordering app is organized. You’ll add your logo, colours and photos next.":wizardStep==="brand"?"Add your name, colours, images, and personality while your app updates beside you.":guided?"Start with a layout you love, then make every detail feel like your business.":"Change your app layout or branding anytime. Your menu, prices, and availability stay intact."}</p>
 <p className={`draft-state ${dirty?"unsaved":"saved"}`}>{dirty?"Changes not saved yet · your live app is unchanged":"Your design is saved"}</p>
 </div>
-<div className="design-actions">{!wizardStep?<Link className="secondary-button" to="/admin/design/preview">Full preview</Link>:null}{wizardStep!=="look"?<button className="primary-button" disabled={status!=="ready"||!dirty||!contrastValid} onClick={save}>{status==="saving"?"Saving…":"Save my design"}</button>:null}{!guided?<button className="primary-button" disabled={status!=="ready"||dirty||!readiness?.checks} onClick={publish}>{status==="publishing"?"Publishing…":"Publish saved design"}</button>:null}</div>
+<div className="design-actions">{!wizardStep?<Link className="secondary-button" to="/admin/design/preview">Full preview</Link>:null}{wizardStep!=="look"?<button aria-busy={status==="saving"} className="primary-button" disabled={status!=="ready"||!dirty} onClick={save}>{status==="saving"?"Saving…":"Save my design"}</button>:null}{!guided?<button className="primary-button" disabled={status!=="ready"||dirty||!readiness?.checks} onClick={publish}>{status==="publishing"?"Publishing…":"Publish saved design"}</button>:null}</div>
 </header>
     {message?<p className="owner-page-message" aria-live="polite">{message}</p>:null}<div className="mobile-studio-toggle" role="group" aria-label="Design workspace view">
 <button className={mobileView==="edit"?"active":""} onClick={()=>setMobileView("edit")} type="button">Edit</button>
@@ -177,10 +179,10 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
 </fieldset>
         <fieldset className="designer-control-group">
 <legend>Colours &amp; style</legend>
-<p className="field-help">These choices update your app preview immediately.</p>
+<p className="field-help">These choices update your app preview immediately.</p><button className="text-button" type="button" onClick={()=>setDraft((value)=>({...value,config:resetToLayoutColors(value.config,selectedLayout)}))}>Reset to layout colours</button>
 <div className="color-controls">{Object.entries(config.colors).map(([key,value])=>
 <label key={key}>{key}<input type="color" value={value} onChange={(event)=>updateColor(key,event.target.value)}/>
-</label>)}</div>{!contrastValid?<p className="owner-page-message error" role="alert">Text needs at least 4.5:1 contrast against both the page background and card surface before this design can be saved.</p>:null}<label>Typography<select value={config.typography} onChange={(event)=>update({typography:event.target.value})}>
+</label>)}</div>{!contrastValid?<p className="owner-page-message error" role="alert">This text colour may be difficult for customers to read. Choose a darker colour or Reset to layout colours before saving.</p>:null}<label>Typography<select value={config.typography} onChange={(event)=>update({typography:event.target.value})}>
 <option value="modern">Modern</option>
 <option value="classic">Classic</option>
 <option value="friendly">Friendly</option>
@@ -278,10 +280,12 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
 </div>
 </fieldset>
       </>:null}
-      {guided?<aside className="builder-next">
+      {guided?<aside className="builder-next" id={wizardStep==="brand"?"step2-next":undefined}>
 <span>Next</span>
 <strong>{wizardStep==="look"?"Make this layout yours":"Tell us about your business"}</strong>
-<p>{wizardStep==="look"?"Your layout choice saves automatically. Next, add your logo, colours and photos.":"Save your design, then add the details customers need to order with confidence."}</p>{wizardStep?<button className="primary-button" disabled={dirty||status!=="ready"} type="button" onClick={onContinue}>{wizardStep==="look"?"Continue to branding":"Continue to business details"}</button>:<Link className={`primary-button ${dirty?"disabled-link":""}`} aria-disabled={dirty} to={dirty?"#brand":"/admin/setup#business"}>Continue to business details</Link>}</aside>:<section className="design-history">
+<p>{wizardStep==="look"?"Your layout choice saves automatically. Next, add your logo, colours and photos.":"Save your design, then add the details customers need to order with confidence."}</p>
+{wizardStep==="brand"?<div className="builder-next-save"><p className={`draft-state ${dirty?"unsaved":"saved"}`} aria-live="polite">{status==="saving"?"Saving your design…":dirty?"Unsaved changes":"Your design is saved ✓"}</p>{saveError?<p className="owner-page-message error" role="alert">Your design was not saved. {saveError}</p>:null}<button aria-busy={status==="saving"} className="primary-button" disabled={status!=="ready"||!dirty} type="button" onClick={save}>{status==="saving"?"Saving…":"Save my design"}</button></div>:null}
+{wizardStep?<button className={wizardStep==="brand"&&!dirty?"primary-button":"secondary-button"} disabled={dirty||status!=="ready"} type="button" onClick={onContinue}>{wizardStep==="look"?"Continue to branding":"Continue to business details"}</button>:<Link className={`primary-button ${dirty?"disabled-link":""}`} aria-disabled={dirty} to={dirty?"#brand":"/admin/setup#business"}>Continue to business details</Link>}</aside>:<section className="design-history">
 <h2>Published versions</h2>{versions.length?<ul>{versions.map((item)=>
 <li key={item.id}>
 <span>Version {item.version}{item.isCurrent?" · Live":""}<small>{new Date(item.publishedAt).toLocaleString()}</small>

@@ -11,13 +11,13 @@ from sqlalchemy.orm import Session
 from app.api.v1.catalog import get_catalog_session, ladels_compatibility_tenant
 from app.api.v1.owner_auth import csrf_principal, current_principal
 from app.api.v1.tenant_context import authenticated_owner_tenant
-from app.jds_auth.models import JdsApplication, JdsUser, Membership, Organization, Role
+from app.jds_auth.models import JdsApplication, JdsUser, Membership, MerchantAcquisition, Organization, Role
 from app.jds_auth.config import AuthSettings
 from app.clover.models import CloverInstallation
 from app.jds_auth.service import AuthPrincipal
 from app.platform.assets import launch_qr_svg, tenant_icon_png, tenant_media_icon_png
 from app.platform.acquisition import AcquisitionError, AcquisitionRequest, MerchantAcquisitionService
-from app.platform.config import hosted_storefront_hostname, storefront_url
+from app.platform.config import STANDARD_STOREFRONT_BASE_DOMAIN, hosted_storefront_hostname, storefront_url
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
 from app.platform.entitlements import entitlement_features
 from app.platform.models import BillingPlan, BusinessProfile, DesignMediaReference, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
@@ -173,7 +173,13 @@ def recheck_readiness(principal: AuthPrincipal = Depends(csrf_principal), tenant
 @router.get("/owner/storefront")
 def owner_storefront(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     rows=session.scalars(select(StorefrontHostname).where(StorefrontHostname.organization_id==tenant.organization_id).order_by(StorefrontHostname.created_at.desc())).all()
-    return {"slug":tenant.organization_slug,"hostnames":[{"id":str(row.id),"hostname":row.hostname,"status":row.status,"canonical":row.is_canonical} for row in rows]}
+    acquisition=session.scalar(select(MerchantAcquisition).where(MerchantAcquisition.organization_id==tenant.organization_id))
+    fixture_suggestion=bool(acquisition and acquisition.source in {"local_review","staging_review"} and tenant.organization_slug=="new-merchant-demo")
+    slug_is_suggestion=not rows or fixture_suggestion
+    configured=hosted_storefront_hostname(tenant.organization_slug)
+    current_hostname=next((row.hostname for row in rows if row.is_canonical),None) or (rows[0].hostname if rows else None)
+    suffix=current_hostname[len(tenant.organization_slug):] if current_hostname and current_hostname.startswith(tenant.organization_slug) else ""
+    return {"slug":tenant.organization_slug,"slugIsSuggestion":slug_is_suggestion,"merchantAddressSuffix":f".{STANDARD_STOREFRONT_BASE_DOMAIN}","addressSuffix":suffix,"configuredHostname":configured,"hostnames":[{"id":str(row.id),"hostname":row.hostname,"status":row.status,"canonical":row.is_canonical} for row in rows]}
 
 @router.get("/owner/storefront/launch-kit")
 def launch_kit(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -232,8 +238,24 @@ def disable_storefront(hostname_id: UUID, principal: AuthPrincipal = Depends(csr
     session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="storefront.hostname_disabled",target_type="storefront_hostname",target_id=str(item.id),outcome="success"));session.commit()
     return Response(status_code=204)
 
-def business_payload(item: BusinessProfile) -> dict:
-    return {"display_name":item.display_name,"legal_name":item.legal_name,"contact_email":item.contact_email,"phone":item.phone,"address":item.address or {},"socials":item.socials or {},"timezone":item.timezone,"currency":item.currency,"pickup_instructions":item.pickup_instructions,"fulfillment_wording":item.fulfillment_wording}
+def _fixture_customer_value(value: str | None) -> bool:
+    normalized=(value or "").strip().lower()
+    return ".invalid" in normalized or "@local.jds.test" in normalized or ".local.test" in normalized or normalized in {"https://instagram.com/yourbusiness","https://facebook.com/yourbusiness"}
+
+
+def _setup_customer_name(session: Session, organization_id: UUID, profile: BusinessProfile) -> str:
+    onboarding=session.get(OnboardingState,organization_id)
+    workspace=session.get(DesignWorkspace,organization_id)
+    design_name=str((workspace.draft_config if workspace else {}).get("displayName","")).strip()
+    if onboarding and onboarding.initial_setup_completed_at is None and design_name not in {"","Your business","Order ahead"}:
+        return design_name
+    return profile.display_name
+
+
+def business_payload(item: BusinessProfile, *, display_name: str | None = None) -> dict:
+    socials={key:("" if _fixture_customer_value(value) else value) for key,value in (item.socials or {}).items()}
+    contact_email=None if _fixture_customer_value(item.contact_email) else item.contact_email
+    return {"display_name":display_name or item.display_name,"legal_name":item.legal_name,"contact_email":contact_email,"phone":item.phone,"address":item.address or {},"socials":socials,"timezone":item.timezone,"currency":item.currency,"pickup_instructions":item.pickup_instructions,"fulfillment_wording":item.fulfillment_wording}
 
 @router.get("/owner/business-profile")
 def owner_business_profile(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -242,7 +264,7 @@ def owner_business_profile(tenant: TenantContext = Depends(authenticated_owner_t
         organization=session.get(Organization,tenant.organization_id)
         item=BusinessProfile(organization_id=tenant.organization_id,display_name=organization.name if organization else tenant.organization_slug)
         session.add(item);session.commit()
-    return business_payload(item)
+    return business_payload(item,display_name=_setup_customer_name(session,tenant.organization_id,item))
 
 @router.put("/owner/business-profile")
 def save_business_profile(payload: BusinessInput, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -252,6 +274,10 @@ def save_business_profile(payload: BusinessInput, principal: AuthPrincipal = Dep
     item = session.get(BusinessProfile, tenant.organization_id)
     if item is None: item = BusinessProfile(organization_id=tenant.organization_id, display_name=payload.display_name); session.add(item)
     for key, value in payload.model_dump().items(): setattr(item, key, value.strip() if isinstance(value, str) else value)
+    workspace=DesignService(session,tenant).workspace(lock=True)
+    if workspace.draft_config.get("displayName") != item.display_name:
+        workspace.draft_config={**workspace.draft_config,"displayName":item.display_name}
+        workspace.revision+=1;workspace.updated_by_user_id=principal.user_id
     session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="business_profile.updated",target_type="organization",target_id=str(tenant.organization_id),outcome="success"));session.commit()
     return business_payload(item)
 

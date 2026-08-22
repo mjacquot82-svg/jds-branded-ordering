@@ -1300,8 +1300,35 @@ h3 {
 
 .primary-button:disabled,
 .secondary-button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.68;
+}
+
+.primary-button[aria-busy="true"],
+.secondary-button[aria-busy="true"] {
+  cursor: progress;
+}
+
+.app-address-field {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid #c8ccc2;
+  border-radius: 0.65rem;
+  background: #fff;
+}
+
+.business-basics .app-address-field input {
+  min-width: 8rem;
+  flex: 1;
+  border: 0;
+}
+
+.app-address-field > span {
+  padding-right: 0.8rem;
+  color: #5d6259;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .operations-panel .product-form {

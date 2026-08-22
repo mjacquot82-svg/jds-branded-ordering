@@ -69,5 +69,5 @@ test("shared storefront applies published layout structure without separate comm
 });
 
 test("Design Studio preserves branding, versioning, media, contrast, and mobile review",()=>{
-  assert.match(studio,/backgroundColor/);assert.match(studio,/4\.5:1 contrast/);assert.match(studio,/publishDesign/);assert.match(studio,/revertDesign/);assert.match(studio,/archiveMedia/);assert.match(studio,/logoMediaId/);assert.match(studio,/hero/);assert.match(studio,/mobileView/);assert.match(styles,/\.studio-workspace\.mobile-edit \.phone-preview-wrap\{display:none\}/);
+  assert.match(studio,/backgroundColor/);assert.match(studio,/contrast\(config\.colors\.text,config\.colors\.background\)>=4\.5/);assert.match(studio,/publishDesign/);assert.match(studio,/revertDesign/);assert.match(studio,/archiveMedia/);assert.match(studio,/logoMediaId/);assert.match(studio,/hero/);assert.match(studio,/mobileView/);assert.match(styles,/\.studio-workspace\.mobile-edit \.phone-preview-wrap\{display:none\}/);
 });

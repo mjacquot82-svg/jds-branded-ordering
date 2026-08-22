@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appIconCroppedPixelGeometry, appIconImageStyle, appIconPixelGeometry, createMediaUrlIndex, headerBrandingMode, heroContentVisibility, resolveAssignedMediaUrl, slotImageStyle } from "../../src/design/imageSlotRendering.js";
+import { appIconCroppedPixelGeometry, appIconImageStyle, appIconPixelGeometry, createMediaUrlIndex, headerBrandingMode, heroContentVisibility, imagePositionContracts, resolveAssignedMediaUrl, slotImageStyle } from "../../src/design/imageSlotRendering.js";
 import { layoutDefinitions } from "../../src/design/layoutDefinitions.js";
 
 const files=["src/admin/DesignStudioPage.jsx","src/design/LayoutPhonePreview.jsx","src/admin/DesignPreviewPage.jsx","src/pages/HomePage.jsx","src/layouts/AppLayout.jsx"].map((path)=>readFileSync(new URL(`../../${path}`,import.meta.url),"utf8"));
 const [studio,phone,full,home,layout]=files;
 const header=readFileSync(new URL("../../src/design/HeaderBrandingIdentity.jsx",import.meta.url),"utf8");
 const css=readFileSync(new URL("../../src/style.css",import.meta.url),"utf8");
+
+test("editor positioning ranges match the slot-specific save contract",()=>{
+  assert.deepEqual(imagePositionContracts.logo,{minX:0,maxX:100,minY:0,maxY:100,minZoom:1,maxZoom:3});
+  assert.deepEqual(imagePositionContracts.hero,{minX:0,maxX:100,minY:0,maxY:100,minZoom:1,maxZoom:3});
+  assert.deepEqual(imagePositionContracts.appIcon,{minX:0,maxX:100,minY:0,maxY:100,minZoom:.4,maxZoom:3});
+  assert.match(studio,/min=\{imagePositionContracts\[slot\]\.minZoom\}/);
+});
 
 test("one canonical image style owns position zoom and fit",()=>{
   assert.deepEqual(slotImageStyle({x:17,y:82,zoom:1.35}),{objectFit:"cover",objectPosition:"17% 82%",transform:"scale(1.35)",transformOrigin:"center"});
