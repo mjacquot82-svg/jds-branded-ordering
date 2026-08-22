@@ -5,6 +5,9 @@ import hashlib
 import os
 from pathlib import Path
 from uuid import UUID
+from io import BytesIO
+
+from PIL import Image, UnidentifiedImageError
 
 
 class MediaValidationError(ValueError):
@@ -14,7 +17,17 @@ class MediaValidationError(ValueError):
 _EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
 
-def validate_image(data: bytes, media_type: str) -> None:
+def image_dimensions(data: bytes) -> tuple[int, int]:
+    try:
+        with Image.open(BytesIO(data)) as image:
+            image.verify()
+        with Image.open(BytesIO(data)) as image:
+            return image.size
+    except (UnidentifiedImageError, OSError, ValueError) as error:
+        raise MediaValidationError("This image could not be read. Use a valid PNG, JPEG, or WebP image.") from error
+
+
+def validate_image(data: bytes, media_type: str) -> tuple[int, int]:
     if not data or len(data) > 10_000_000:
         raise MediaValidationError("Images must be between 1 byte and 10 MB.")
     valid = (
@@ -24,6 +37,7 @@ def validate_image(data: bytes, media_type: str) -> None:
     )
     if not valid:
         raise MediaValidationError("Image content does not match its declared file type.")
+    return image_dimensions(data)
 
 
 class MediaStorage(ABC):

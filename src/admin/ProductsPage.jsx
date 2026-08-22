@@ -7,6 +7,7 @@ import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
 import { canEditProducts, canManageLunchSpecial, canManageProductAvailability } from "../auth/ownerProductPermissions.js";
 import ModifierManager from "./ModifierManager.jsx";
 import { isProductDraftDirty } from "./productDraft.js";
+import { imageRequirements } from "../design/imageRequirements.js";
 
 const emptyProduct = { id: "", name: "", description: "", price: "", category: "", image: "", available: true, published: true, featured: false, lunchSpecial: false, variants: [], modifierGroupIds: [] };
 const money = (price) => new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(price);
@@ -135,7 +136,7 @@ export default function ProductsPage({ setupMode = false }) {
           <label><span>Name</span><input required value={formProduct.name} onChange={(event) => updateField("name", event.target.value)} /></label>
           <label><span>Description</span><textarea rows="3" value={formProduct.description} onChange={(event) => updateField("description", event.target.value)} /></label>
           <div className="form-grid"><label><span>Base price</span><input min="0" required step="0.01" type="number" value={formProduct.price} onChange={(event) => updateField("price", event.target.value)} /><small>Used when this product has no available variants.</small></label><label><span>Category</span><select required value={formProduct.category || categories[0]?.id || ""} onChange={(event) => updateField("category", event.target.value)}>{categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
-          <label><span>Image</span><input placeholder="Image URL or token" value={formProduct.image} onChange={(event) => updateField("image", event.target.value)} /></label>
+          <label><span>Image</span><input placeholder="Image URL or token" value={formProduct.image} onChange={(event) => updateField("image", event.target.value)} /><small>{imageRequirements.product.guidance} PNG, JPEG, or WebP; at least {imageRequirements.product.minWidth} × {imageRequirements.product.minHeight} pixels; up to 10 MB.</small></label>
         </section>
         <section className="product-editor-section product-variants" aria-labelledby="product-variants-heading"><div className="product-editor-section-heading"><h3 id="product-variants-heading">Variants</h3><p>Which version of this product is being purchased?</p></div>
           {formProduct.variants.length ? <div className="product-variant-list">{formProduct.variants.map((variant, index) => <div className={variant.active === false ? "product-variant-row is-unavailable" : "product-variant-row"} key={variant.id || variant.key}>

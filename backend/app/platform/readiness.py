@@ -66,10 +66,6 @@ def synchronize_public_readiness(session: Session, organization_id: UUID) -> Rea
     onboarding = session.get(OnboardingState, organization_id)
     if onboarding is not None:
         onboarding.public_ready = result.public_ready
-        if result.public_ready:
-            # Completion is the durable "has launched" marker. A later readiness
-            # issue should surface in operations without replaying first-time setup.
-            onboarding.state = "complete"
     return result
 
 

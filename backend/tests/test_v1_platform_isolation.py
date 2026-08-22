@@ -3,14 +3,16 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time, timedelta, timezone
 from threading import Barrier
 from uuid import UUID, uuid4
+from io import BytesIO
 
 import pytest
+from PIL import Image, ImageDraw
 from alembic import command
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.jds_auth.models import JdsApplication, JdsUser, Organization, Role
+from app.jds_auth.models import JdsApplication, JdsUser, Membership, MerchantAcquisition, MerchantActivation, Organization, Role
 from app.availability.models import BusinessHour, BusinessSettings
 from app.catalog.models import Category, Product
 from app.clover.models import CloverInstallation
@@ -21,6 +23,7 @@ from app.api.v1.platform import (
     disable_storefront,
     entitlements,
     launch_kit,
+    initial_launch,
     platform_organization_detail,
     platform_organizations,
     provision_organization,
@@ -33,7 +36,7 @@ from app.platform.models import BillingPlan, BusinessProfile, CustomerRelationsh
 from app.platform.media import local_media_path, persist_local_image
 from app.platform.entitlements import enforce_entitlement
 from app.platform.readiness import synchronize_public_readiness
-from app.platform.assets import launch_qr_svg, tenant_icon_png
+from app.platform.assets import launch_qr_svg, tenant_icon_png, tenant_media_icon_png
 from app.push.models import CustomerNotificationPreference, WebPushSubscription
 from app.tenancy.context import TenantContext, TenantResolutionSource
 from app.tenancy.resolver import (
@@ -158,9 +161,7 @@ def test_public_resolution_rechecks_readiness_and_isolates_tenants(platform_db):
         assert resolve_storefront_context(session, host=alpha_host).organization_id == a
         assert resolve_storefront_context(session, host=beta_host).organization_id == b
 
-        alpha_product = session.scalar(
-            select(Product).where(Product.organization_id == a)
-        )
+        alpha_product = session.scalar(select(Product).where(Product.organization_id == a))
         alpha_product.is_published = False
         session.commit()
         result = synchronize_public_readiness(session, a)
@@ -176,6 +177,32 @@ def test_public_resolution_rechecks_readiness_and_isolates_tenants(platform_db):
         alpha_product.is_published = True
         session.commit()
         assert resolve_storefront_context(session, host=alpha_host).organization_id == a
+
+
+@pytest.mark.postgresql
+def test_initial_launch_is_durable_when_later_readiness_fails(platform_db):
+    engine, (a, _, actor, _, _) = platform_db
+    with Session(engine) as session:
+        onboarding = session.get(OnboardingState, a)
+        onboarding.state = "in_progress"
+        onboarding.current_step = "launch"
+        onboarding.initial_setup_completed_at = None
+        onboarding.initial_launch_source = None
+        make_storefront_operationally_ready(session, a, actor)
+        principal = AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="owner@example.com",display_name="Owner",role="owner",permissions=frozenset(),assurance_level="password")
+        launched = initial_launch(principal, context(a, "alpha"), session)
+        assert launched["launched"] is True
+        durable = session.get(OnboardingState, a)
+        completed_at = durable.initial_setup_completed_at
+        assert completed_at is not None and durable.state == "complete"
+
+        hostname = session.scalar(select(StorefrontHostname).where(StorefrontHostname.organization_id == a))
+        hostname.status = "disabled"; hostname.is_canonical = False
+        result = synchronize_public_readiness(session, a); session.commit()
+        assert result.public_ready is False
+        durable = session.get(OnboardingState, a)
+        assert durable.state == "complete"
+        assert durable.initial_setup_completed_at == completed_at
 
 
 @pytest.mark.postgresql
@@ -268,19 +295,22 @@ def test_draft_publish_and_revert_are_isolated_and_append_only(platform_db):
             tuple(session.scalars(select(Category.id).where(Category.organization_id == a))),
             tuple(session.scalars(select(Product.id).where(Product.organization_id == a))),
         )
-        first = deepcopy(DEFAULT_CONFIG); first["displayName"] = "Alpha Café"; first["template"] = "modern"
+        first = deepcopy(DEFAULT_CONFIG); first["displayName"] = "Alpha Café"; first["template"] = "modern"; first["announcement"] = {"enabled": True, "text": "Alpha weekend special"}
         workspace_a = service_a.save(first, workspace_a.revision, actor)
         published = service_a.publish(actor)
-        second = deepcopy(first); second["displayName"] = "Alpha Draft Only"; second["template"] = "minimal"
+        second = deepcopy(first); second["displayName"] = "Alpha Draft Only"; second["template"] = "minimal"; second["announcement"] = {"enabled": False, "text": "Alpha draft only"}
         service_a.save(second, workspace_a.revision, actor)
         assert session.get(DesignVersion, published.id).config["displayName"] == "Alpha Café"
         assert session.get(DesignVersion, published.id).config["template"] == "modern"
+        assert session.get(DesignVersion, published.id).config["announcement"] == {"enabled": True, "text": "Alpha weekend special"}
         assert service_a.workspace().draft_config["template"] == "minimal"
+        assert service_a.workspace().draft_config["announcement"] == {"enabled": False, "text": "Alpha draft only"}
         assert commerce_before == (
             tuple(session.scalars(select(Category.id).where(Category.organization_id == a))),
             tuple(session.scalars(select(Product.id).where(Product.organization_id == a))),
         )
         service_b = DesignService(session, context(b, "beta")); workspace_b = service_b.workspace(); session.commit()
+        assert service_b.workspace().draft_config["announcement"] == {"enabled": False, "text": ""}
         with pytest.raises(DesignValidationError): service_b.revert(published.id, actor)
         reverted = service_a.revert(published.id, actor)
         assert reverted.id != published.id and reverted.source_version_id == published.id
@@ -349,6 +379,12 @@ def test_platform_provisioning_is_explicit_idempotent_and_not_public(platform_db
         assert created["publicReady"] is False and created["status"] == "onboarding"
         onboarding=session.get(OnboardingState,UUID(created["id"]))
         assert onboarding.public_ready is False
+        membership=session.scalar(select(Membership).where(Membership.organization_id==UUID(created["id"])))
+        acquisition=session.scalar(select(MerchantAcquisition).where(MerchantAcquisition.organization_id==UUID(created["id"])))
+        activation=session.scalar(select(MerchantActivation).where(MerchantActivation.organization_id==UUID(created["id"])))
+        assert membership.status == "invited"
+        assert acquisition.source == "platform" and acquisition.status == "activation_pending"
+        assert activation.membership_id == membership.id and activation.status == "pending"
         with pytest.raises(HTTPException) as duplicate:
             provision_organization(ProvisionOrganizationInput(slug=created["slug"],display_name="Duplicate",owner_email=owner.primary_email),principal,session)
         assert duplicate.value.status_code == 409
@@ -390,7 +426,7 @@ def test_onboarding_checklist_cannot_override_server_readiness(platform_db):
 def test_local_media_storage_keys_are_tenant_and_asset_scoped(tmp_path, monkeypatch):
     monkeypatch.setenv("JDS_LOCAL_MEDIA_ROOT", str(tmp_path))
     tenant_a, tenant_b, asset = uuid4(), uuid4(), uuid4()
-    image = b"\x89PNG\r\n\x1a\nlocal-test-image"
+    image = tenant_icon_png(192,"#112233","#abcdef")
     key_a, checksum_a = persist_local_image(tenant_a, asset, image, "image/png")
     key_b, checksum_b = persist_local_image(tenant_b, asset, image, "image/png")
     assert key_a != key_b and key_a.startswith(f"{tenant_a}/") and key_b.startswith(f"{tenant_b}/")
@@ -408,6 +444,25 @@ def test_tenant_pwa_icons_and_launch_qr_are_tenant_specific():
     assert launch_qr_svg("https://alpha.example") != launch_qr_svg(
         "https://beta.example"
     )
+
+
+def test_uploaded_app_icon_is_resized_without_mutating_original(tmp_path):
+    original=tenant_icon_png(192,"#112233","#abcdef");path=tmp_path/"icon.png";path.write_bytes(original)
+    centered=tenant_media_icon_png(path,512,"#ffffff",{"x":50,"y":50,"zoom":1})
+    shifted=tenant_media_icon_png(path,512,"#ffffff",{"x":15,"y":80,"zoom":1.4})
+    assert centered.startswith(b"\x89PNG") and shifted.startswith(b"\x89PNG") and centered!=shifted
+    assert path.read_bytes()==original
+
+
+def test_media_app_icon_uses_literal_center_crop_at_192_and_512(tmp_path):
+    source=Image.new("RGB",(1000,1000),"white");draw=ImageDraw.Draw(source);draw.ellipse((50,50,950,950),fill="red",outline="black",width=20)
+    path=tmp_path/"circle.png";source.save(path)
+    badly_cropped=[Image.open(BytesIO(tenant_media_icon_png(path,size,"#ffffff",{"x":50,"y":50,"zoom":1}))) for size in (192,512)]
+    fitted=[Image.open(BytesIO(tenant_media_icon_png(path,size,"#ffffff",{"x":50,"y":50,"zoom":.7}))) for size in (192,512)]
+    for image in badly_cropped: assert image.getpixel((0,image.height//2))[0] > 200 and image.getpixel((0,image.height//2))[1] < 80
+    for image in fitted: assert all(channel > 235 for channel in image.getpixel((0,image.height//2)))
+    for x,y in ((.1,.5),(.5,.5),(.9,.5)):
+        assert all(abs(a-b)<=4 for a,b in zip(badly_cropped[0].getpixel((round(191*x),round(191*y))),badly_cropped[1].getpixel((round(511*x),round(511*y)))))
 
 
 @pytest.mark.postgresql
@@ -607,9 +662,14 @@ def test_active_draft_media_reference_prevents_archive_and_is_tenant_bound(platf
         media=MediaAsset(organization_id=a,storage_key="brand/draft.webp",media_type="image/webp",byte_size=100,checksum="d"*64)
         session.add(media);session.commit()
         service=DesignService(session,context(a,"alpha")); workspace=service.workspace();session.commit()
-        config=deepcopy(DEFAULT_CONFIG);config["logoMediaId"]=str(media.id)
+        config=deepcopy(DEFAULT_CONFIG);config["logoMediaId"]=str(media.id);config["hero"]={"mode":"image","mediaId":str(media.id)};config["appIconMediaId"]=str(media.id);config["branding"]={"showLogo":False,"showHero":False,"headerMode":"tagline"};config["heroContent"]="cta";config["imagePositions"]={"logo":{"x":20,"y":50,"zoom":1},"hero":{"x":70,"y":30,"zoom":1.5},"appIcon":{"x":50,"y":60,"zoom":1.2}}
         service.save(config,workspace.revision,actor)
-        assert session.scalar(select(DesignMediaReference.id).where(DesignMediaReference.organization_id==a,DesignMediaReference.media_asset_id==media.id))
+        references=session.scalars(select(DesignMediaReference).where(DesignMediaReference.organization_id==a,DesignMediaReference.media_asset_id==media.id)).all()
+        assert {item.slot for item in references}=={"logo","hero","appIcon"}
+        assert service.workspace().draft_config["imagePositions"]["logo"]!=service.workspace().draft_config["imagePositions"]["hero"]
+        assert service.workspace().draft_config["branding"]=={"showLogo":False,"showHero":False,"headerMode":"tagline"}
+        assert service.workspace().draft_config["heroContent"]=="cta"
+        assert service.workspace().draft_config["appIconMediaId"]==str(media.id)
         with pytest.raises(HTTPException) as used: archive_media(media.id,AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="a@example.com",display_name="A",role="owner",permissions=frozenset(),assurance_level="password"),context(a,"alpha"),session)
         assert used.value.status_code == 409
         with pytest.raises(HTTPException) as foreign: archive_media(media.id,AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=b,application_id=uuid4(),session_id=uuid4(),email="b@example.com",display_name="B",role="owner",permissions=frozenset(),assurance_level="password"),context(b,"beta"),session)

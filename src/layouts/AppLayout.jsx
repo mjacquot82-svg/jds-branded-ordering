@@ -3,6 +3,7 @@ import { Home, Search, ShoppingBag, UserRound } from "lucide-react";
 import { useCustomerAuth } from "../auth/CustomerAuthContext.jsx";
 import { useTenant } from "../tenant/TenantContext.jsx";
 import { getLayoutDefinition } from "../design/layoutDefinitions.js";
+import HeaderBrandingIdentity from "../design/HeaderBrandingIdentity.jsx";
 
 function customerLinks(layout) { return [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -10,7 +11,7 @@ function customerLinks(layout) { return [
   { to: "/cart", label: "Cart", icon: ShoppingBag },
 ]; }
 
-const operationalPathPrefixes = ["/admin", "/owner", "/staff", "/setup", "/kitchen"];
+const operationalPathPrefixes = ["/admin", "/owner", "/staff", "/setup", "/activate", "/kitchen"];
 
 export function isCustomerFacingPath(pathname) {
   return !operationalPathPrefixes.some(
@@ -23,7 +24,7 @@ export default function AppLayout() {
   const tenant = useTenant();
   const { pathname } = useLocation();
   const showCustomerFooter = isCustomerFacingPath(pathname);
-  const setupWizard = pathname === "/setup" || pathname.startsWith("/setup/");
+  const setupWizard = pathname === "/setup" || pathname.startsWith("/setup/") || pathname === "/activate";
   const storefrontLayout = getLayoutDefinition(tenant.value?.design?.template);
   const primaryLinks = [
     ...customerLinks(storefrontLayout),
@@ -34,7 +35,7 @@ export default function AppLayout() {
     },
   ];
 
-  if (setupWizard) return <div className="app-shell setup-app-shell"><main><Outlet /></main></div>;
+  if (setupWizard) return <div className="app-shell setup-app-shell"><main className="setup-shell-root"><Outlet /></main></div>;
 
   return (
     <div className={`app-shell storefront-layout-${storefrontLayout.id} navigation-${storefrontLayout.navigation}`}>
@@ -49,7 +50,7 @@ export default function AppLayout() {
       ) : null}
       <header className="site-header">
         <div className="nav-container customer-nav-container">
-          <NavLink className="storefront-header-brand" to="/">{tenant.value?.design?.displayName || tenant.value?.business?.displayName}</NavLink>
+          <NavLink className="storefront-header-brand" to="/"><HeaderBrandingIdentity config={tenant.value.design} layout={storefrontLayout} logoUrl={tenant.value.design.logoMediaId?`/api/v1/storefront/media/${tenant.value.design.logoMediaId}`:null}/></NavLink>
           <nav className="desktop-nav" aria-label="Desktop ordering navigation">
             {primaryLinks.map((link) => {
               const Icon = link.icon;

@@ -15,6 +15,7 @@ const wizard = readFileSync(new URL("../../src/setup/SetupWizard.jsx", import.me
 const setupGate = readFileSync(new URL("../../src/auth/RequireSetup.jsx", import.meta.url), "utf8");
 const ownerGate = readFileSync(new URL("../../src/auth/RequireOwner.jsx", import.meta.url), "utf8");
 const layout = readFileSync(new URL("../../src/layouts/AppLayout.jsx", import.meta.url), "utf8");
+const activation = readFileSync(new URL("../../src/admin/MerchantActivationPage.jsx", import.meta.url), "utf8");
 
 test("first login enters app building only for a server-reported unlaunched business", () => {
   assert.equal(ownerEntryPath({ role:"owner", app_launched: false }), "/setup/welcome");
@@ -52,6 +53,15 @@ test("full-screen wizard begins with Welcome and saves server-backed position", 
   assert.match(wizard, /LaunchPage setupMode/);
 });
 
+test("new merchant activation is a full-screen account-access step before the builder", () => {
+  assert.match(app, /path="activate" element=\{<MerchantActivationPage \/>\}/);
+  assert.match(activation, /Ready to build your ordering app/);
+  assert.match(activation, /Build my app/);
+  assert.match(activation, /history\?\.replaceState/);
+  assert.match(activation, /ownerEntryPath\(next\)/);
+  assert.match(layout, /pathname === "\/activate"/);
+});
+
 test("guided Design Studio starts with visual app layouts and keeps a live phone preview", () => {
   assert.match(studio, /Let’s build your ordering app/);
   assert.match(studio, /Choose your app layout/);
@@ -68,7 +78,8 @@ test("later stages compose existing menu, ordering, payment, preview, and launch
   assert.match(wizard, /Payment connection is simulated in this review environment/);
   assert.match(preview, /Preview only — customers can’t order here/);
   assert.match(preview, /Add at least one menu item/);
-  assert.match(launch, /publishDesign/);
+  assert.match(launch, /launchMerchant/);
+  assert.match(launch, /initialSetupCompletedAt/);
   assert.match(launch, /Everything here is checked against your saved app/);
 });
 

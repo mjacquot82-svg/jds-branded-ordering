@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -162,6 +162,47 @@ class OwnerInvitation(Timestamped, Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MerchantAcquisition(Timestamped, Base):
+    """Provider-neutral, server-authoritative origin of a merchant tenant."""
+
+    __tablename__ = "merchant_acquisitions"
+    __table_args__ = (
+        UniqueConstraint("organization_id", name="uq_merchant_acquisitions_organization"),
+        CheckConstraint("status IN ('provisioned','activation_pending','activated','revoked')", name="ck_merchant_acquisitions_status"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(50), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="provisioned", server_default="provisioned")
+    external_installation_reference: Mapped[str | None] = mapped_column(String(240))
+    verified_merchant_reference: Mapped[str | None] = mapped_column(String(240))
+    owner_contact_hint: Mapped[str | None] = mapped_column(String(320))
+    requested_plan_key: Mapped[str | None] = mapped_column(String(50))
+    activation_destination: Mapped[str] = mapped_column(String(300), default="/setup/welcome", server_default="/setup/welcome")
+    provider_metadata: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    provisioned_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("jds_users.id", ondelete="SET NULL"))
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MerchantActivation(Timestamped, Base):
+    """Short-lived, single-use activation bound to an acquisition and owner membership."""
+
+    __tablename__ = "merchant_activations"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending','used','expired','revoked')", name="ck_merchant_activations_status"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    acquisition_id: Mapped[UUID] = mapped_column(ForeignKey("merchant_acquisitions.id", ondelete="CASCADE"), index=True)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    membership_id: Mapped[UUID] = mapped_column(ForeignKey("organization_memberships.id", ondelete="CASCADE"), index=True)
+    intended_user_id: Mapped[UUID] = mapped_column(ForeignKey("jds_users.id", ondelete="CASCADE"), index=True)
+    intended_email: Mapped[str] = mapped_column(String(320), index=True)
+    secret_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuthRateLimitBucket(Base):

@@ -14,12 +14,17 @@ from app.tenancy.context import TenantContext
 TEMPLATES = frozenset({"modern", "minimal", "cozy"})
 FONTS = frozenset({"modern", "classic", "friendly"})
 BUTTONS = frozenset({"rounded", "square", "pill"})
+HERO_CONTENT = frozenset({"image", "tagline", "cta", "tagline-cta"})
+HEADER_MODES = frozenset({"logo", "tagline"})
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 DEFAULT_CONFIG = {
     "template": "cozy", "displayName": "Your business", "tagline": "Order ahead",
     "colors": {"primary": "#6f7d5f", "accent": "#b98564", "background": "#f7f0e6", "surface": "#ffffff", "text": "#2f3328"},
-    "typography": "classic", "buttonStyle": "rounded", "logoMediaId": None,
+    "typography": "classic", "buttonStyle": "rounded", "logoMediaId": None, "appIconMediaId": None,
+    "branding": {"showLogo": True, "showHero": True, "headerMode": "logo"},
+    "heroContent": "image",
     "hero": {"mode": "color", "mediaId": None}, "categoryPresentation": "cards",
+    "imagePositions": {"logo": {"x": 50, "y": 50, "zoom": 1}, "hero": {"x": 50, "y": 50, "zoom": 1}, "appIcon": {"x": 50, "y": 50, "zoom": 1}},
     "productCardPresentation": "comfortable", "navigation": "tabs",
     "sections": ["hero", "announcement", "categories", "quickOrder"],
     "announcement": {"enabled": False, "text": ""},
@@ -33,10 +38,18 @@ class DesignValidationError(ValueError):
 
 def validate_design(session: Session, tenant: TenantContext, candidate: dict) -> dict:
     config = deepcopy(candidate)
+    config.setdefault("appIconMediaId", None)
+    config.setdefault("branding", deepcopy(DEFAULT_CONFIG["branding"]))
+    if isinstance(config["branding"], dict):
+        config["branding"].setdefault("headerMode", "tagline" if config["branding"].get("showLogo") is False else "logo")
+    config.setdefault("heroContent", DEFAULT_CONFIG["heroContent"])
+    config.setdefault("imagePositions", deepcopy(DEFAULT_CONFIG["imagePositions"]))
     if set(config) - set(DEFAULT_CONFIG):
         raise DesignValidationError("Unsupported design field.")
     if config.get("template") not in TEMPLATES or config.get("typography") not in FONTS or config.get("buttonStyle") not in BUTTONS:
         raise DesignValidationError("Unsupported design choice.")
+    if config.get("heroContent") not in HERO_CONTENT:
+        raise DesignValidationError("Hero content choice is invalid.")
     if not (1 <= len(str(config.get("displayName", "")).strip()) <= 80) or len(str(config.get("tagline", ""))) > 140:
         raise DesignValidationError("Business name or tagline is invalid.")
     colors = config.get("colors")
@@ -60,6 +73,15 @@ def validate_design(session: Session, tenant: TenantContext, candidate: dict) ->
     hero=config.get("hero")
     if not isinstance(hero,dict) or set(hero)!={"mode","mediaId"} or hero.get("mode") not in {"color","image"}:
         raise DesignValidationError("Hero configuration is invalid.")
+    branding=config.get("branding")
+    if not isinstance(branding,dict) or set(branding)!={"showLogo","showHero","headerMode"} or not isinstance(branding.get("showLogo"),bool) or not isinstance(branding.get("showHero"),bool) or branding.get("headerMode") not in HEADER_MODES:
+        raise DesignValidationError("Branding visibility is invalid.")
+    positions=config.get("imagePositions")
+    if not isinstance(positions,dict) or set(positions)!={"logo","hero","appIcon"}:
+        raise DesignValidationError("Image positioning is invalid.")
+    for position in positions.values():
+        if not isinstance(position,dict) or set(position)!={"x","y","zoom"} or not all(isinstance(position.get(key),(int,float)) for key in ("x","y","zoom")) or not (0<=position["x"]<=100 and 0<=position["y"]<=100 and 1<=position["zoom"]<=3):
+            raise DesignValidationError("Image positioning is invalid.")
     announcement=config.get("announcement",DEFAULT_CONFIG["announcement"])
     if not isinstance(announcement,dict) or set(announcement)!={"enabled","text"} or not isinstance(announcement.get("enabled"),bool) or not isinstance(announcement.get("text"),str) or len(announcement["text"])>180:
         raise DesignValidationError("Announcement configuration is invalid.")
@@ -67,7 +89,7 @@ def validate_design(session: Session, tenant: TenantContext, candidate: dict) ->
     pwa=config.get("pwa")
     if not isinstance(pwa,dict) or set(pwa)!=set(DEFAULT_CONFIG["pwa"]) or not (1<=len(str(pwa.get("shortName","")))<=30) or not HEX.fullmatch(str(pwa.get("themeColor",""))) or not HEX.fullmatch(str(pwa.get("backgroundColor",""))):
         raise DesignValidationError("PWA appearance is invalid.")
-    media_ids = [config.get("logoMediaId"), (config.get("hero") or {}).get("mediaId")]
+    media_ids = [config.get("logoMediaId"), (config.get("hero") or {}).get("mediaId"), config.get("appIconMediaId")]
     for raw_id in filter(None, media_ids):
         try: media_id = UUID(str(raw_id))
         except ValueError as exc: raise DesignValidationError("Media reference is invalid.") from exc
@@ -82,6 +104,7 @@ def media_slots(config: dict) -> dict[str, UUID]:
     for slot, raw_id in (
         ("logo", config.get("logoMediaId")),
         ("hero", (config.get("hero") or {}).get("mediaId")),
+        ("appIcon", config.get("appIconMediaId")),
     ):
         if raw_id:
             result[slot] = UUID(str(raw_id))

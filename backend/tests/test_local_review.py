@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -9,9 +10,9 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from app.jds_auth.config import AuthSettings
-from app.jds_auth.models import Membership, Organization
+from app.jds_auth.models import Membership, MerchantActivation, Organization
 from app.jds_auth.provider import DevelopmentIdentityProvider, InvalidCredentialsError, SupabaseIdentityProvider
-from app.local_review_seed import NEW_MERCHANT_RESET_CONFIRMATION, assert_safe_local_review, seed_local_review
+from app.local_review_seed import NEW_MERCHANT_ACTIVATION_SECRET, NEW_MERCHANT_RESET_CONFIRMATION, assert_safe_local_review, seed_local_review
 from app.main import create_app
 from app.platform.models import DesignVersion, DesignWorkspace, OnboardingState
 from tests.test_migrations import make_alembic_config
@@ -187,11 +188,8 @@ async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped
         login = await client.post("/api/v1/owner/auth/login", headers=proxy_headers, json={"email": "owner@local.jds.test", "password": "local-review-password"})
         assert login.status_code == 200
         organizations = await client.get("/api/v1/owner/auth/organizations")
-        assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe", "new-merchant-demo"}
+        assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe"}
         assert login.json()["app_launched"] is True
-        new_merchant = next(item for item in organizations.json() if item["organization_slug"] == "new-merchant-demo")
-        assert new_merchant["app_launched"] is False
-        assert new_merchant["onboarding_current_step"] == "welcome"
         target = next(item for item in organizations.json() if item["organization_slug"] == "second-street-cafe")
         missing_csrf = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers=proxy_headers)
         assert missing_csrf.status_code == 403
@@ -199,11 +197,35 @@ async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped
         switched = await client.post(f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select', headers={**proxy_headers, "X-CSRF-Token": login.json()["csrf_token"]})
         assert switched.status_code == 200
         assert switched.json()["organization_id"] == target["organization_id"]
-        switched_new = await client.post(f'/api/v1/owner/auth/organizations/{new_merchant["membership_id"]}/select', headers={**proxy_headers, "X-CSRF-Token": switched.json()["csrf_token"]})
-        assert switched_new.status_code == 200
-        assert switched_new.json()["app_launched"] is False
-        assert switched_new.json()["onboarding_current_step"] == "welcome"
-        forbidden = await client.post(f'/api/v1/owner/auth/organizations/{uuid4()}/select', headers={**proxy_headers, "X-CSRF-Token": switched_new.json()["csrf_token"]})
+        with Session(engine) as expiry_session, expiry_session.begin():
+            activation_row = expiry_session.scalar(select(MerchantActivation).where(MerchantActivation.status == "pending"))
+            activation_row.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        expired = await client.post("/api/v1/owner/auth/activation/inspect", headers=proxy_headers, json={"activation_secret": NEW_MERCHANT_ACTIVATION_SECRET})
+        assert expired.status_code == 400
+        with Session(engine) as expiry_session, expiry_session.begin():
+            activation_row = expiry_session.scalar(select(MerchantActivation).where(MerchantActivation.status == "pending"))
+            activation_row.expires_at = datetime.now(timezone.utc) + timedelta(days=1)
+        inspected = await client.post("/api/v1/owner/auth/activation/inspect", headers=proxy_headers, json={"activation_secret": NEW_MERCHANT_ACTIVATION_SECRET})
+        assert inspected.status_code == 200
+        assert inspected.json()["business_name"] == "New Merchant Demo — TEST"
+        client_tenant = await client.post("/api/v1/owner/auth/activation/inspect", headers={**proxy_headers,"X-Organization-Id":str(uuid4())}, json={"activation_secret": NEW_MERCHANT_ACTIVATION_SECRET})
+        assert client_tenant.status_code == 403
+        wrong_owner = await client.post("/api/v1/owner/auth/activation/complete", headers=proxy_headers, json={"activation_secret": NEW_MERCHANT_ACTIVATION_SECRET, "email":"attacker@local.jds.test", "password":"local-review-password"})
+        assert wrong_owner.status_code == 400
+        activated = await client.post("/api/v1/owner/auth/activation/complete", headers=proxy_headers, json={"activation_secret": NEW_MERCHANT_ACTIVATION_SECRET, "email":"owner@local.jds.test", "password":"local-review-password"})
+        assert activated.status_code == 200
+        assert activated.json()["app_launched"] is False
+        assert activated.json()["onboarding_current_step"] == "welcome"
+        assert activated.json()["organization_id"] not in {login.json()["organization_id"], switched.json()["organization_id"]}
+        reused = await client.post("/api/v1/owner/auth/activation/complete", headers=proxy_headers, json={"activation_secret": NEW_MERCHANT_ACTIVATION_SECRET, "email":"owner@local.jds.test", "password":"local-review-password"})
+        assert reused.status_code == 400
+        post_activation_organizations = await client.get("/api/v1/owner/auth/organizations")
+        assert {item["organization_slug"] for item in post_activation_organizations.json()} == {"the-guest-house", "second-street-cafe", "new-merchant-demo"}
+        next_login = await client.post("/api/v1/owner/auth/login", headers=proxy_headers, json={"email":"owner@local.jds.test","password":"local-review-password"})
+        assert next_login.status_code == 200
+        assert next_login.json()["organization_id"] == activated.json()["organization_id"]
+        assert next_login.json()["app_launched"] is False
+        forbidden = await client.post(f'/api/v1/owner/auth/organizations/{uuid4()}/select', headers={**proxy_headers, "X-CSRF-Token": activated.json()["csrf_token"]})
         assert forbidden.status_code == 403
 
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as public:

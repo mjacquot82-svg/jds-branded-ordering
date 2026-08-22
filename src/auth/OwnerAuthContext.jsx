@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useRef, useState } from "react";
-import { fetchAuthorizedOrganizations, fetchOwnerSession, loginOwner, loginStaff, logoutOwner, selectAuthorizedOrganization } from "../services/ownerAuthApi.js";
+import { completeMerchantActivation, fetchAuthorizedOrganizations, fetchOwnerSession, loginOwner, loginStaff, logoutOwner, selectAuthorizedOrganization } from "../services/ownerAuthApi.js";
 import { fetchPlatformCapabilities } from "../services/designStudioApi.js";
 import { ownerEntryPath } from "./ownerAuthRouting.js";
 
@@ -51,6 +51,14 @@ export function OwnerAuthProvider({ children }) {
     return nextSession;
   }, []);
 
+  const activate = useCallback(async (activationSecret, email, password) => {
+    const nextSession = await completeMerchantActivation(activationSecret, email, password);
+    setSession({ ...nextSession, platform_capabilities: [] });
+    setStatus("authenticated");
+    await loadBusinesses();
+    return nextSession;
+  }, [loadBusinesses]);
+
   const logout = useCallback(async () => {
     const csrfToken = session?.csrf_token;
     try {
@@ -72,7 +80,7 @@ export function OwnerAuthProvider({ children }) {
   }, [loadBusinesses,session]);
 
   return (
-    <OwnerAuthContext.Provider value={{ businesses, businessError, businessStatus, login, staffLogin, logout, refreshSession, selectBusiness, session, status }}>
+    <OwnerAuthContext.Provider value={{ activate, businesses, businessError, businessStatus, login, staffLogin, logout, refreshSession, selectBusiness, session, status }}>
       {children}
     </OwnerAuthContext.Provider>
   );

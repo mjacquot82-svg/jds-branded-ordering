@@ -16,6 +16,7 @@ from app.jds_auth.provider import InvalidCredentialsError, StagingReviewIdentity
 from app.main import create_app
 from app.platform.models import DesignVersion
 from app.platform.media import LocalMediaStorage
+from app.platform.assets import tenant_icon_png
 from app.staging import STAGING_OWNER_EMAIL, assert_staging_seed_safe, validate_staging_media_root
 from app.staging_review_seed import seed_staging_review
 from tests.test_migrations import make_alembic_config
@@ -103,8 +104,9 @@ def test_staging_seed_and_media_guards_fail_closed(monkeypatch, tmp_path) -> Non
         storage = LocalMediaStorage(validated)
         organization_id = uuid4()
         media_id = uuid4()
-        storage_key, _ = storage.put(organization_id, media_id, b"\x89PNG\r\n\x1a\nsynthetic", "image/png")
-        assert LocalMediaStorage(validated).local_path(storage_key).read_bytes().endswith(b"synthetic")
+        image=tenant_icon_png(192,"#112233","#abcdef")
+        storage_key, _ = storage.put(organization_id, media_id, image, "image/png")
+        assert LocalMediaStorage(validated).local_path(storage_key).read_bytes()==image
     finally:
         shutil.rmtree(safe_root, ignore_errors=True)
 

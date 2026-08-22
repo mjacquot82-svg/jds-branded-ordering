@@ -24,6 +24,8 @@ import LoyaltyCard from "../components/LoyaltyCard.jsx";
 import { readTenantLocalStorage, writeTenantLocalStorage } from "../services/tenantBrowserState.js";
 import { useTenant } from "../tenant/TenantContext.jsx";
 import { getLayoutDefinition, layoutShowsHero, layoutShowsHomeQuickOrder } from "../design/layoutDefinitions.js";
+import PositionedSlotImage from "../design/PositionedSlotImage.jsx";
+import { heroContentVisibility } from "../design/imageSlotRendering.js";
 
 function formatPrice(price) {
   return new Intl.NumberFormat("en-CA", {
@@ -51,8 +53,10 @@ export default function HomePage() {
   const { value: tenant } = useTenant();
   const layout = getLayoutDefinition(tenant.design?.template);
   const configuredSections = tenant.design?.sections || ["hero","announcement","categories","quickOrder"];
-  const showHero = layoutShowsHero(layout.id, configuredSections);
+  const showHero = layoutShowsHero(layout.id, configuredSections, tenant.design?.branding);
   const showHomeQuickOrder = layoutShowsHomeQuickOrder(layout.id, configuredSections);
+  const heroPosition=tenant.design?.imagePositions?.hero||{x:50,y:50,zoom:1};const heroMediaId=tenant.design?.hero?.mediaId;
+  const heroContent=heroContentVisibility(tenant.design?.heroContent);
   const { session } = useCustomerAuth();
   const [quickOrderPersonalization, setQuickOrderPersonalization] = useState({
     productIds: [],
@@ -172,10 +176,9 @@ export default function HomePage() {
 
   return (
     <section className={`home-page ordering-page customer-home-layout customer-home-${layout.id}`}>
-      {showHero ? <div className={`welcome-panel app-welcome-panel hero-${layout.hero}`}>
-        {tenant.tenant.slug === "the-guest-house" ? <img className="ladels-hero-logo" src="/cafe.png" alt="Ladel's Wellness Café" /> : <div className="tenant-hero-wordmark"><strong>{tenant.design.displayName}</strong><span>{tenant.design.tagline}</span></div>}
-        <Link className="layout-hero-order-action" to="/menu">{layout.id === "modern" ? "Start an order" : "Explore our menu"}</Link>
-      </div> : <header className="minimal-home-intro"><span>{tenant.design.displayName}</span><h1>{tenant.design.tagline}</h1><Link to="/menu">Browse menu →</Link></header>}
+      {showHero ? <section className={`customer-hero-composition customer-hero-${layout.id}`}><div className={`welcome-panel app-welcome-panel hero-${layout.hero}${heroContent.cta&&layout.id==="modern"?" has-hero-content":""}`} style={{aspectRatio:layout.heroSlot.aspectRatio}}>{heroMediaId?<PositionedSlotImage className="layout-hero-image" src={`/api/v1/storefront/media/${heroMediaId}`} position={heroPosition}/>:null}
+        {heroContent.cta&&layout.id==="modern"?<Link className="layout-hero-order-action" to="/menu">Start an order</Link>:null}
+      </div>{heroContent.cta&&layout.id==="cozy"?<Link className="layout-hero-order-action cozy-hero-order-action" to="/menu">Explore our menu</Link>:null}</section> : <header className="minimal-home-intro"><h1>Order simply.</h1><Link to="/menu">Browse menu →</Link></header>}
 
       <div className="home-order-status" aria-live="polite">
         <div>

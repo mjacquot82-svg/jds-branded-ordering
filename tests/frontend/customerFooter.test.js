@@ -19,7 +19,7 @@ test("customer shell displays the approved JDS footer and URL", () => {
 test("customer footer excludes every operational portal route family", () => {
   assert.match(
     layout,
-    /const operationalPathPrefixes = \["\/admin", "\/owner", "\/staff", "\/setup", "\/kitchen"\]/
+    /const operationalPathPrefixes = \["\/admin", "\/owner", "\/staff", "\/setup", "\/activate", "\/kitchen"\]/
   );
   assert.match(layout, /pathname === prefix \|\| pathname\.startsWith\(`\$\{prefix\}\/`\)/);
   assert.match(layout, /\{showCustomerFooter \? \([\s\S]*?<footer className="customer-footer">/);

@@ -15,8 +15,9 @@ from app.catalog.seed import seed_catalog
 from app.clover.models import CloverInstallation
 from app.db.engine import create_database_engine
 from app.jds_auth.foundation import ensure_foundation
-from app.jds_auth.models import ExternalIdentity, JdsUser, Membership, Organization, Role
+from app.jds_auth.models import ExternalIdentity, JdsUser, Membership, MerchantAcquisition, MerchantActivation, Organization, OwnerSession, Role
 from app.jds_auth.provider import DevelopmentIdentityProvider
+from app.jds_auth.security import hash_secret
 from app.platform.design import DEFAULT_CONFIG, DesignService
 from app.orders.models import Order
 from app.platform.models import BillingPlan, BusinessProfile, DesignMediaReference, DesignPublication, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OrganizationSubscription, PlatformGrant, StorefrontHostname
@@ -27,6 +28,7 @@ LOCAL_OWNER_EMAIL = "owner@local.jds.test"
 SECOND_CAFE_SLUG = "second-street-cafe"
 NEW_MERCHANT_SLUG = "new-merchant-demo"
 NEW_MERCHANT_RESET_CONFIRMATION = "reset-synthetic-new-merchant"
+NEW_MERCHANT_ACTIVATION_SECRET = "build-new-merchant-demo-review-app-2026"
 
 
 def assert_safe_local_review(database_url: str) -> None:
@@ -96,7 +98,7 @@ def _seed_new_merchant(session: Session, organization: Organization, owner: JdsU
     if existing_workspace is None:
         workspace.draft_config = {
             **workspace.draft_config,
-            "displayName": "New Merchant Demo",
+            "displayName": "Your business",
             "tagline": "Your new ordering app starts here",
         }
 
@@ -107,7 +109,7 @@ def _reset_new_merchant(session: Session, organization: Organization) -> None:
         raise RuntimeError("Review reset refuses every tenant except New Merchant Demo.")
     if session.scalar(select(Order.id).where(Order.organization_id == organization.id).limit(1)):
         raise RuntimeError("Review reset refuses a New Merchant Demo that contains orders.")
-    organization.lifecycle_status = "active"
+    organization.lifecycle_status = "onboarding"
     workspace = session.get(DesignWorkspace, organization.id)
     if workspace is not None:
         workspace.published_version_id = None
@@ -132,13 +134,50 @@ def _reset_new_merchant(session: Session, organization: Organization) -> None:
         onboarding.state = "in_progress"; onboarding.current_step = "welcome"
         onboarding.completed_steps = []; onboarding.public_ready = False
         onboarding.revision += 1
+        onboarding.initial_setup_completed_at = None
+        onboarding.initial_launch_source = None
+        onboarding.initial_launch_by_user_id = None
     if workspace is not None:
         workspace.draft_config = {
             **DEFAULT_CONFIG,
-            "displayName":"New Merchant Demo",
-            "tagline":"Your new ordering app starts here",
+            "displayName":"Your business",
+            "tagline":"Order ahead",
         }
         workspace.revision += 1
+    acquisition = session.scalar(select(MerchantAcquisition).where(MerchantAcquisition.organization_id == organization.id))
+    if acquisition is not None:
+        acquisition.status = "activation_pending"; acquisition.activated_at = None
+        session.execute(delete(MerchantActivation).where(MerchantActivation.acquisition_id == acquisition.id))
+    for membership in session.scalars(select(Membership).where(Membership.organization_id == organization.id)):
+        membership.status = "invited"; membership.joined_at = None
+        for owner_session in session.scalars(select(OwnerSession).where(OwnerSession.membership_id == membership.id, OwnerSession.revoked_at.is_(None))):
+            owner_session.revoked_at = datetime.now(timezone.utc); owner_session.revocation_reason = "review_lifecycle_reset"
+
+
+def _ensure_new_merchant_acquisition(session: Session, organization: Organization, owner: JdsUser, *, staging: bool = False) -> None:
+    source = "staging_review" if staging else "local_review"
+    acquisition = session.scalar(select(MerchantAcquisition).where(MerchantAcquisition.organization_id == organization.id))
+    if acquisition is None:
+        acquisition = MerchantAcquisition(
+            organization_id=organization.id, source=source, status="activation_pending",
+            owner_contact_hint=owner.primary_email, provider_metadata={"synthetic": True},
+        )
+        session.add(acquisition); session.flush()
+    membership = session.scalar(select(Membership).where(Membership.organization_id == organization.id, Membership.user_id == owner.id))
+    if membership is None:
+        raise RuntimeError("Synthetic acquisition requires its intended owner membership.")
+    pending = session.scalar(select(MerchantActivation).where(MerchantActivation.acquisition_id == acquisition.id, MerchantActivation.status == "pending"))
+    if acquisition.status != "activated" and pending is None:
+        pepper = os.getenv("JDS_AUTH_SESSION_PEPPER", "")
+        if len(pepper) < 32:
+            raise RuntimeError("Synthetic acquisition requires the configured session pepper.")
+        session.add(MerchantActivation(
+            acquisition_id=acquisition.id, organization_id=organization.id,
+            membership_id=membership.id, intended_user_id=owner.id, intended_email=owner.primary_email,
+            secret_hash=hash_secret(NEW_MERCHANT_ACTIVATION_SECRET, pepper),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=3650),
+        ))
+        membership.status = "invited"; membership.joined_at = None
 
 
 def _seed_hours(session: Session, organization_id, *, opens: time, closes: time) -> None:
@@ -293,6 +332,7 @@ def seed_local_review(database_url: str) -> None:
             _seed_tenant_details(session, ladels, owner, second=False)
             _seed_tenant_details(session, second, owner, second=True)
             _seed_new_merchant(session, new_merchant, owner)
+            _ensure_new_merchant_acquisition(session, new_merchant, owner)
             session.commit()
         with Session(engine) as session, session.begin():
             for organization in session.scalars(select(Organization).where(Organization.slug.in_(("the-guest-house", SECOND_CAFE_SLUG)))):
@@ -301,6 +341,8 @@ def seed_local_review(database_url: str) -> None:
                 if onboarding is None:
                     onboarding = OnboardingState(organization_id=organization.id); session.add(onboarding)
                 onboarding.completed_steps = onboarding_completed_steps(result); onboarding.current_step = "complete"; onboarding.state = "complete"; onboarding.public_ready = result.public_ready
+                onboarding.initial_setup_completed_at = onboarding.initial_setup_completed_at or datetime.now(timezone.utc)
+                onboarding.initial_launch_source = onboarding.initial_launch_source or "synthetic_seed"
     finally:
         engine.dispose()
 

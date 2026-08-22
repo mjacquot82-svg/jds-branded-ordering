@@ -14,7 +14,7 @@ from app.db.engine import create_database_engine
 from app.jds_auth.foundation import ensure_foundation
 from app.jds_auth.models import ExternalIdentity, JdsUser, Membership, Organization, Role
 from app.jds_auth.provider import StagingReviewIdentityProvider
-from app.local_review_seed import NEW_MERCHANT_RESET_CONFIRMATION, NEW_MERCHANT_SLUG, SECOND_CAFE_SLUG, _reset_new_merchant, _seed_new_merchant, _seed_second_catalog, _seed_tenant_details
+from app.local_review_seed import NEW_MERCHANT_RESET_CONFIRMATION, NEW_MERCHANT_SLUG, SECOND_CAFE_SLUG, _ensure_new_merchant_acquisition, _reset_new_merchant, _seed_new_merchant, _seed_second_catalog, _seed_tenant_details
 from app.platform.models import BillingPlan, OnboardingState, PlatformGrant
 from app.platform.readiness import onboarding_completed_steps, synchronize_public_readiness
 from app.staging import STAGING_OWNER_EMAIL, assert_staging_seed_safe
@@ -115,6 +115,7 @@ def seed_staging_review(database_url: str) -> None:
             _seed_tenant_details(session, ladels, owner, second=False, staging=True, staging_frontend_host=frontend_host)
             _seed_tenant_details(session, second, owner, second=True, staging=True, staging_frontend_host=frontend_host)
             _seed_new_merchant(session, new_merchant, owner, staging=True)
+            _ensure_new_merchant_acquisition(session, new_merchant, owner, staging=True)
             session.commit()
         with Session(engine) as session, session.begin():
             organizations = session.scalars(select(Organization).where(Organization.slug.in_(("the-guest-house", SECOND_CAFE_SLUG))))
@@ -128,6 +129,8 @@ def seed_staging_review(database_url: str) -> None:
                 onboarding.current_step = "complete"
                 onboarding.state = "complete"
                 onboarding.public_ready = result.public_ready
+                onboarding.initial_setup_completed_at = onboarding.initial_setup_completed_at or datetime.now(timezone.utc)
+                onboarding.initial_launch_source = onboarding.initial_launch_source or "synthetic_seed"
     finally:
         engine.dispose()
 

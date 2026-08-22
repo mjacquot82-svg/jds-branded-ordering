@@ -28,6 +28,7 @@ import CustomersPage from "./admin/CustomersPage.jsx";
 import LaunchPage from "./admin/LaunchPage.jsx";
 import RequireSetup from "./auth/RequireSetup.jsx";
 import SetupWizard from "./setup/SetupWizard.jsx";
+import MerchantActivationPage from "./admin/MerchantActivationPage.jsx";
 
 function OwnerHome() {
   return <AdminDashboard />;
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="account/reset-password" element={<CustomerResetPage />} />
         <Route path="confirmation" element={<ConfirmationPage />} />
         <Route element={<OwnerAuthBoundary />}>
+          <Route path="activate" element={<MerchantActivationPage />} />
           <Route path="owner/login" element={<OwnerLoginPage />} />
           <Route path="staff" element={<StaffLoginPage />} />
           <Route element={<RequireSetup />}>
