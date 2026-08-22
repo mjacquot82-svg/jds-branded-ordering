@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import datetime, timezone
 import re
+from uuid import UUID
 
 from app.catalog.models import (
     Category,
@@ -22,11 +23,14 @@ from app.catalog.schemas import (
     ProductVariantResponse,
     OwnerCatalogResponse,
     OwnerCategoryResponse,
+    OwnerCategoryOrderWrite,
+    OwnerCategoryWrite,
     OwnerModifierGroupResponse,
     OwnerModifierGroupWrite,
     OwnerModifierOptionResponse,
     OwnerModifierOptionWrite,
     OwnerProductResponse,
+    OwnerProductOrderWrite,
     OwnerProductWrite,
     OwnerVariantResponse,
 )
@@ -127,6 +131,56 @@ class CatalogService:
             ) for item in groups],
             products=[self._owner_product_response(item) for item in self._repository.list_products()],
         )
+
+    def create_category(self, payload: OwnerCategoryWrite) -> OwnerCategoryResponse:
+        name = payload.name.strip()
+        if not name:
+            raise ValueError("Category name is required.")
+        base = self._key_base(name, "category")
+        slug = base
+        suffix = 2
+        while self._repository.get_category_by_slug(slug):
+            slug = f"{base[:94]}-{suffix}"
+            suffix += 1
+        category = Category(
+            slug=slug, name=name, description="", is_published=payload.published,
+            sort_order=len(self._repository.list_categories()),
+        )
+        self._repository.add(category)
+        self._repository.commit()
+        return self._owner_category_response(category)
+
+    def update_category(self, category_id: int, payload: OwnerCategoryWrite) -> OwnerCategoryResponse:
+        category = self._repository.get_category(category_id)
+        if category is None:
+            raise LookupError("Category not found.")
+        name = payload.name.strip()
+        if not name:
+            raise ValueError("Category name is required.")
+        category.name = name
+        category.is_published = payload.published
+        self._repository.commit()
+        return self._owner_category_response(category)
+
+    def reorder_categories(self, payload: OwnerCategoryOrderWrite) -> list[OwnerCategoryResponse]:
+        categories = list(self._repository.list_categories())
+        category_ids = payload.category_ids
+        if len(category_ids) != len(set(category_ids)) or set(category_ids) != {item.id for item in categories}:
+            raise ValueError("Category order must include every category exactly once.")
+        by_id = {item.id: item for item in categories}
+        for index, category_id in enumerate(category_ids):
+            by_id[category_id].sort_order = index
+        self._repository.commit()
+        return [self._owner_category_response(by_id[item]) for item in category_ids]
+
+    def delete_category(self, category_id: int) -> None:
+        category = self._repository.get_category(category_id)
+        if category is None:
+            raise LookupError("Category not found.")
+        if self._repository.category_has_products(category_id):
+            raise ValueError("This category has products or order history. Move its products, or hide the category instead.")
+        self._repository.delete(category)
+        self._repository.commit()
 
     def create_modifier_group(self, payload: OwnerModifierGroupWrite) -> OwnerModifierGroupResponse:
         self._validate_group_write(payload)
@@ -238,6 +292,20 @@ class CatalogService:
         product.is_published = False
         self._repository.commit()
 
+    def reorder_products(self, payload: OwnerProductOrderWrite) -> list[OwnerProductResponse]:
+        products = list(self._repository.list_products())
+        product_ids = payload.product_ids
+        if len(product_ids) != len(set(product_ids)) or set(product_ids) != {item.id for item in products}:
+            raise ValueError("Product order must include every active product exactly once.")
+        by_id = {item.id: item for item in products}
+        category_orders: dict[int, int] = defaultdict(int)
+        for product_id in product_ids:
+            product = by_id[product_id]
+            product.sort_order = category_orders[product.category_id]
+            category_orders[product.category_id] += 1
+        self._repository.commit()
+        return [self._owner_product_response(by_id[item]) for item in product_ids]
+
     def set_product_availability(self, product_id: int, available: bool) -> OwnerProductResponse:
         product = self._repository.get_product(product_id)
         if product is None or product.archived_at is not None:
@@ -274,6 +342,14 @@ class CatalogService:
     def _validate_write(self, payload: OwnerProductWrite) -> None:
         if self._repository.get_category(payload.category_id) is None:
             raise ValueError("Category does not exist.")
+        media_prefix = "/api/v1/storefront/media/"
+        if payload.image.startswith(media_prefix):
+            try:
+                media_id = UUID(payload.image.removeprefix(media_prefix))
+            except ValueError as error:
+                raise ValueError("Product image is invalid.") from error
+            if not self._repository.media_asset_is_active(media_id):
+                raise ValueError("Choose an image from this business's media library.")
         groups = {group.id: group for group in self._repository.list_modifier_groups()}
         if len(set(payload.modifier_group_ids)) != len(payload.modifier_group_ids):
             raise ValueError("Modifier groups must be unique.")
@@ -349,6 +425,14 @@ class CatalogService:
             key = f"{base[:74]}-{suffix}"
             suffix += 1
         return key
+
+    @staticmethod
+    def _owner_category_response(category: Category) -> OwnerCategoryResponse:
+        return OwnerCategoryResponse(
+            id=str(category.id), slug=category.slug, name=category.name,
+            note=category.description or "", published=category.is_published,
+            sort_order=category.sort_order,
+        )
 
     def _owner_group_response(self, group: ModifierGroup) -> OwnerModifierGroupResponse:
         return OwnerModifierGroupResponse(

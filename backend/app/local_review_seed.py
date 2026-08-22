@@ -66,13 +66,6 @@ def _seed_new_merchant(session: Session, organization: Organization, owner: JdsU
             organization_id=organization.id, state="in_progress",
             current_step="welcome", completed_steps=[], public_ready=False,
         ))
-    if session.scalar(select(Category).where(
-        Category.organization_id == organization.id, Category.slug == "menu",
-    )) is None:
-        session.add(Category(
-            organization_id=organization.id, slug="menu", name="Menu",
-            description="Your first menu category", is_published=True, sort_order=0,
-        ))
     if session.scalar(select(StorefrontHostname).where(
         StorefrontHostname.organization_id == organization.id,
     )) is None:

@@ -82,6 +82,15 @@ class OwnerCategoryResponse(CatalogSchema):
     sort_order: int
 
 
+class OwnerCategoryWrite(CatalogSchema):
+    name: str = Field(min_length=1, max_length=200)
+    published: bool = True
+
+
+class OwnerCategoryOrderWrite(CatalogSchema):
+    category_ids: list[int] = Field(min_length=1)
+
+
 class OwnerModifierGroupResponse(CatalogSchema):
     id: str
     key: str
@@ -180,6 +189,10 @@ class OwnerProductWrite(CatalogSchema):
 
 class OwnerProductAvailabilityWrite(CatalogSchema):
     available: bool
+
+
+class OwnerProductOrderWrite(CatalogSchema):
+    product_ids: list[int] = Field(min_length=1)
 
 
 class LunchSpecialSelectionWrite(CatalogSchema):

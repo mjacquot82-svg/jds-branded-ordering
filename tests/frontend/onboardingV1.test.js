@@ -72,7 +72,7 @@ test("guided Design Studio starts with visual app layouts and keeps a live phone
 });
 
 test("later stages compose existing menu, ordering, payment, preview, and launch systems", () => {
-  assert.match(products, /Now let’s add what customers can order/);
+  assert.match(products, /Start by creating a category, then add the first item customers can order/);
   assert.match(scheduling, /Manage when customers can order and when pickups are available/);
   assert.match(wizard, /Connect Clover so customer payments flow securely/);
   assert.match(wizard, /Payment connection is simulated in this review environment/);

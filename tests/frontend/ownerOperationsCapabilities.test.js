@@ -46,5 +46,5 @@ test("Products exposes narrow Staff Lunch Special controls separately from Quick
   assert.match(page, /Set as Lunch Special/);
   assert.match(page, /Clear Lunch Special/);
   assert.match(page, /canManageSpecial \? <button/);
-  assert.match(page, /canEdit \? <section className="product-editor-panel"/);
+  assert.match(page, /canEdit && categories\.length && \(creating \|\| selectedProduct\) \? <section className="product-editor-panel"/);
 });

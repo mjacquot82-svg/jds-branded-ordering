@@ -85,6 +85,26 @@ export function updateOwnerProduct(productId, product, csrfToken, options = {}) 
   });
 }
 
+export function createOwnerCategory(category, csrfToken, options = {}) {
+  return request("/categories", { ...options, body: category, csrfToken, method: "POST" });
+}
+
+export function updateOwnerCategory(categoryId, category, csrfToken, options = {}) {
+  return request(`/categories/${encodeURIComponent(categoryId)}`, { ...options, body: category, csrfToken, method: "PUT" });
+}
+
+export function deleteOwnerCategory(categoryId, csrfToken, options = {}) {
+  return request(`/categories/${encodeURIComponent(categoryId)}`, { ...options, csrfToken, method: "DELETE" });
+}
+
+export function reorderOwnerCategories(categoryIds, csrfToken, options = {}) {
+  return request("/categories/order", { ...options, body: { category_ids: categoryIds }, csrfToken, method: "PUT" });
+}
+
+export function reorderOwnerProducts(productIds, csrfToken, options = {}) {
+  return request("/product-order", { ...options, body: { product_ids: productIds }, csrfToken, method: "PUT" });
+}
+
 export function createOwnerModifierGroup(group, csrfToken, options = {}) {
   return request("/modifier-groups", { ...options, body: group, csrfToken, method: "POST" });
 }

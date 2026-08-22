@@ -5,7 +5,7 @@ from app.api.v1.catalog import get_catalog_session
 from app.api.v1.owner_auth import csrf_principal, current_principal, require_permission
 from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.catalog.repository import CatalogRepository
-from app.catalog.schemas import LunchSpecialSelectionWrite, OwnerCatalogResponse, OwnerModifierGroupResponse, OwnerModifierGroupWrite, OwnerModifierOptionResponse, OwnerModifierOptionWrite, OwnerProductAvailabilityWrite, OwnerProductResponse, OwnerProductWrite
+from app.catalog.schemas import LunchSpecialSelectionWrite, OwnerCatalogResponse, OwnerCategoryOrderWrite, OwnerCategoryResponse, OwnerCategoryWrite, OwnerModifierGroupResponse, OwnerModifierGroupWrite, OwnerModifierOptionResponse, OwnerModifierOptionWrite, OwnerProductAvailabilityWrite, OwnerProductOrderWrite, OwnerProductResponse, OwnerProductWrite
 from app.catalog.service import CatalogService
 from app.jds_auth.service import AuthPrincipal
 from sqlalchemy.orm import Session
@@ -86,6 +86,39 @@ def read_owner_catalog(
     try:
         return service.build_owner_catalog()
     except SQLAlchemyError as error:
+        mutation_error(error)
+
+
+@router.post("/categories", response_model=OwnerCategoryResponse, status_code=201)
+def create_category(payload: OwnerCategoryWrite, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> OwnerCategoryResponse:
+    try:
+        return service.create_category(payload)
+    except (SQLAlchemyError, ValueError) as error:
+        mutation_error(error)
+
+
+@router.put("/categories/order", response_model=list[OwnerCategoryResponse])
+def reorder_categories(payload: OwnerCategoryOrderWrite, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> list[OwnerCategoryResponse]:
+    try:
+        return service.reorder_categories(payload)
+    except (SQLAlchemyError, ValueError) as error:
+        mutation_error(error)
+
+
+@router.put("/categories/{category_id}", response_model=OwnerCategoryResponse)
+def update_category(category_id: int, payload: OwnerCategoryWrite, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> OwnerCategoryResponse:
+    try:
+        return service.update_category(category_id, payload)
+    except (SQLAlchemyError, ValueError, LookupError) as error:
+        mutation_error(error)
+
+
+@router.delete("/categories/{category_id}", status_code=204)
+def delete_category(category_id: int, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> Response:
+    try:
+        service.delete_category(category_id)
+        return Response(status_code=204)
+    except (SQLAlchemyError, ValueError, LookupError) as error:
         mutation_error(error)
 
 
@@ -176,6 +209,14 @@ def archive_product(
         service.archive_product(product_id)
         return Response(status_code=204)
     except (SQLAlchemyError, LookupError) as error:
+        mutation_error(error)
+
+
+@router.put("/product-order", response_model=list[OwnerProductResponse])
+def reorder_products(payload: OwnerProductOrderWrite, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> list[OwnerProductResponse]:
+    try:
+        return service.reorder_products(payload)
+    except (SQLAlchemyError, ValueError) as error:
         mutation_error(error)
 
 

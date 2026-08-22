@@ -27,8 +27,8 @@ export const fetchLaunchKit = () => request("/owner/storefront/launch-kit");
 export const fetchEntitlements = () => request("/owner/entitlements");
 export const fetchMedia = () => request("/owner/media");
 export const archiveMedia = (mediaId, csrf) => request(`/owner/media/${mediaId}`, { method: "DELETE", headers: { "X-CSRF-Token": csrf } });
-export async function uploadMedia(file, altText, csrf) {
-  const response = await fetch("/api/v1/owner/media/upload", { method:"POST", credentials:"same-origin", headers:{"Content-Type":file.type,"X-Media-Alt":altText,"X-CSRF-Token":csrf}, body:file });
+export async function uploadMedia(file, altText, csrf, purpose = "design") {
+  const response = await fetch("/api/v1/owner/media/upload", { method:"POST", credentials:"same-origin", headers:{"Content-Type":file.type,"X-Media-Alt":altText,"X-Media-Purpose":purpose,"X-CSRF-Token":csrf}, body:file });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body?.detail || "Image upload failed.");
   return body;

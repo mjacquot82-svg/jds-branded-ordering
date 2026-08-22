@@ -26,7 +26,10 @@ export default function SetupWizard() {
   const navigate=useNavigate();
   const { businesses,businessStatus,logout,selectBusiness,session }=useOwnerAuth();
   const [progress,setProgress]=useState(null); const [message,setMessage]=useState(""); const [busy,setBusy]=useState(false);
+  const [readiness,setReadiness]=useState(null);
+  const [catalogDirty,setCatalogDirty]=useState(false);
   useEffect(()=>{fetchOnboarding().then(setProgress).catch((error)=>setMessage(error.message));},[step]);
+  useEffect(()=>{if(step==="catalog")fetchReadiness().then(setReadiness).catch((error)=>setMessage(error.message));},[step]);
   if(!setupSteps.includes(step))return <Navigate replace to="/setup/welcome"/>;
   const index=setupSteps.indexOf(step);
   const visualStep=["look","brand","preview"].includes(step);
@@ -37,10 +40,10 @@ export default function SetupWizard() {
     {step==="look"?<DesignStudioPage guided wizardStep="look" onContinue={()=>checkpoint("brand")}/>:null}
     {step==="brand"?<DesignStudioPage guided wizardStep="brand" onContinue={()=>checkpoint("business")}/>:null}
     {step==="business"?<OnboardingPage wizard onComplete={()=>checkpoint("catalog")}/>:null}
-    {step==="catalog"?<ProductsPage setupMode/>:null}
+    {step==="catalog"?<ProductsPage setupMode onCatalogChange={()=>fetchReadiness().then(setReadiness).catch((error)=>setMessage(error.message))} onDirtyChange={setCatalogDirty}/>:null}
     {step==="ordering"?<SchedulingPage setupMode/>:null}
     {step==="payments"?<PaymentSetupStep/>:null}
     {step==="preview"?<DesignPreviewPage setupMode/>:null}
     {step==="launch"?<LaunchPage setupMode/>:null}
-  </div>{step!=="launch"?<footer className="wizard-actions"><button className="secondary-button" disabled={busy} type="button" onClick={()=>checkpoint(setupSteps[index-1])}>Back</button>{!["look","brand","business"].includes(step)?<button className="primary-button" disabled={busy} type="button" onClick={()=>checkpoint(setupSteps[index+1])}>{step==="preview"?"Continue to launch":"Continue"}</button>:null}</footer>:null}{message?<p className="wizard-message" role="alert">{message}</p>:null}</main>;
+  </div>{step!=="launch"?<footer className="wizard-actions"><button className="secondary-button" disabled={busy||(step==="catalog"&&catalogDirty)} type="button" onClick={()=>checkpoint(setupSteps[index-1])}>Back</button>{!["look","brand","business"].includes(step)?<div className="wizard-continue-action">{step==="catalog"&&catalogDirty?<small>Save or cancel your product changes before leaving this step.</small>:step==="catalog"&&!readiness?.checks?.catalog?<small>Create a visible category and add at least one available product customers can order.</small>:null}<button className="primary-button" disabled={busy||(step==="catalog"&&(catalogDirty||!readiness?.checks?.catalog))} type="button" onClick={()=>checkpoint(setupSteps[index+1])}>{step==="preview"?"Continue to launch":"Continue"}</button></div>:null}</footer>:null}{message?<p className="wizard-message" role="alert">{message}</p>:null}</main>;
 }

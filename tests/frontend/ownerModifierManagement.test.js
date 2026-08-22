@@ -82,7 +82,7 @@ test("modifier catalog supports add, edit, prices, and safe disable", async () =
 
 test("product editor accurately assigns whole categories and previews their modifiers", async () => {
   const products = await source("../../src/admin/ProductsPage.jsx");
-  assert.match(products, /Choose which modifier categories are available on this product/);
+  assert.match(products, /Customer choices or add-ons/);
   assert.match(products, /modifierGroupIds\.includes\(group\.id\)/);
   assert.match(products, /group\.options\.filter\(\(item\) => item\.active\)/);
   assert.match(products, /Available on this product/);

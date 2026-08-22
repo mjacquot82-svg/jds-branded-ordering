@@ -14,6 +14,7 @@ from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.jds_auth.models import JdsApplication, JdsUser, Membership, MerchantAcquisition, Organization, Role
 from app.jds_auth.config import AuthSettings
 from app.clover.models import CloverInstallation
+from app.catalog.models import Product
 from app.jds_auth.service import AuthPrincipal
 from app.platform.assets import launch_qr_svg, tenant_icon_png, tenant_media_icon_png
 from app.platform.acquisition import AcquisitionError, AcquisitionRequest, MerchantAcquisitionService
@@ -348,11 +349,13 @@ def list_media(request: Request, tenant: TenantContext = Depends(authenticated_o
     return result
 
 @router.post("/owner/media/upload", status_code=201)
-async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session), content_type: str = Header(alias="Content-Type"), alt_text: str = Header(default="",alias="X-Media-Alt")) -> dict:
+async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session), content_type: str = Header(alias="Content-Type"), alt_text: str = Header(default="",alias="X-Media-Alt"), purpose: str = Header(default="design", alias="X-Media-Purpose")) -> dict:
     if len(alt_text) > 300: raise HTTPException(422,detail="Alternative text is too long.")
     data=await request.body(); media_id=uuid4(); item=MediaAsset(id=media_id,organization_id=tenant.organization_id,created_by_user_id=principal.user_id,storage_key="pending",media_type=content_type.split(";",1)[0].lower(),alt_text=alt_text.strip(),byte_size=len(data),checksum="0"*64)
     try:
-        width,height=image_dimensions(data);storage=media_storage(request);storage_key,checksum=storage.put(tenant.organization_id,media_id,data,item.media_type)
+        width,height=image_dimensions(data)
+        if purpose == "product" and (width < 800 or height < 800): raise MediaValidationError("Product images must be at least 800 × 800 pixels.")
+        storage=media_storage(request);storage_key,checksum=storage.put(tenant.organization_id,media_id,data,item.media_type)
     except MediaValidationError as error: raise HTTPException(422,detail=str(error)) from error
     try:
         item.storage_key=storage_key;item.checksum=checksum;session.add(item);session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.uploaded",target_type="media_asset",target_id=str(item.id),outcome="success",metadata_json={"mediaType":item.media_type,"byteSize":item.byte_size}));session.commit()
@@ -391,6 +394,8 @@ def archive_media(media_id: UUID, principal: AuthPrincipal = Depends(csrf_princi
     if item is None: raise HTTPException(404,detail="Media not found.")
     referenced=session.scalar(select(DesignMediaReference.id).where(DesignMediaReference.organization_id==tenant.organization_id,DesignMediaReference.media_asset_id==media_id).limit(1))
     if referenced is not None: raise HTTPException(409,detail="This image is used by a published design.")
+    product_reference=f"/api/v1/storefront/media/{media_id}"
+    if session.scalar(select(Product.id).where(Product.organization_id==tenant.organization_id,Product.image_reference==product_reference).limit(1)) is not None: raise HTTPException(409,detail="This image is used by a product.")
     item.status="archived";session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.archived",target_type="media_asset",target_id=str(item.id),outcome="success"));session.commit();return Response(status_code=204)
 
 @router.get("/platform/admin/organizations")

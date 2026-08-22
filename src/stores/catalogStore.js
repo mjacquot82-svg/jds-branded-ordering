@@ -3,6 +3,7 @@ import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
 import { toOwnerCustomizationWrite } from "../services/modifierMoney.js";
 import {
   archiveOwnerProduct,
+  createOwnerCategory,
   clearOwnerCatalogCache,
   createOwnerProduct,
   fetchOwnerCatalogCached,
@@ -10,6 +11,10 @@ import {
   updateOwnerProduct,
   updateOwnerProductAvailability,
   updateLunchSpecial,
+  updateOwnerCategory,
+  deleteOwnerCategory,
+  reorderOwnerCategories,
+  reorderOwnerProducts,
 } from "../services/ownerCatalogApi.js";
 
 export function createProductId(name) {
@@ -109,6 +114,36 @@ export function useCatalogProducts({ enabled = true } = {}) {
     clearOwnerCatalogCache();
     await reload({ force: true });
   }
+  async function addCategory(name) {
+    const created = await createOwnerCategory({ name, published: true }, session.csrf_token);
+    clearOwnerCatalogCache();
+    await reload({ force: true });
+    return created;
+  }
+  async function updateCategory(categoryId, updates) {
+    const current = catalog.categories.find((item) => item.id === categoryId);
+    await updateOwnerCategory(current.backendId, { name: updates.name ?? current.name, published: updates.published ?? current.published }, session.csrf_token);
+    clearOwnerCatalogCache();
+    await reload({ force: true });
+  }
+  async function removeCategory(categoryId) {
+    const current = catalog.categories.find((item) => item.id === categoryId);
+    await deleteOwnerCategory(current.backendId, session.csrf_token);
+    clearOwnerCatalogCache();
+    await reload({ force: true });
+  }
+  async function reorderCategories(categoryIds) {
+    const backendIds = categoryIds.map((id) => Number(catalog.categories.find((item) => item.id === id)?.backendId));
+    await reorderOwnerCategories(backendIds, session.csrf_token);
+    clearOwnerCatalogCache();
+    await reload({ force: true });
+  }
+  async function reorderProducts(productIds) {
+    const backendIds = productIds.map((id) => Number(catalog.products.find((item) => item.id === id)?.backendId));
+    await reorderOwnerProducts(backendIds, session.csrf_token);
+    clearOwnerCatalogCache();
+    await reload({ force: true });
+  }
   async function updateProduct(productId, updates) {
     const current = catalog.products.find((item) => item.id === productId);
     const next = { ...current, ...updates };
@@ -167,5 +202,5 @@ export function useCatalogProducts({ enabled = true } = {}) {
     }
   }
 
-  return { ...catalog, addProduct, updateProduct, setProductAvailability, setLunchSpecial, removeProduct, saveCustomization, loading, error, reload };
+  return { ...catalog, addCategory, updateCategory, removeCategory, reorderCategories, addProduct, updateProduct, reorderProducts, setProductAvailability, setLunchSpecial, removeProduct, saveCustomization, loading, error, reload };
 }

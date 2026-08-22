@@ -7,7 +7,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.availability.models import BusinessHour, BusinessSettings
-from app.catalog.models import Product
+from app.catalog.models import Category, Product
+from app.availability.models import ProductAvailability
 from app.clover.models import CloverInstallation
 from app.jds_auth.models import Organization
 from app.platform.models import BusinessProfile, DesignWorkspace, StorefrontHostname
@@ -42,10 +43,20 @@ def evaluate_storefront_readiness(session: Session, organization_id: UUID) -> Re
             BusinessHour.organization_id == organization_id,
             BusinessHour.business_settings_id == settings.id,
         )) == 7),
-        "catalog": bool(session.scalar(select(Product.id).where(
+        "catalog": bool(session.scalar(select(Product.id).join(
+            Category,
+            (Category.id == Product.category_id) &
+            (Category.organization_id == Product.organization_id),
+        ).outerjoin(
+            ProductAvailability,
+            (ProductAvailability.product_id == Product.id) &
+            (ProductAvailability.organization_id == Product.organization_id),
+        ).where(
             Product.organization_id == organization_id,
             Product.is_published.is_(True),
             Product.archived_at.is_(None),
+            Category.is_published.is_(True),
+            func.coalesce(ProductAvailability.default_available, True).is_(True),
         ).limit(1))),
         "published_design": bool(
             (workspace := session.get(DesignWorkspace, organization_id))
