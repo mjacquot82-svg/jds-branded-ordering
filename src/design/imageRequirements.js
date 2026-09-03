@@ -21,6 +21,18 @@ export function validateImageForSlot(image,requirement){
   return {errors,warnings};
 }
 
+export function validateProductImage(image){
+  const requirement=imageRequirements.product;
+  const errors=[];
+  if(!requirement.formats.includes(image.type))errors.push("Use a PNG, JPEG, or WebP image.");
+  if(image.size>requirement.maxBytes)errors.push("This image is larger than 10 MB. Choose a smaller image and try again.");
+  if(image.width<requirement.minWidth||image.height<requirement.minHeight)errors.push("This image is too small. Product images must be at least 800 × 800 pixels.");
+  const ratio=image.width&&image.height?image.width/image.height:1;
+  const difference=Math.max(ratio,1/ratio);
+  const warnings=difference>1.15?["This image is not square and may be cropped. A square 1:1 image is recommended."]:[];
+  return {errors,warnings};
+}
+
 export async function inspectImageFile(file){
   if(!file?.type?.startsWith("image/"))return {type:file?.type||"",size:file?.size||0,width:0,height:0};
   const bitmap=await createImageBitmap(file);

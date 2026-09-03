@@ -32,7 +32,7 @@ CATALOG_TABLE_NAMES = frozenset(
         "product_modifier_groups",
     }
 )
-CATALOG_HEAD_ONLY_COLUMN_NAMES = frozenset({"is_lunch_special"})
+CATALOG_HEAD_ONLY_COLUMN_NAMES = frozenset({"is_lunch_special", "media_asset_id"})
 MODIFIER_GROUP_HEAD_ONLY_COLUMN_NAMES = frozenset({"allow_quantity"})
 AVAILABILITY_TABLE_NAMES = frozenset(
     {

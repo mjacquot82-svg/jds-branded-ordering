@@ -107,6 +107,12 @@ class Product(CatalogModelValidation, Base):
             name="fk_products_organization_category",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "media_asset_id"],
+            ["media_assets.organization_id", "media_assets.id"],
+            name="fk_products_organization_media_asset",
+            ondelete="RESTRICT",
+        ),
         Index(
             "uq_products_single_lunch_special",
             "organization_id",
@@ -128,6 +134,7 @@ class Product(CatalogModelValidation, Base):
     description: Mapped[str | None] = mapped_column(Text)
     base_price_cents: Mapped[int] = mapped_column(Integer)
     image_reference: Mapped[str | None] = mapped_column(String(500))
+    media_asset_id: Mapped[UUID | None] = mapped_column(index=True)
     is_published: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_lunch_special: Mapped[bool] = mapped_column(

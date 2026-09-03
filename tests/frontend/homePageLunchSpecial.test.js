@@ -66,7 +66,7 @@ test("Quick Order makes generic cards configuration links and reserves direct Ad
   assert.match(home, /\{item\.quickConfiguration \? <button/);
   assert.doesNotMatch(home, />Customize<\/Link>/);
   assert.match(home, /getProductSpecificImageUrl\(item\)/);
-  assert.match(home, /productImageUrl \? \(/);
+  assert.match(home, /<ProductImage className="quick-product-image" src=\{productImageUrl\}/);
   assert.doesNotMatch(home, /item-thumb-\$\{item\.image\}/);
 });
 
@@ -99,7 +99,7 @@ test("image-less lunch specials never inherit generic product photography", asyn
   const styles = await readFile(new URL("../../src/style.css", import.meta.url), "utf8");
 
   assert.match(home, /getProductSpecificImageUrl\(recommendation\)/);
-  assert.match(home, /recommendationImageUrl \? \(/);
+  assert.match(home, /<ProductImage className="lunch-special-image" src=\{recommendationImageUrl\}/);
   assert.doesNotMatch(home, /item-thumb-\$\{recommendation\.image\}/);
   assert.doesNotMatch(home, /Browse today’s café menu for fresh, seasonal recommendations/);
   assert.match(styles, /\.lunch-special-block\.is-image-free/);

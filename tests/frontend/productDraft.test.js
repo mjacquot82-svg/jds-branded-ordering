@@ -60,7 +60,9 @@ test("Product page follows Loyalty navigation guards and Save baseline lifecycle
   assert.match(page, /navigationApi\.traverseTo\(key\)/);
   assert.match(page, /document\.addEventListener\("click", onClick, true\)/);
   assert.match(page, /requestProductAction\(\(\) => startEdit\(product\)\)/);
-  assert.match(page, /requestProductAction\(\(\) => \{ resetForm\(\); setManagingModifiers\(true\); \}\)/);
+  assert.match(page, /onClick=\{\(\) => setManagingModifiers\(true\)\}>Manage modifiers/);
+  assert.match(page, /returnLabel=\{dirty \? `Back to \$\{formProduct\.name\.trim\(\)/);
+  assert.doesNotMatch(page, /Manage modifiers[\s\S]{0,180}resetForm/);
   assert.match(page, /<dialog aria-describedby="unsaved-product-message" aria-labelledby="unsaved-product-title"/);
   assert.match(page, />Stay<\/button>/);
   assert.match(page, />Leave without saving<\/button>/);

@@ -139,6 +139,10 @@ async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped
 
     review_origin = "https://synthetic-codespace-5173.app.github.dev"
     monkeypatch.setenv("JDS_ENVIRONMENT", "production")
+    monkeypatch.setenv("JDS_MEDIA_STORAGE", "supabase")
+    monkeypatch.setenv("JDS_SUPABASE_STORAGE_URL", "https://storage.example.test")
+    monkeypatch.setenv("JDS_SUPABASE_STORAGE_SERVICE_ROLE_KEY", "test-service-role")
+    monkeypatch.setenv("JDS_SUPABASE_STORAGE_BUCKET", "tenant-media")
     production_app = create_app(
         database_url=local_review_database,
         auth_settings=AuthSettings(
@@ -156,6 +160,7 @@ async def test_local_seed_is_idempotent_and_owner_switching_is_membership_scoped
         assert denied.json()["detail"]["code"] == "origin_invalid"
     production_app.state.db_engine.dispose()
     monkeypatch.setenv("JDS_ENVIRONMENT", "development")
+    monkeypatch.setenv("JDS_MEDIA_STORAGE", "local")
 
     application = create_app(database_url=local_review_database)
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as client:

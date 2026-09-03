@@ -80,7 +80,8 @@ test("exact cart quantity and repeat-add action are unambiguous", () => {
 
 test("generic image keys do not render as individual product photos", () => {
   assert.match(menu, /getProductSpecificImageUrl/);
-  assert.match(menu, /productImageUrl \? <div className="product-thumb"/);
+  assert.match(menu, /<ProductImage className="product-thumb" src=\{productImageUrl\}/);
+  assert.match(menu, /alt=\{`\$\{item\.name\} product photo`\}/);
   assert.doesNotMatch(menu, /item-thumb-\$\{item\.image\}/);
 });
 

@@ -3,16 +3,41 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { dollarsToCents, toOwnerCustomizationWrite } from "../../src/services/modifierMoney.js";
+import { validateModifierDraft } from "../../src/admin/modifierValidation.js";
 
 const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("owner modifier dollar input converts exactly to integer cents", () => {
   assert.equal(dollarsToCents("0"), 0);
+  assert.equal(dollarsToCents(".25"), 25);
+  assert.equal(dollarsToCents(".50"), 50);
+  assert.equal(dollarsToCents("0.25"), 25);
+  assert.equal(dollarsToCents("0.50"), 50);
+  assert.equal(dollarsToCents("1"), 100);
+  assert.equal(dollarsToCents("1.00"), 100);
+  assert.equal(dollarsToCents("1.5"), 150);
+  assert.equal(dollarsToCents("1.50"), 150);
   assert.equal(dollarsToCents("0.75"), 75);
   assert.equal(dollarsToCents("12.3"), 1230);
   assert.equal(dollarsToCents("-0.25"), null);
   assert.equal(dollarsToCents("0.001"), null);
   assert.equal(dollarsToCents("not money"), null);
+  assert.equal(dollarsToCents("$1.00"), null);
+  assert.equal(dollarsToCents("1.234"), null);
+  assert.equal(dollarsToCents("1.2.3"), null);
+  assert.equal(dollarsToCents("21474836.48"), null);
+});
+
+test("modifier validation identifies the exact field and preserves a retryable leading-decimal value", () => {
+  const draft = { name: "milk", selectionType: "single", required: false, minSelections: 0, maxSelections: 1, allowQuantity: false, choices: [{ draftId: "oat", name: "oat", price: "1.234" }] };
+  const invalid = validateModifierDraft(draft);
+  assert.equal(invalid.valid, false);
+  assert.equal(invalid.errors.choices.oat.price, "Enter a valid extra price, such as 0.25.");
+  assert.equal(draft.choices[0].price, "1.234");
+  draft.choices[0].price = ".25";
+  const valid = validateModifierDraft(draft);
+  assert.equal(valid.valid, true);
+  assert.equal(valid.choices[0].priceAdjustmentCents, 25);
 });
 
 test("Products exposes Menu items and Modifiers as one catalog experience", async () => {
@@ -24,7 +49,7 @@ test("Products exposes Menu items and Modifiers as one catalog experience", asyn
   assert.match(products, />Menu items</);
   assert.match(products, />Modifiers</);
   assert.match(manager, /Product catalog/);
-  assert.match(manager, />Menu items</);
+  assert.match(manager, /returnLabel = "Menu items"/);
   assert.doesNotMatch(manager, /Customer options/);
   assert.doesNotMatch(manager, /Modifier group/);
 });
@@ -54,7 +79,7 @@ test("simple category creation uses safe optional choose-one defaults", async ()
 
 test("advanced category settings are collapsed and reveal conditional limits", async () => {
   const manager = await source("../../src/admin/ModifierManager.jsx");
-  assert.match(manager, /<details className="modifier-advanced"><summary>Advanced settings<\/summary>/);
+  assert.match(manager, /<details className="modifier-advanced" ref=\{advancedRef\}><summary>Advanced settings<\/summary>/);
   assert.doesNotMatch(manager, /<details className="modifier-advanced" open/);
   assert.match(manager, /One option/);
   assert.match(manager, /Multiple options/);
@@ -72,7 +97,8 @@ test("modifier catalog supports add, edit, prices, and safe disable", async () =
   assert.match(manager, /modifier-category-list/);
   assert.match(manager, /\+ Add modifier/);
   assert.match(manager, /Extra price/);
-  assert.match(manager, /placeholder="0\.00"/);
+  assert.match(manager, /placeholder="0\.25"/);
+  assert.match(manager, /Extra price \(CAD\)/);
   assert.match(manager, /Make unavailable/);
   assert.match(manager, /Make available/);
   assert.match(manager, /retained for order history/);

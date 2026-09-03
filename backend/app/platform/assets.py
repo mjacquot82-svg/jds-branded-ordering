@@ -38,10 +38,10 @@ def tenant_icon_png(size: int, background: str, accent: str, *, maskable: bool =
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b"")
 
 
-def tenant_media_icon_png(path: Path, size: int, background: str, position: dict, *, contain: bool = False, maskable: bool = False) -> bytes:
+def tenant_media_icon_png(path: Path | bytes, size: int, background: str, position: dict, *, contain: bool = False, maskable: bool = False) -> bytes:
     if size not in {192, 512}:
         raise ValueError("Unsupported icon size.")
-    with Image.open(path) as source:
+    with Image.open(BytesIO(path) if isinstance(path, bytes) else path) as source:
         source = source.convert("RGBA")
         zoom = float(position.get("zoom", 1)); x = float(position.get("x", 50)) / 100; y = float(position.get("y", 50)) / 100
         # The editor's central 70% dotted box is the literal output crop. Render

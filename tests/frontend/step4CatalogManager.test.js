@@ -26,8 +26,9 @@ test("authoritative catalog readiness gates Continue", () => {
   assert.match(wizard, /Create a visible category and add at least one available product/);
 });
 
-test("product media uses upload and tenant-owned public media references", () => {
-  assert.match(products, /Upload product image/);
+test("product media keeps starter, upload, and tenant-owned sources distinct", () => {
+  assert.match(products, /Choose a starter image/);
+  assert.match(products, /Upload my own/);
   assert.match(products, /Choose from my images/);
   assert.match(products, /uploadMedia\(file,[\s\S]*"product"\)/);
   assert.doesNotMatch(products, /Image URL or token/);

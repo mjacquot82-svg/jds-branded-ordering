@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { dollarsToCents } from "../services/modifierMoney.js";
 import { applySavedModifierGroup, isModifierDraftDirty } from "./modifierDraft.js";
+import { validateModifierDraft } from "./modifierValidation.js";
 
 let nextDraftId = 0;
 const modifierDraft = (modifier = {}) => ({
@@ -23,18 +23,20 @@ function categoryDraft(category, naturalOrder = 0) {
 
 const priceLabel = (cents) => cents ? `+$${(cents / 100).toFixed(2)}` : "$0.00";
 
-export default function ModifierManager({ groups, onClose, onSaveCustomization }) {
+export default function ModifierManager({ groups, onClose, onSaveCustomization, returnLabel = "Menu items" }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [draft, setDraft] = useState(null);
   const [savedDraft, setSavedDraft] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [validation, setValidation] = useState({});
   const [leaveOpen, setLeaveOpen] = useState(false);
   const dialogRef = useRef(null);
   const pendingLeaveRef = useRef(null);
   const allowNavigationRef = useRef(false);
   const busyRef = useRef(false);
+  const advancedRef = useRef(null);
   const editing = Boolean(draft?.backendId);
   const dirty = isModifierDraftDirty(draft, savedDraft);
 
@@ -44,6 +46,7 @@ export default function ModifierManager({ groups, onClose, onSaveCustomization }
     setDraft(next);
     setSavedDraft(categoryDraft(category, groups.length));
     setMessage("");
+    setValidation({});
   }
 
   const requestLeave = useCallback((action, navigation = false) => { pendingLeaveRef.current = { action, navigation }; setLeaveOpen(true); }, []);
@@ -66,6 +69,7 @@ export default function ModifierManager({ groups, onClose, onSaveCustomization }
   function closeDraft() { setDraft(null); setSavedDraft(null); setMessage(""); }
 
   function updateDraft(field, value) {
+    setValidation((current) => ({ ...current, groupName: field === "name" ? "" : current.groupName, advanced: ["minSelections", "maxSelections", "required", "selectionType", "allowQuantity"].includes(field) ? "" : current.advanced }));
     setDraft((current) => {
       const next = { ...current, [field]: value };
       if (field === "selectionType" && value === "single") {
@@ -79,6 +83,7 @@ export default function ModifierManager({ groups, onClose, onSaveCustomization }
   }
 
   function updateModifier(draftId, field, value) {
+    setValidation((current) => ({ ...current, choices: { ...current.choices, [draftId]: { ...current.choices?.[draftId], [field]: "" } } }));
     setDraft((current) => ({
       ...current,
       choices: current.choices.map((choice) => choice.draftId === draftId ? { ...choice, [field]: value } : choice),
@@ -89,17 +94,15 @@ export default function ModifierManager({ groups, onClose, onSaveCustomization }
     event.preventDefault();
     if (busy) return;
     if (busyRef.current) return;
-    if (!draft.name.trim()) return setMessage("Enter a name for this modifier category.");
-    const choices = [];
-    for (const choice of draft.choices) {
-      if (!choice.name.trim()) return setMessage("Each modifier needs a name.");
-      const cents = dollarsToCents(choice.price);
-      if (cents === null) return setMessage(`Check the extra price for ${choice.name}. Use dollars and cents, such as 0.75.`);
-      choices.push({ ...choice, priceAdjustmentCents: cents });
+    const { choices, errors, valid } = validateModifierDraft(draft);
+    if (!valid) {
+      setValidation(errors);
+      setMessage("Check the highlighted fields and try again.");
+      if (errors.advanced && advancedRef.current) advancedRef.current.open = true;
+      requestAnimationFrame(() => document.querySelector('[data-validation-error="true"] input')?.focus());
+      return;
     }
-    if ((draft.selectionType === "multiple" || draft.allowQuantity) && Number(draft.maxSelections) && Number(draft.maxSelections) < Number(draft.minSelections)) {
-      return setMessage("Maximum total selections cannot be less than minimum selections.");
-    }
+    setValidation({});
     busyRef.current = true; setBusy(true); setMessage("");
     try {
       const result = await onSaveCustomization({ ...draft, name: draft.name.trim(), choices });
@@ -128,7 +131,7 @@ export default function ModifierManager({ groups, onClose, onSaveCustomization }
   return <section className="modifier-manager" aria-labelledby="modifier-manager-heading">
     <header><div><p className="eyebrow">Product catalog</p><h1 id="modifier-manager-heading">Products</h1></div></header>
     <nav className="products-view-switch" aria-label="Products sections">
-      <button type="button" onClick={() => requestDraftAction(onClose)}>Menu items</button>
+      <button type="button" onClick={() => requestDraftAction(onClose)}>{returnLabel}</button>
       <button aria-current="page" className="is-active" type="button">Modifiers</button>
     </nav>
     {message ? <div className="product-notice" role="status" aria-live="polite">{message}</div> : null}
@@ -140,12 +143,12 @@ export default function ModifierManager({ groups, onClose, onSaveCustomization }
         {category.options.length ? <ul>{category.options.map((modifier) => <li className={modifier.active ? "" : "is-unavailable"} key={modifier.backendId}><span>{modifier.name}{!modifier.active ? <small>Unavailable</small> : null}</span><strong>{priceLabel(modifier.priceAdjustmentCents)}</strong></li>)}</ul> : <p className="modifier-category-empty">No modifiers in this category yet.</p>}
         <footer><small>Used on {category.assignmentCount} {category.assignmentCount === 1 ? "product" : "products"}</small><button type="button" onClick={() => requestDraftAction(() => loadCategory(category, true))}>+ Add modifier</button></footer>
       </article>)}</div> : <div className="modifier-empty"><h2>No modifiers yet.</h2><p>Create modifier categories for things customers can add or choose when ordering, such as milk choices or flavour shots.</p><button className="primary-button" type="button" onClick={() => requestDraftAction(() => loadCategory())}>Add modifier category</button></div>}
-    </div> : <form className="modifier-editor" aria-busy={busy} onSubmit={submit}>
+    </div> : <form className="modifier-editor" aria-busy={busy} noValidate onSubmit={submit}>
       <div className="modifier-editor-heading"><div><p className="eyebrow">{editing ? "Edit modifier category" : "Add modifier category"}</p><h2>{editing ? draft.name : "New modifier category"}</h2></div><button className="secondary-button" type="button" onClick={() => requestDraftAction(closeDraft)}>Back to modifiers</button></div>
-      <label><span>Name</span><input autoFocus placeholder="For example, Milk" required value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></label>
+      <label data-validation-error={Boolean(validation.groupName)}><span>Name</span><input aria-invalid={Boolean(validation.groupName)} autoFocus placeholder="For example, Milk" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} />{validation.groupName?<small className="field-error" role="alert">{validation.groupName}</small>:null}</label>
       {editing ? <label className="modifier-enabled"><input checked={draft.active} type="checkbox" onChange={(event) => updateDraft("active", event.target.checked)} /><span><strong>Available to customers</strong><small>Turn off safely while keeping product assignments and past order details.</small></span></label> : null}
 
-      <details className="modifier-advanced"><summary>Advanced settings</summary><div className="modifier-advanced-fields">
+      <details className="modifier-advanced" ref={advancedRef}><summary>Advanced settings</summary><div className="modifier-advanced-fields">{validation.advanced?<p className="field-error" role="alert">{validation.advanced}</p>:null}
         <fieldset><legend>How can customers choose?</legend><label className="modifier-setting-choice"><input checked={draft.selectionType === "single"} name="selection-type" type="radio" onChange={() => updateDraft("selectionType", "single")} /><span><strong>One option</strong><small>For example, choose one type of milk.</small></span></label><label className="modifier-setting-choice"><input checked={draft.selectionType === "multiple"} name="selection-type" type="radio" onChange={() => updateDraft("selectionType", "multiple")} /><span><strong>Multiple options</strong><small>For example, choose Vanilla and Caramel.</small></span></label></fieldset>
         <fieldset><legend>Can customers choose multiples of the same option?</legend><label className="modifier-enabled"><input checked={draft.allowQuantity} type="checkbox" onChange={(event) => updateDraft("allowQuantity", event.target.checked)} /><span><strong>Allow quantities</strong><small>For example, 2 sugars or 2 Vanilla shots.</small></span></label></fieldset>
         <fieldset><legend>Does the customer need to make a choice?</legend><label><input checked={!draft.required} name="requirement" type="radio" onChange={() => updateDraft("required", false)} /> No — they can choose None</label><label><input checked={draft.required} name="requirement" type="radio" onChange={() => updateDraft("required", true)} /> Yes — they must choose something</label></fieldset>
@@ -156,7 +159,7 @@ export default function ModifierManager({ groups, onClose, onSaveCustomization }
       </div></details>
 
       {editing || draft.choices.length ? <section className="modifier-list-editor" aria-labelledby="modifier-list-editor-heading"><div><h3 id="modifier-list-editor-heading">Modifiers</h3><p>Add or edit the choices and extra prices customers see.</p></div>
-        <div>{draft.choices.map((modifier) => <div className={`modifier-edit-row${modifier.active ? "" : " is-unavailable"}`} key={modifier.draftId}><label><span>Name</span><input placeholder="For example, Oat Milk" value={modifier.name} onChange={(event) => updateModifier(modifier.draftId, "name", event.target.value)} /></label><label><span>Extra price</span><span className="money-input"><b>$</b><input inputMode="decimal" min="0" placeholder="0.00" value={modifier.price} onChange={(event) => updateModifier(modifier.draftId, "price", event.target.value)} /></span></label><button className="secondary-button" type="button" onClick={() => modifier.backendId ? updateModifier(modifier.draftId, "active", !modifier.active) : setDraft((current) => ({ ...current, choices: current.choices.filter((item) => item.draftId !== modifier.draftId) }))}>{modifier.backendId ? modifier.active ? "Make unavailable" : "Make available" : "Remove"}</button>{!modifier.active ? <small>Unavailable to customers; retained for order history.</small> : null}</div>)}</div>
+        <div>{draft.choices.map((modifier) => {const errors=validation.choices?.[modifier.draftId]||{};return <div className={`modifier-edit-row${modifier.active ? "" : " is-unavailable"}`} key={modifier.draftId}><label data-validation-error={Boolean(errors.name)}><span>Name</span><input aria-invalid={Boolean(errors.name)} placeholder="For example, Oat Milk" value={modifier.name} onChange={(event) => updateModifier(modifier.draftId, "name", event.target.value)} />{errors.name?<small className="field-error" role="alert">{errors.name}</small>:null}</label><label data-validation-error={Boolean(errors.price)}><span>Extra price (CAD)</span><span className="money-input"><b>$</b><input aria-invalid={Boolean(errors.price)} inputMode="decimal" min="0" placeholder="0.25" value={modifier.price} onChange={(event) => updateModifier(modifier.draftId, "price", event.target.value)} /></span><small>Additional amount charged when a customer selects this choice.</small>{errors.price?<small className="field-error" role="alert">{errors.price}</small>:null}</label><button className="secondary-button" type="button" onClick={() => modifier.backendId ? updateModifier(modifier.draftId, "active", !modifier.active) : setDraft((current) => ({ ...current, choices: current.choices.filter((item) => item.draftId !== modifier.draftId) }))}>{modifier.backendId ? modifier.active ? "Make unavailable" : "Make available" : "Remove"}</button>{!modifier.active ? <small>Unavailable to customers; retained for order history.</small> : null}</div>})}</div>
         <button className="secondary-button" type="button" onClick={() => setDraft((current) => ({ ...current, choices: [...current.choices, modifierDraft()] }))}>+ Add modifier</button>
       </section> : null}
       <div className="modifier-save-actions"><span aria-live="polite" className={`loyalty-save-status${dirty ? " is-unsaved" : ""}`}>{dirty ? "Unsaved changes" : ""}</span><button className="primary-button" disabled={busy || !dirty} type="submit">{busy ? "Saving…" : editing ? "Save changes" : "Save modifier category"}</button><button className="secondary-button" type="button" onClick={() => requestDraftAction(closeDraft)}>Cancel</button></div>

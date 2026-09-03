@@ -1,6 +1,8 @@
 from uuid import uuid4
+from dataclasses import replace
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -12,7 +14,10 @@ from app.catalog.schemas import OwnerCategoryOrderWrite, OwnerCategoryWrite, Own
 from app.catalog.service import CatalogService
 from app.jds_auth.models import Organization
 from app.platform.models import MediaAsset
+from app.platform import starter_media
 from app.platform.readiness import evaluate_storefront_readiness
+from app.api.v1.platform import archive_media
+from app.jds_auth.service import AuthPrincipal
 from app.tenancy.resolver import resolve_owner_tenant_context
 from tests.test_catalog_api import catalog_api_engine
 
@@ -82,7 +87,7 @@ def test_catalog_readiness_and_public_projection_use_orderable_category_product(
 
 
 @pytest.mark.postgresql
-def test_product_media_assignment_is_tenant_scoped_and_legacy_references_remain_valid(catalog_api_engine: Engine) -> None:
+def test_product_media_assignment_is_tenant_scoped_replaceable_unassignable_and_reusable(catalog_api_engine: Engine, tmp_path, monkeypatch) -> None:
     with Session(catalog_api_engine) as session:
         left = Organization(id=uuid4(), slug=f"media-left-{uuid4().hex[:6]}", name="Left")
         right = Organization(id=uuid4(), slug=f"media-right-{uuid4().hex[:6]}", name="Right")
@@ -94,9 +99,41 @@ def test_product_media_assignment_is_tenant_scoped_and_legacy_references_remain_
         service = service_for(session, left)
         base = dict(slug="latte", name="Latte", base_price_cents=475, category_id=category.id)
 
+        monkeypatch.setenv("JDS_STARTER_MEDIA_ROOT", str(tmp_path))
+        starter_path = tmp_path / "cafe-restaurant" / "latte-v1.webp"
+        starter_path.parent.mkdir(parents=True)
+        starter_path.write_bytes(b"reviewed-starter-binary-placeholder")
+
         with pytest.raises(ValueError, match="this business"):
             service.create_product(OwnerProductWrite(**base, image=f"/api/v1/storefront/media/{foreign.id}"))
         saved = service.create_product(OwnerProductWrite(**base, image=f"/api/v1/storefront/media/{own.id}"))
         assert saved.image.endswith(str(own.id))
-        service.update_product(int(saved.id), OwnerProductWrite(**base, image="/legacy/product.jpg"))
-        assert service.build_catalog().categories[0].products[0].image == "/legacy/product.jpg"
+        stored = session.get(Product, int(saved.id))
+        assert stored.media_asset_id == own.id and not stored.image_reference
+        tenant = resolve_owner_tenant_context(session, principal_organization_id=left.id)
+        principal = AuthPrincipal(user_id=uuid4(),membership_id=uuid4(),organization_id=left.id,application_id=uuid4(),session_id=uuid4(),email="owner@example.test",display_name="Owner",role="owner",permissions=frozenset(),assurance_level="password")
+        with pytest.raises(HTTPException) as referenced:
+            archive_media(own.id, principal, tenant, session)
+        assert referenced.value.status_code == 409
+        service.update_product(int(saved.id), OwnerProductWrite(**base, image=""))
+        assert session.get(Product, int(saved.id)).media_asset_id is None
+        service.update_product(int(saved.id), OwnerProductWrite(**base, image=f"/api/v1/storefront/media/{own.id}"))
+        assert session.get(Product, int(saved.id)).media_asset_id == own.id
+        starter_reference = "starter:cafe-restaurant/latte@1"
+        service.update_product(int(saved.id), OwnerProductWrite(**base, image=starter_reference))
+        assert service.build_owner_catalog().products[0].image == starter_reference
+        assert service.build_catalog().categories[0].products[0].image == "/api/v1/storefront/starter-media/cafe-restaurant/latte?version=1"
+        right_category = Category(organization_id=right.id, slug="coffee", name="Coffee", is_published=True)
+        session.add(right_category); session.commit()
+        right_service = service_for(session, right)
+        right_service.create_product(OwnerProductWrite(slug="latte", name="Latte", base_price_cents=475, category_id=right_category.id, image=starter_reference))
+        assert {item.id for item in session.scalars(select(MediaAsset)).all()} == {foreign.id, own.id}
+        monkeypatch.setitem(starter_media.STARTER_MEDIA_BY_REFERENCE, starter_reference, replace(starter_media.starter_asset(starter_reference), active=False))
+        service.update_product(int(saved.id), OwnerProductWrite(**base, image=starter_reference, description="Existing retired reference remains valid"))
+        with pytest.raises(ValueError, match="no longer available"):
+            service.create_product(OwnerProductWrite(slug="second-latte", name="Second Latte", base_price_cents=475, category_id=category.id, image=starter_reference))
+        with pytest.raises(ValueError, match="valid JDS starter"):
+            service.update_product(int(saved.id), OwnerProductWrite(**base, image="starter:cafe-restaurant/unknown@1"))
+        with pytest.raises(ValueError, match="this business"):
+            service.update_product(int(saved.id), OwnerProductWrite(**base, image="https://example.test/untrusted.jpg"))
+        session.delete(foreign); session.delete(own); session.commit()

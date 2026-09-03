@@ -1,6 +1,7 @@
 import { getLayoutDefinition, layoutShowsHero, layoutShowsHomeQuickOrder, previewAnnouncementText, previewCatalog } from "./layoutDefinitions.js";
 import PositionedSlotImage from "./PositionedSlotImage.jsx";
 import HeaderBrandingIdentity from "./HeaderBrandingIdentity.jsx";
+import ProductImage from "../components/ProductImage.jsx";
 import { headerBrandingMode, heroContentVisibility } from "./imageSlotRendering.js";
 
 function money(value) { return `$${Number(value).toFixed(2)}`; }
@@ -28,8 +29,8 @@ export function FocusedHeaderBrandingPreview({config,layout,logoUrl,designer}){
 }
 
 function ProductShowcase({ layout, products }) {
-  if (layout.productCards === "editorial-rows") return <div className="layout-product-list">{products.slice(0,3).map((product)=><article key={product.id}><span><strong>{product.name}</strong><small>Freshly prepared</small></span><b>{money(product.price)}</b><button type="button" disabled>+</button></article>)}</div>;
-  return <div className={`layout-product-grid ${layout.productCards}`}>{products.slice(0,4).map((product,index)=><article key={product.id}><div className={`sample-product-image sample-image-${index+1}`}/><span><strong>{product.name}</strong><small>{money(product.price)}</small></span><button type="button" disabled>{layout.productCards==="media-cards"?"Add":"View"}</button></article>)}</div>;
+  if (layout.productCards === "editorial-rows") return <div className="layout-product-list">{products.slice(0,3).map((product)=><article key={product.id}><ProductImage className="sample-product-image" src={product.image} alt={`${product.name} product photo`}/><span><strong>{product.name}</strong><small>Freshly prepared</small></span><b>{money(product.price)}</b><button type="button" disabled>+</button></article>)}</div>;
+  return <div className={`layout-product-grid ${layout.productCards}`}>{products.slice(0,4).map((product)=><article key={product.id}><ProductImage className="sample-product-image" src={product.image} alt={`${product.name} product photo`}/><span><strong>{product.name}</strong><small>{money(product.price)}</small></span><button type="button" disabled>{layout.productCards==="media-cards"?"Add":"View"}</button></article>)}</div>;
 }
 
 export default function LayoutPhonePreview({ config, categories = [], products = [], logoUrl, heroUrl, designer = null }) {

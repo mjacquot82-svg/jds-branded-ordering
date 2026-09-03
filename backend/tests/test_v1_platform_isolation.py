@@ -300,6 +300,37 @@ def test_customer_relationship_and_media_identifiers_are_tenant_scoped(platform_
 
 
 @pytest.mark.postgresql
+def test_media_list_and_content_reads_do_not_cross_tenants(platform_db, tmp_path):
+    from types import SimpleNamespace
+    from starlette.requests import Request
+    from app.api.v1.platform import list_media, owner_media, storefront_media
+    from app.platform.assets import tenant_icon_png
+    from app.platform.media import LocalMediaStorage
+
+    engine, (a, b, _, _, _) = platform_db
+    storage = LocalMediaStorage(tmp_path / "media")
+    left_id, right_id = uuid4(), uuid4()
+    left_data = tenant_icon_png(192, "#112233", "#abcdef")
+    right_data = tenant_icon_png(192, "#445566", "#fedcba")
+    left_key, left_checksum = storage.put(a, left_id, left_data, "image/png")
+    right_key, right_checksum = storage.put(b, right_id, right_data, "image/png")
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "app": SimpleNamespace(state=SimpleNamespace(media_storage=storage))})
+    with Session(engine) as session:
+        session.add_all([
+            MediaAsset(id=left_id, organization_id=a, storage_key=left_key, media_type="image/png", byte_size=len(left_data), checksum=left_checksum),
+            MediaAsset(id=right_id, organization_id=b, storage_key=right_key, media_type="image/png", byte_size=len(right_data), checksum=right_checksum),
+        ]); session.commit()
+        assert [item["id"] for item in list_media(request, context(a, "alpha"), session)] == [str(left_id)]
+        assert owner_media(left_id, request, context(a, "alpha"), session).body == left_data
+        with pytest.raises(HTTPException) as owner_foreign:
+            owner_media(right_id, request, context(a, "alpha"), session)
+        assert owner_foreign.value.status_code == 404
+        with pytest.raises(HTTPException) as storefront_foreign:
+            storefront_media(right_id, request, context(a, "alpha"), session)
+        assert storefront_foreign.value.status_code == 404
+
+
+@pytest.mark.postgresql
 def test_draft_publish_and_revert_are_isolated_and_append_only(platform_db):
     engine, (a, b, actor, _, _) = platform_db
     with Session(engine) as session:

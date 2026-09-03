@@ -26,6 +26,7 @@ import { useTenant } from "../tenant/TenantContext.jsx";
 import { getLayoutDefinition, layoutShowsHero, layoutShowsHomeQuickOrder } from "../design/layoutDefinitions.js";
 import PositionedSlotImage from "../design/PositionedSlotImage.jsx";
 import { heroContentVisibility } from "../design/imageSlotRendering.js";
+import ProductImage from "../components/ProductImage.jsx";
 
 function formatPrice(price) {
   return new Intl.NumberFormat("en-CA", {
@@ -194,13 +195,7 @@ export default function HomePage() {
         className={`content-block app-content-block lunch-special-block${recommendationImageUrl ? " has-product-image" : " is-image-free"}`}
         aria-labelledby="lunch-special-heading"
       >
-        {recommendationImageUrl ? (
-          <div
-            className="lunch-special-image"
-            style={{ backgroundImage: `url(${recommendationImageUrl})` }}
-            aria-hidden="true"
-          />
-        ) : null}
+        <ProductImage className="lunch-special-image" src={recommendationImageUrl} alt={`${recommendation?.name || "Featured product"} product photo`} />
         <div className="lunch-special-copy">
           <p className="eyebrow">{lunchSpecial ? "Today’s lunch special" : "From the café"}</p>
           <h2 id="lunch-special-heading" className="visually-hidden">{lunchSpecial ? "Today’s Lunch Special" : "Today’s Picks"}</h2>
@@ -307,9 +302,7 @@ export default function HomePage() {
 
             return (
               <QuickOrderCard {...quickOrderCardProps} className={`quick-product-card${item.quickConfiguration ? " is-exact" : ""}${productImageUrl ? " has-product-image" : " is-image-free"}`} key={item.quickKey}>
-                {productImageUrl ? (
-                  <div className="quick-product-image" style={{ backgroundImage: `url(${productImageUrl})` }} aria-hidden="true" />
-                ) : null}
+                <ProductImage className="quick-product-image" src={productImageUrl} alt={`${item.name} product photo`} />
                 <div className="quick-product-copy">
                   {item.quickConfiguration ? <span className="quick-usual-label">Your usual</span> : null}
                   <h3>{item.name}</h3>

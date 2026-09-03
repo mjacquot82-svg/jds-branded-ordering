@@ -1,9 +1,9 @@
 export function dollarsToCents(value) {
   const normalized = String(value).trim();
-  if (!/^\d+(?:\.\d{0,2})?$/.test(normalized)) return null;
-  const [whole, fraction = ""] = normalized.split(".");
-  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
-  return Number.isSafeInteger(cents) ? cents : null;
+  if (!/^(?:\d+|\d*\.\d{1,2})$/.test(normalized)) return null;
+  const [whole = "0", fraction = ""] = normalized.split(".");
+  const cents = BigInt(whole || "0") * 100n + BigInt(fraction.padEnd(2, "0") || "0");
+  return cents <= 2_147_483_647n ? Number(cents) : null;
 }
 
 export function toOwnerCustomizationWrite(customization, naturalOrder = 0) {

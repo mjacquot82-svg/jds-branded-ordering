@@ -28,7 +28,7 @@ test("modifier Name and price controls use the shared system without changing mo
   assert.match(css, /\.modifier-manager \.money-input b[\s\S]*?background: var\(--surface-soft\)/);
   assert.match(css, /\.modifier-manager \.money-input:focus-within/);
   assert.match(manager, /<span>Name<\/span><input/);
-  assert.match(manager, /<span>Extra price<\/span><span className="money-input"><b>\$<\/b><input inputMode="decimal" min="0" placeholder="0\.00"/);
+  assert.match(manager, /<span>Extra price \(CAD\)<\/span><span className="money-input"><b>\$<\/b><input[^>]*inputMode="decimal" min="0" placeholder="0\.25"/);
   assert.match(money, /dollarsToCents/);
 });
 

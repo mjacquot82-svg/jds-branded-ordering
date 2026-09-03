@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from html import escape
+import hashlib
 import os
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -22,7 +23,8 @@ from app.platform.config import STANDARD_STOREFRONT_BASE_DOMAIN, hosted_storefro
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
 from app.platform.entitlements import entitlement_features
 from app.platform.models import BillingPlan, BusinessProfile, DesignMediaReference, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
-from app.platform.media import MediaStorage, MediaValidationError, default_media_storage, image_dimensions
+from app.platform.media import MediaStorage, MediaStorageError, MediaValidationError, default_media_storage, image_dimensions, prepare_image
+from app.platform.starter_media import STARTER_MEDIA_ASSETS, starter_asset_available, starter_asset_path, starter_reference
 from app.platform.readiness import evaluate_publish_readiness, evaluate_storefront_readiness, onboarding_completed_steps, synchronize_public_readiness
 from app.tenancy.context import TenantContext
 
@@ -102,8 +104,7 @@ def storefront_icon(size: int, request: Request, maskable: bool = False, tenant:
     try:
         item=session.scalar(select(MediaAsset).where(MediaAsset.id==UUID(str(icon_id)),MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active")) if icon_id else None
         if item:
-            path=media_storage(request).local_path(item.storage_key);position=(config.get("imagePositions") or {}).get("appIcon",{})
-            content=tenant_media_icon_png(path,size,colors.get("primary","#6f7d5f"),position,contain=str(icon_id)==str(config.get("logoMediaId")),maskable=maskable)
+            content=tenant_media_icon_png(media_storage(request).read(item.storage_key),size,colors.get("primary","#6f7d5f"),position,contain=str(icon_id)==str(config.get("logoMediaId")),maskable=maskable)
         else: content=tenant_icon_png(size,colors.get("primary","#6f7d5f"),colors.get("accent","#b98564"),maskable=maskable)
     except ValueError as error: raise HTTPException(404,detail="Icon not found.") from error
     return Response(content=content,media_type="image/png",headers={"Cache-Control":"public, max-age=31536000, immutable","Vary":"Host"})
@@ -343,48 +344,77 @@ def list_media(request: Request, tenant: TenantContext = Depends(authenticated_o
     rows=session.scalars(select(MediaAsset).where(MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active").order_by(MediaAsset.created_at.desc())).all()
     result=[]
     for item in rows:
-        try: width,height=image_dimensions(media_storage(request).local_path(item.storage_key).read_bytes())
-        except (MediaValidationError,OSError): width,height=None,None
-        result.append({"id":str(item.id),"storageKey":item.storage_key,"mediaType":item.media_type,"altText":item.alt_text,"byteSize":item.byte_size,"width":width,"height":height,"url":f"/api/v1/storefront/media/{item.id}","ownerUrl":f"/api/v1/owner/media/{item.id}/content"})
+        result.append({"id":str(item.id),"storageKey":item.storage_key,"mediaType":item.media_type,"purpose":item.purpose,"altText":item.alt_text,"byteSize":item.byte_size,"width":item.width,"height":item.height,"url":f"/api/v1/storefront/media/{item.id}","ownerUrl":f"/api/v1/owner/media/{item.id}/content"})
     return result
+
+@router.get("/owner/starter-media")
+def list_starter_media(collection: str = "cafe-restaurant", _: TenantContext = Depends(authenticated_owner_tenant)) -> dict:
+    assets=[]
+    for item in STARTER_MEDIA_ASSETS:
+        if item.collection != collection: continue
+        available=starter_asset_available(item)
+        assets.append({
+            "key":item.key,"name":item.name,"collection":item.collection,"category":item.category,
+            "tags":list(item.tags),"width":item.width,"height":item.height,"active":item.active,
+            "sortOrder":item.sort_order,"altText":item.alt_text,"assetVersion":item.version,
+            "available":available,"reference":item.reference,
+            "thumbnailUrl":f"/api/v1/storefront/starter-media/{item.collection}/{item.key}?version={item.version}" if available else None,
+        })
+    return {"manifestVersion":1,"collection":{"key":collection,"name":"Café & Restaurant"},"assets":assets}
+
+@router.get("/storefront/starter-media/{collection}/{asset_key}")
+def storefront_starter_media(collection: str, asset_key: str, version: int = 1) -> FileResponse:
+    reference=starter_reference(collection,asset_key,version);item=next((asset for asset in STARTER_MEDIA_ASSETS if asset.reference==reference),None)
+    if item is None: raise HTTPException(404,detail="Starter image not found.")
+    path=starter_asset_path(item)
+    if not path.is_file(): raise HTTPException(404,detail="Starter image is not available.")
+    return FileResponse(path,media_type="image/webp",headers={"Cache-Control":"public, max-age=31536000, immutable"})
 
 @router.post("/owner/media/upload", status_code=201)
 async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session), content_type: str = Header(alias="Content-Type"), alt_text: str = Header(default="",alias="X-Media-Alt"), purpose: str = Header(default="design", alias="X-Media-Purpose")) -> dict:
     if len(alt_text) > 300: raise HTTPException(422,detail="Alternative text is too long.")
-    data=await request.body(); media_id=uuid4(); item=MediaAsset(id=media_id,organization_id=tenant.organization_id,created_by_user_id=principal.user_id,storage_key="pending",media_type=content_type.split(";",1)[0].lower(),alt_text=alt_text.strip(),byte_size=len(data),checksum="0"*64)
+    if purpose not in {"design","product"}: raise HTTPException(422,detail="Media purpose must be design or product.")
+    data=await request.body(); media_id=uuid4()
     try:
-        width,height=image_dimensions(data)
+        prepared=prepare_image(data,content_type)
+        width,height=prepared.width,prepared.height
         if purpose == "product" and (width < 800 or height < 800): raise MediaValidationError("Product images must be at least 800 × 800 pixels.")
-        storage=media_storage(request);storage_key,checksum=storage.put(tenant.organization_id,media_id,data,item.media_type)
+        storage=media_storage(request);storage_key,checksum=storage.put(tenant.organization_id,media_id,prepared.data,prepared.media_type)
     except MediaValidationError as error: raise HTTPException(422,detail=str(error)) from error
+    except MediaStorageError as error: raise HTTPException(503,detail="Permanent media storage is unavailable.") from error
+    item=MediaAsset(id=media_id,organization_id=tenant.organization_id,created_by_user_id=principal.user_id,storage_key=storage_key,media_type=prepared.media_type,purpose=purpose,alt_text=alt_text.strip(),byte_size=len(prepared.data),width=width,height=height,checksum=checksum)
     try:
         item.storage_key=storage_key;item.checksum=checksum;session.add(item);session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.uploaded",target_type="media_asset",target_id=str(item.id),outcome="success",metadata_json={"mediaType":item.media_type,"byteSize":item.byte_size}));session.commit()
     except Exception:
         session.rollback();storage.delete(storage_key);raise
-    return {"id":str(item.id),"mediaType":item.media_type,"altText":item.alt_text,"byteSize":item.byte_size,"width":width,"height":height,"url":f"/api/v1/storefront/media/{item.id}","ownerUrl":f"/api/v1/owner/media/{item.id}/content"}
+    return {"id":str(item.id),"mediaType":item.media_type,"purpose":item.purpose,"altText":item.alt_text,"byteSize":item.byte_size,"width":width,"height":height,"url":f"/api/v1/storefront/media/{item.id}","ownerUrl":f"/api/v1/owner/media/{item.id}/content"}
 
 @router.get("/storefront/media/{media_id}")
 def storefront_media(media_id: UUID, request: Request, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> FileResponse:
     item=session.scalar(select(MediaAsset).where(MediaAsset.id==media_id,MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active"))
     if item is None: raise HTTPException(404,detail="Media not found.")
-    try: path=media_storage(request).local_path(item.storage_key)
-    except MediaValidationError as error: raise HTTPException(404,detail="Media not found.") from error
-    if not path.is_file(): raise HTTPException(404,detail="Media not found.")
-    return FileResponse(path,media_type=item.media_type,headers={"Cache-Control":"public, max-age=31536000, immutable","Vary":"Host"})
+    try: content=media_storage(request).read(item.storage_key)
+    except (MediaStorageError,MediaValidationError,OSError) as error: raise HTTPException(404,detail="Media not found.") from error
+    return Response(content=content,media_type=item.media_type,headers={"Cache-Control":"public, max-age=31536000, immutable","Vary":"Host","X-Content-Type-Options":"nosniff"})
 
 @router.get("/owner/media/{media_id}/content")
 def owner_media(media_id: UUID, request: Request, tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> FileResponse:
     item=session.scalar(select(MediaAsset).where(MediaAsset.id==media_id,MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active"))
     if item is None: raise HTTPException(404,detail="Media not found.")
-    try: path=media_storage(request).local_path(item.storage_key)
-    except MediaValidationError as error: raise HTTPException(404,detail="Media not found.") from error
-    if not path.is_file(): raise HTTPException(404,detail="Media not found.")
-    return FileResponse(path,media_type=item.media_type,headers={"Cache-Control":"private, no-store"})
+    try: content=media_storage(request).read(item.storage_key)
+    except (MediaStorageError,MediaValidationError,OSError) as error: raise HTTPException(404,detail="Media not found.") from error
+    return Response(content=content,media_type=item.media_type,headers={"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"})
 
 @router.post("/owner/media", status_code=201)
-def create_media(payload: MediaInput, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
-    # V1 local adapter records a validated logical asset. Blob writes remain an adapter concern.
-    item=MediaAsset(organization_id=tenant.organization_id,created_by_user_id=principal.user_id,**payload.model_dump())
+def create_media(payload: MediaInput, request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    allowed_prefixes=(f"{tenant.organization_id}/",f"tenants/{tenant.organization_id}/")
+    if not payload.storage_key.startswith(allowed_prefixes): raise HTTPException(422,detail="Media storage key is outside this business.")
+    try:
+        stored_data=media_storage(request).read(payload.storage_key); prepared=prepare_image(stored_data,payload.media_type)
+    except (MediaStorageError,MediaValidationError,OSError) as error: raise HTTPException(422,detail="Stored media could not be verified.") from error
+    stored_checksum=hashlib.sha256(stored_data).hexdigest()
+    if payload.byte_size!=len(stored_data) or payload.checksum!=stored_checksum: raise HTTPException(422,detail="Stored media metadata does not match the object.")
+    item=MediaAsset(organization_id=tenant.organization_id,created_by_user_id=principal.user_id,storage_key=payload.storage_key,media_type=prepared.media_type,byte_size=len(stored_data),checksum=stored_checksum,alt_text=payload.alt_text,width=prepared.width,height=prepared.height)
     session.add(item);session.flush();session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.created",target_type="media_asset",target_id=str(item.id),outcome="success"));session.commit()
     return {"id":str(item.id)}
 
@@ -395,7 +425,7 @@ def archive_media(media_id: UUID, principal: AuthPrincipal = Depends(csrf_princi
     referenced=session.scalar(select(DesignMediaReference.id).where(DesignMediaReference.organization_id==tenant.organization_id,DesignMediaReference.media_asset_id==media_id).limit(1))
     if referenced is not None: raise HTTPException(409,detail="This image is used by a published design.")
     product_reference=f"/api/v1/storefront/media/{media_id}"
-    if session.scalar(select(Product.id).where(Product.organization_id==tenant.organization_id,Product.image_reference==product_reference).limit(1)) is not None: raise HTTPException(409,detail="This image is used by a product.")
+    if session.scalar(select(Product.id).where(Product.organization_id==tenant.organization_id,Product.media_asset_id==media_id).limit(1)) is not None: raise HTTPException(409,detail="This image is used by a product.")
     item.status="archived";session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.archived",target_type="media_asset",target_id=str(item.id),outcome="success"));session.commit();return Response(status_code=204)
 
 @router.get("/platform/admin/organizations")

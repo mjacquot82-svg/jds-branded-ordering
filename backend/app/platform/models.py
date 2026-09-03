@@ -64,13 +64,17 @@ class MediaAsset(Base):
         UniqueConstraint("organization_id", "storage_key", name="uq_media_assets_org_storage_key"),
         UniqueConstraint("organization_id", "id", name="uq_media_assets_org_id"),
         CheckConstraint("status IN ('active','archived')", name="ck_media_assets_status"),
+        CheckConstraint("purpose IN ('design','product')", name="ck_media_assets_purpose"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     storage_key: Mapped[str] = mapped_column(String(500))
     media_type: Mapped[str] = mapped_column(String(100))
+    purpose: Mapped[str] = mapped_column(String(20), default="design", server_default="design")
     alt_text: Mapped[str] = mapped_column(String(300), default="", server_default="")
     byte_size: Mapped[int] = mapped_column(Integer)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
     checksum: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20), default="active", server_default="active")
     created_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("jds_users.id", ondelete="SET NULL"))

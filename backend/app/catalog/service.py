@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import re
 from uuid import UUID
 
+from app.platform.starter_media import STARTER_REFERENCE_PREFIX, starter_asset, starter_asset_available, starter_asset_path, starter_public_url
+
 from app.catalog.models import (
     Category,
     ModifierGroup,
@@ -256,13 +258,13 @@ class CatalogService:
         return self._owner_option_response(option)
 
     def create_product(self, payload: OwnerProductWrite) -> OwnerProductResponse:
-        self._validate_write(payload)
+        media_asset_id, image_reference = self._validate_write(payload)
         if self._repository.get_product_by_slug(payload.slug):
             raise ValueError("A product with this slug already exists.")
         if payload.lunch_special:
             self._repository.clear_lunch_special()
         product = Product()
-        self._apply_product(product, payload)
+        self._apply_product(product, payload, media_asset_id, image_reference)
         self._repository.add(product)
         self._repository.flush()
         self._replace_children(product, payload)
@@ -276,10 +278,12 @@ class CatalogService:
         conflicting = self._repository.get_product_by_slug(payload.slug)
         if conflicting is not None and conflicting.id != product_id:
             raise ValueError("A product with this slug already exists.")
-        self._validate_write(payload)
+        media_asset_id, image_reference = self._validate_write(
+            payload, existing_image=product.image_reference or "", existing_media_asset_id=product.media_asset_id
+        )
         if payload.lunch_special:
             self._repository.clear_lunch_special(except_product_id=product_id)
-        self._apply_product(product, payload)
+        self._apply_product(product, payload, media_asset_id, image_reference)
         self._replace_children(product, payload)
         self._repository.commit()
         return self._owner_product_response(product)
@@ -339,17 +343,37 @@ class CatalogService:
         self._repository.commit()
         return self._owner_product_response(product)
 
-    def _validate_write(self, payload: OwnerProductWrite) -> None:
+    def _validate_write(self, payload: OwnerProductWrite, *, existing_image: str = "", existing_media_asset_id: UUID | None = None) -> tuple[UUID | None, str]:
         if self._repository.get_category(payload.category_id) is None:
             raise ValueError("Category does not exist.")
         media_prefix = "/api/v1/storefront/media/"
-        if payload.image.startswith(media_prefix):
+        media_asset_id: UUID | None = None
+        image_reference = ""
+        if not payload.image:
+            pass
+        elif payload.image.startswith(STARTER_REFERENCE_PREFIX):
+            asset = starter_asset(payload.image)
+            if asset is None:
+                raise ValueError("Choose a valid JDS starter image.")
+            if not starter_asset_path(asset).is_file():
+                raise ValueError("This JDS starter image is not available yet.")
+            if not starter_asset_available(asset) and payload.image != existing_image:
+                raise ValueError("This JDS starter image is no longer available for new products.")
+            image_reference = payload.image
+        elif payload.image.startswith(media_prefix):
             try:
                 media_id = UUID(payload.image.removeprefix(media_prefix))
             except ValueError as error:
                 raise ValueError("Product image is invalid.") from error
             if not self._repository.media_asset_is_active(media_id):
                 raise ValueError("Choose an image from this business's media library.")
+            media_asset_id = media_id
+        elif payload.image == existing_image and existing_image and existing_media_asset_id is None:
+            # Preserve imported seed tokens while the product is edited, but do
+            # not permit owners to create or replace images with arbitrary text.
+            image_reference = existing_image
+        else:
+            raise ValueError("Choose an image from this business's media library.")
         groups = {group.id: group for group in self._repository.list_modifier_groups()}
         if len(set(payload.modifier_group_ids)) != len(payload.modifier_group_ids):
             raise ValueError("Modifier groups must be unique.")
@@ -369,6 +393,7 @@ class CatalogService:
                 raise ValueError(
                     f"{group.name} needs at least {group.maximum_selections} enabled options before assignment."
                 )
+        return media_asset_id, image_reference
 
     @staticmethod
     def _validate_group_write(payload: OwnerModifierGroupWrite) -> None:
@@ -457,13 +482,14 @@ class CatalogService:
         )
 
     @staticmethod
-    def _apply_product(product: Product, payload: OwnerProductWrite) -> None:
+    def _apply_product(product: Product, payload: OwnerProductWrite, media_asset_id: UUID | None, image_reference: str) -> None:
         product.slug = payload.slug.strip()
         product.name = payload.name
         product.description = payload.description
         product.base_price_cents = payload.base_price_cents
         product.category_id = payload.category_id
-        product.image_reference = payload.image
+        product.media_asset_id = media_asset_id
+        product.image_reference = image_reference
         product.is_featured = payload.featured
         product.is_lunch_special = payload.lunch_special
         product.is_published = payload.published
@@ -499,7 +525,7 @@ class CatalogService:
         return OwnerProductResponse(
             id=str(product.id), slug=product.slug, name=product.name,
             description=product.description or "", base_price_cents=product.base_price_cents,
-            category_id=str(product.category_id), image=product.image_reference or "",
+            category_id=str(product.category_id), image=(f"/api/v1/storefront/media/{product.media_asset_id}" if product.media_asset_id else product.image_reference or ""),
             available=product.availability.default_available if product.availability else True,
             featured=product.is_featured, lunch_special=product.is_lunch_special,
             published=product.is_published,
@@ -560,7 +586,7 @@ class CatalogService:
             slug=product.slug,
             name=product.name,
             description=product.description or "",
-            image=product.image_reference or "",
+            image=(f"/api/v1/storefront/media/{product.media_asset_id}" if product.media_asset_id else starter_public_url(product.image_reference or "")),
             featured=product.is_featured,
             lunch_special=product.is_lunch_special,
             base_price_cents=product.base_price_cents,

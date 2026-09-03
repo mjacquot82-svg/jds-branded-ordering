@@ -75,6 +75,29 @@ python -m app.jds_auth.bootstrap_owner \
 The command is idempotent for foundation records. Owner authentication does not
 initialize on customer routes and is independent of Clover OAuth.
 
+## Private media storage
+
+Media storage is selected explicitly with `JDS_MEDIA_STORAGE`. Development and
+tests may use `local`; production accepts only `supabase` and fails during app
+creation if permanent storage is absent or incomplete. Production variables:
+
+```text
+JDS_MEDIA_STORAGE=supabase
+JDS_SUPABASE_STORAGE_URL=https://<project-ref>.supabase.co
+JDS_SUPABASE_STORAGE_SERVICE_ROLE_KEY=<server-only secret>
+JDS_SUPABASE_STORAGE_BUCKET=<private bucket name>
+```
+
+Create the bucket once as a **private** platform-owned bucket. Do not grant
+anonymous or authenticated browser roles direct object access. The JDS backend
+uses its server-only service role and stores every tenant upload below
+`tenants/<organization-id>/<media-id>.<extension>`. Owners and storefronts read
+objects only through JDS endpoints, which authorize the current organization
+before fetching the private object. Never expose or commit the service role.
+
+For local development, set `JDS_MEDIA_STORAGE=local` and optionally
+`JDS_LOCAL_MEDIA_ROOT`; `/tmp/jds-local-media` is refused in production.
+
 ## Requirements
 
 - Python 3.12

@@ -8,13 +8,18 @@ import { canEditProducts, canManageLunchSpecial, canManageProductAvailability } 
 import ModifierManager from "./ModifierManager.jsx";
 import { isProductDraftDirty } from "./productDraft.js";
 import { imageRequirements } from "../design/imageRequirements.js";
-import { inspectImageFile, validateImageForSlot } from "../design/imageRequirements.js";
-import { fetchMedia, uploadMedia } from "../services/designStudioApi.js";
+import { inspectImageFile, validateProductImage } from "../design/imageRequirements.js";
+import { fetchMedia, fetchStarterMedia, uploadMedia } from "../services/designStudioApi.js";
+import { filterStarterMedia, starterPreviewUrl, suggestedStarterMedia } from "../services/starterMedia.js";
 
 const emptyProduct = { id: "", name: "", description: "", price: "", category: "", image: "", available: true, published: true, featured: false, lunchSpecial: false, variants: [], modifierGroupIds: [] };
 const money = (price) => new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(price);
 const toFormProduct = (product) => ({ ...emptyProduct, ...product, price: String(product.price ?? ""), variants: (product.variants || []).map((variant) => ({ ...variant, price: (variant.price_cents / 100).toFixed(2) })), modifierGroupIds: product.modifierGroupIds || [] });
 const variantKey = () => `variant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+function StarterImageGrid({ assets, onSelect }) {
+  return <div className="starter-image-grid">{assets.map((asset)=><button disabled={!asset.available} key={asset.reference} type="button" onClick={()=>onSelect(asset)}>{asset.thumbnailUrl?<img alt="" loading="lazy" src={asset.thumbnailUrl}/>:<span className="starter-image-unavailable">Image coming soon</span>}<b>{asset.name}</b><small>{asset.available?"Select":"Not yet available"}</small></button>)}</div>;
+}
 
 export default function ProductsPage({ setupMode = false, onCatalogChange, onDirtyChange }) {
   const { session } = useOwnerAuth();
@@ -41,7 +46,13 @@ export default function ProductsPage({ setupMode = false, onCatalogChange, onDir
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const [categoryBusy, setCategoryBusy] = useState(false);
   const [media, setMedia] = useState([]);
+  const [starterMedia, setStarterMedia] = useState([]);
+  const [starterPickerOpen, setStarterPickerOpen] = useState(false);
+  const [starterQuery, setStarterQuery] = useState("");
+  const [starterCategory, setStarterCategory] = useState("all");
+  const [imageLibraryOpen, setImageLibraryOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [imageFeedback, setImageFeedback] = useState({ status: "", message: "", fileName: "" });
   const [leaveOpen, setLeaveOpen] = useState(false);
   const dialogRef = useRef(null);
   const pendingLeaveRef = useRef(null);
@@ -52,15 +63,21 @@ export default function ProductsPage({ setupMode = false, onCatalogChange, onDir
   const selectedProduct = useMemo(() => products.find((product) => product.id === selectedProductId), [products, selectedProductId]);
   const filtered = useMemo(() => visibleProducts(products, { category, query, status: statusFilter }), [products, category, query, statusFilter]);
   const dirty = isProductDraftDirty(formProduct, savedProduct, categories[0]?.id || "");
+  const starterSuggestions = useMemo(() => suggestedStarterMedia(starterMedia, formProduct.name), [starterMedia, formProduct.name]);
+  const visibleStarterMedia = useMemo(() => filterStarterMedia(starterMedia, { category: starterCategory, query: starterQuery }), [starterMedia, starterCategory, starterQuery]);
+  const starterCategories = useMemo(() => [...new Set(starterMedia.map((asset) => asset.category))], [starterMedia]);
   useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false); }, [dirty, onDirtyChange]);
   const updateField = (field, value) => setFormProduct((current) => ({ ...current, [field]: value }));
-  const resetForm = useCallback(() => { const next = { ...emptyProduct, category: categories[0]?.id || "" }; setSelectedProductId(""); setFormProduct(next); setSavedProduct(next); setCreating(false); }, [categories]);
-  const startCreate = useCallback((categoryId = categories[0]?.id || "") => { const next = { ...emptyProduct, category: categoryId }; setSelectedProductId(""); setFormProduct(next); setSavedProduct(next); setCreating(true); setNotice(""); requestAnimationFrame(() => { editorRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }); nameRef.current?.focus?.(); }); }, [categories]);
-  const startEdit = useCallback((product) => { const next = toFormProduct(product); setSelectedProductId(product.id); setFormProduct(next); setSavedProduct(next); setNotice(""); window.scrollTo?.({ top: 0, behavior: "smooth" }); }, []);
+  const resetForm = useCallback(() => { const next = { ...emptyProduct, category: categories[0]?.id || "" }; setSelectedProductId(""); setFormProduct(next); setSavedProduct(next); setCreating(false); setImageFeedback({ status: "", message: "", fileName: "" }); }, [categories]);
+  const startCreate = useCallback((categoryId = categories[0]?.id || "") => { const next = { ...emptyProduct, category: categoryId }; setSelectedProductId(""); setFormProduct(next); setSavedProduct(next); setCreating(true); setNotice(""); setImageFeedback({ status: "", message: "", fileName: "" }); requestAnimationFrame(() => { editorRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }); nameRef.current?.focus?.(); }); }, [categories]);
+  const startEdit = useCallback((product) => { const next = toFormProduct(product); setSelectedProductId(product.id); setFormProduct(next); setSavedProduct(next); setNotice(""); setImageFeedback({ status: "", message: "", fileName: "" }); window.scrollTo?.({ top: 0, behavior: "smooth" }); }, []);
   const requestLeave = useCallback((action, navigation = false) => { pendingLeaveRef.current = { action, navigation }; setLeaveOpen(true); }, []);
   const requestProductAction = useCallback((action) => { if (dirty) requestLeave(action); else action(); }, [dirty, requestLeave]);
   useEffect(() => { const dialog = dialogRef.current; if (leaveOpen && !dialog?.open) dialog?.showModal(); if (!leaveOpen && dialog?.open) dialog.close(); }, [leaveOpen]);
-  useEffect(() => { fetchMedia().then((items)=>setMedia(items.filter((asset)=>imageRequirements.product.formats.includes(asset.mediaType)&&asset.width>=800&&asset.height>=800))).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchMedia().then((items)=>setMedia(items.filter((asset)=>imageRequirements.product.formats.includes(asset.mediaType)&&asset.width>=800&&asset.height>=800))).catch(() => {});
+    fetchStarterMedia().then((payload)=>setStarterMedia(payload.assets || [])).catch(() => setStarterMedia([]));
+  }, []);
   useEffect(() => { if (!dirty) return; const beforeUnload = (event) => { if (allowNavigationRef.current) return; event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", beforeUnload); return () => window.removeEventListener("beforeunload", beforeUnload); }, [dirty]);
   useEffect(() => {
     if (!dirty) return;
@@ -130,10 +147,40 @@ export default function ProductsPage({ setupMode = false, onCatalogChange, onDir
   }
   async function uploadProductImage(event) {
     const file = event.target.files?.[0]; if (!file) return;
-    setUploading(true); setNotice("");
-    try { const details = await inspectImageFile(file); const validation = validateImageForSlot(details, imageRequirements.product); if (validation.errors.length) throw new Error(validation.errors[0]); if(details.width<800||details.height<800)throw new Error("Product images must be at least 800 × 800 pixels."); const asset = await uploadMedia(file, `${formProduct.name || "Product"} image`, session.csrf_token, "product"); setMedia((items) => [asset, ...items]); updateField("image", asset.url); setNotice("Product image uploaded and selected."); }
-    catch (nextError) { setNotice(nextError.message || "Product image could not be uploaded."); }
+    if (uploading) return;
+    setUploading(true); setNotice(""); setImageFeedback({ status: "busy", message: "Checking image…", fileName: file.name });
+    try {
+      const details = await inspectImageFile(file);
+      const validation = validateProductImage(details);
+      if (validation.errors.length) {
+        setImageFeedback({ status: "error", message: validation.errors[0], fileName: file.name });
+        return;
+      }
+      setImageFeedback({ status: "busy", message: "Uploading product image…", fileName: file.name });
+      const asset = await uploadMedia(file, `${formProduct.name || "Product"} image`, session.csrf_token, "product");
+      setMedia((items) => [asset, ...items.filter((item) => item.id !== asset.id)]);
+      updateField("image", asset.url);
+      setImageFeedback({ status: validation.warnings.length ? "warning" : "success", message: validation.warnings.length ? `Product image uploaded. ${validation.warnings[0]}` : "Product image uploaded.", fileName: file.name });
+    }
+    catch (nextError) { setImageFeedback({ status: "error", message: `${nextError.message || "Product image could not be uploaded."} Try again.`, fileName: file.name }); }
     finally { setUploading(false); event.target.value = ""; }
+  }
+
+  function chooseProductImage(asset) {
+    updateField("image", asset.url);
+    setImageFeedback({ status: "success", message: "Product image selected from your images.", fileName: asset.altText || "Library image" });
+  }
+
+  function chooseStarterImage(asset) {
+    if (!asset.available) return;
+    updateField("image", asset.reference);
+    setImageFeedback({ status: "success", message: "JDS starter image selected.", fileName: asset.name });
+    setStarterPickerOpen(false);
+  }
+
+  function removeProductImage() {
+    updateField("image", "");
+    setImageFeedback({ status: "", message: "Product image removed from this draft.", fileName: "" });
   }
 
   async function toggleAvailability(product) {
@@ -176,11 +223,11 @@ export default function ProductsPage({ setupMode = false, onCatalogChange, onDir
     finally { savingRef.current = false; setSaving(false); }
   }
 
-  if (canEdit && managingModifiers) return <ModifierManager groups={modifierGroups} onClose={() => setManagingModifiers(false)} onSaveCustomization={saveCustomization} />;
+  if (canEdit && managingModifiers) return <ModifierManager groups={modifierGroups} onClose={() => setManagingModifiers(false)} onSaveCustomization={saveCustomization} returnLabel={dirty ? `Back to ${formProduct.name.trim() || "product"} draft` : "Menu items"} />;
 
   return <section className={`page-section admin-products-page ${setupMode?"embedded-menu-step":""}`}>
     <div className="page-heading admin-page-heading"><div><p className="eyebrow">{setupMode?"Step 4":"Product catalog"}</p><h1>{setupMode?"Build your menu":"Products"}</h1><p>{setupMode?"Start by creating a category, then add the first item customers can order.":canEdit ? "Organize categories, products, prices, options, and availability." : "Find an item, update availability, or set today’s Lunch Special."}</p></div>{canEdit && categories.length ? <div className="admin-heading-actions"><button className="secondary-button admin-reset-button" type="button" onClick={() => requestProductAction(() => startCreate())}>Add product</button></div> : null}</div>
-    {canEdit ? <nav className="products-view-switch" aria-label="Products sections"><button aria-current="page" className="is-active" type="button">Menu items</button><button type="button" onClick={() => requestProductAction(() => { resetForm(); setManagingModifiers(true); })}>Modifiers</button></nav> : null}
+    {canEdit ? <nav className="products-view-switch" aria-label="Products sections"><button aria-current="page" className="is-active" type="button">Menu items</button><button type="button" onClick={() => setManagingModifiers(true)}>Modifiers</button></nav> : null}
     {notice ? <div className="product-notice" role="status" aria-live="polite"><Check size={18} />{notice}</div> : null}
     {error ? <div className="product-notice error" role="alert">{error.message}</div> : null}
 
@@ -213,7 +260,7 @@ export default function ProductsPage({ setupMode = false, onCatalogChange, onDir
           <label><span>Name</span><input ref={nameRef} required value={formProduct.name} onChange={(event) => updateField("name", event.target.value)} /></label>
           <label><span>Description</span><textarea rows="3" value={formProduct.description} onChange={(event) => updateField("description", event.target.value)} /></label>
           <div className="form-grid"><label><span>Base price (CAD)</span><span className="money-input"><b>$</b><input inputMode="decimal" min="0" required step="0.01" type="number" value={formProduct.price} onChange={(event) => updateField("price", event.target.value)} /></span><small>Used when this product has no variants.</small></label><label><span>Category</span><select required value={formProduct.category || categories[0]?.id || ""} onChange={(event) => updateField("category", event.target.value)}>{categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
-          <section className="product-image-picker"><div><strong>Product image (optional)</strong><small>{imageRequirements.product.guidance} PNG, JPEG, or WebP; at least {imageRequirements.product.minWidth} × {imageRequirements.product.minHeight} pixels; up to 10 MB.</small></div>{formProduct.image?<div className="product-image-current"><img alt="Current product selection" src={formProduct.image}/><button type="button" onClick={()=>updateField("image","")}>Remove image</button></div>:null}<label className="secondary-button upload-button">{uploading?"Uploading…":"Upload product image"}<input accept="image/png,image/jpeg,image/webp" disabled={uploading} type="file" onChange={uploadProductImage}/></label>{media.length?<details><summary>Choose from my images</summary><div className="media-library-grid">{media.map((asset)=><button className={formProduct.image===asset.url?"is-selected":""} type="button" key={asset.id} onClick={()=>updateField("image",asset.url)}><img src={asset.ownerUrl||asset.url} alt={asset.altText||"Uploaded image"}/><span>{asset.altText||"Uploaded image"}</span></button>)}</div></details>:null}</section>
+          <section className="product-image-picker" aria-busy={uploading}><div><strong>Product image (optional)</strong><p>Need something for now? Choose a JDS starter image. You can replace it with a photo of your actual product anytime.</p><dl className="product-image-requirements"><div><dt>Recommended</dt><dd>Square image, 1:1</dd></div><div><dt>Minimum</dt><dd>{imageRequirements.product.minWidth} × {imageRequirements.product.minHeight} pixels</dd></div><div><dt>Formats</dt><dd>PNG, JPEG, WebP</dd></div><div><dt>Maximum</dt><dd>10 MB</dd></div></dl></div>{formProduct.image?<div className="product-image-current"><img alt="Selected product image" src={starterPreviewUrl(formProduct.image)}/><span>{formProduct.image.startsWith("starter:")?"JDS starter image selected":"Selected for this product"}</span><div><button className="secondary-button" type="button" onClick={()=>setStarterPickerOpen(true)}>Choose another starter image</button><label className="secondary-button upload-button">{uploading?"Uploading…":"Replace with my own"}<input accept="image/png,image/jpeg,image/webp" disabled={uploading} type="file" onChange={uploadProductImage}/></label><button type="button" disabled={uploading} onClick={removeProductImage}>Remove image</button></div></div>:null}<div className="product-image-source-actions"><button className="secondary-button" type="button" onClick={()=>setStarterPickerOpen((open)=>!open)}>Choose a starter image</button><label className="secondary-button upload-button">{uploading?"Uploading…":"Upload my own"}<input accept="image/png,image/jpeg,image/webp" disabled={uploading} type="file" onChange={uploadProductImage}/></label><button className="secondary-button" type="button" onClick={()=>setImageLibraryOpen((open)=>!open)}>Choose from my images</button></div>{imageFeedback.message?<div className={`product-image-feedback ${imageFeedback.status}`} role={imageFeedback.status==="error"?"alert":"status"} aria-live="polite"><strong>{imageFeedback.fileName}</strong><span>{imageFeedback.message}</span>{imageFeedback.status==="error"?<small>Your current product image and draft were not changed.</small>:null}</div>:null}{starterPickerOpen?<section className="starter-image-picker" aria-label="JDS starter images"><div className="starter-picker-heading"><div><strong>JDS starter images</strong><small>Café &amp; Restaurant · generic images you can replace anytime</small></div><button type="button" onClick={()=>setStarterPickerOpen(false)}>Cancel</button></div><div className="starter-picker-filters"><label><span>Search</span><input type="search" placeholder="Latte, wrap, salad…" value={starterQuery} onChange={(event)=>setStarterQuery(event.target.value)}/></label><label><span>Browse category</span><select value={starterCategory} onChange={(event)=>setStarterCategory(event.target.value)}><option value="all">All starter categories</option>{starterCategories.map((item)=><option key={item} value={item}>{item.replaceAll("-"," ")}</option>)}</select></label></div>{starterSuggestions.length&&!starterQuery&&starterCategory==="all"?<div className="starter-suggestions"><strong>Suggested for “{formProduct.name}”</strong><StarterImageGrid assets={starterSuggestions.slice(0,4)} onSelect={chooseStarterImage}/></div>:null}<StarterImageGrid assets={visibleStarterMedia} onSelect={chooseStarterImage}/></section>:null}{imageLibraryOpen?<section className="tenant-image-picker" aria-label="My images">{media.length?<div className="media-library-grid">{media.map((asset)=><button className={formProduct.image===asset.url?"is-selected":""} type="button" key={asset.id} onClick={()=>{chooseProductImage(asset);setImageLibraryOpen(false);}}><img loading="lazy" src={asset.ownerUrl||asset.url} alt={asset.altText||"Uploaded image"}/><span>{asset.altText||"Uploaded image"}</span></button>)}</div>:<p>You have no suitable product images yet. Upload your own image to add one.</p>}</section>:null}</section>
         </section>
         <section className="product-editor-section product-variants" aria-labelledby="product-variants-heading"><div className="product-editor-section-heading"><h3 id="product-variants-heading">Variants (optional)</h3><p>Different versions or prices of the same item, such as Small, Medium, and Large.</p></div>
           {formProduct.variants.length ? <div className="product-variant-list">{formProduct.variants.map((variant, index) => <div className={variant.active === false ? "product-variant-row is-unavailable" : "product-variant-row"} key={variant.id || variant.key}>
@@ -223,7 +270,7 @@ export default function ProductsPage({ setupMode = false, onCatalogChange, onDir
           </div>)}</div> : <div className="variant-empty-state"><strong>No variants added.</strong><p>Customers will order this product at its base price.</p></div>}
           <button className="secondary-button add-variant-button" type="button" onClick={addVariant}><Plus aria-hidden="true" size={17} /> Add variant</button>
         </section>
-        <section className="product-editor-section product-modifiers" aria-labelledby="product-modifiers-heading"><div className="product-editor-section-heading"><h3 id="product-modifiers-heading">Modifiers (optional)</h3><p>Customer choices or add-ons, such as Oat milk or an Extra shot.</p></div>{modifierGroups.some((group) => group.active) ? <div className="product-modifier-options">{modifierGroups.filter((group) => group.active || formProduct.modifierGroupIds.includes(group.id)).map((group) => { const assigned = formProduct.modifierGroupIds.includes(group.id); const preview = group.options.filter((item) => item.active).map((item) => `${item.name}${item.priceAdjustmentCents ? ` +$${(item.priceAdjustmentCents / 100).toFixed(2)}` : ""}`).join(" · "); return <label className={assigned ? "is-selected" : ""} key={group.id}><input checked={assigned} disabled={!group.active && !assigned} type="checkbox" onChange={() => toggleModifierGroup(group.id)} /><span><strong>{group.name}</strong><small>{preview || "No available modifiers yet"}{group.active ? "" : " · Category unavailable"}</small><b>{assigned ? "Available on this product" : "Not available on this product"}</b></span></label>; })}</div> : <div className="modifier-assignment-empty"><strong>No modifiers have been created yet.</strong></div>}<button className="secondary-button" type="button" onClick={() => requestProductAction(() => { resetForm(); setManagingModifiers(true); })}>Manage modifiers</button></section>
+        <section className="product-editor-section product-modifiers" aria-labelledby="product-modifiers-heading"><div className="product-editor-section-heading"><h3 id="product-modifiers-heading">Modifiers (optional)</h3><p>Customer choices or add-ons, such as Oat milk or an Extra shot.</p></div>{modifierGroups.some((group) => group.active) ? <div className="product-modifier-options">{modifierGroups.filter((group) => group.active || formProduct.modifierGroupIds.includes(group.id)).map((group) => { const assigned = formProduct.modifierGroupIds.includes(group.id); const preview = group.options.filter((item) => item.active).map((item) => `${item.name}${item.priceAdjustmentCents ? ` +$${(item.priceAdjustmentCents / 100).toFixed(2)}` : ""}`).join(" · "); return <label className={assigned ? "is-selected" : ""} key={group.id}><input checked={assigned} disabled={!group.active && !assigned} type="checkbox" onChange={() => toggleModifierGroup(group.id)} /><span><strong>{group.name}</strong><small>{preview || "No available modifiers yet"}{group.active ? "" : " · Category unavailable"}</small><b>{assigned ? "Available on this product" : "Not available on this product"}</b></span></label>; })}</div> : <div className="modifier-assignment-empty"><strong>No modifiers have been created yet.</strong></div>}<button className="secondary-button" type="button" onClick={() => setManagingModifiers(true)}>Manage modifiers</button></section>
         <section className="product-editor-section product-settings" aria-labelledby="product-settings-heading"><div className="product-editor-section-heading"><h3 id="product-settings-heading">Availability and placement</h3><p>Control where this product appears and whether it can be ordered.</p></div>
         <div className="product-state-controls" aria-label="Product visibility and placement">
           <label className={formProduct.available ? "product-state-toggle is-on" : "product-state-toggle"}><input checked={formProduct.available} type="checkbox" onChange={(event) => updateField("available", event.target.checked)} /><span aria-hidden="true" className="product-toggle-track" /><span><strong>Available for online ordering</strong><small>When visible, include it on the customer menu and allow ordering.</small></span></label>
