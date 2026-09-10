@@ -1,7 +1,8 @@
 # M2.5 Controlled Demo Launch — Implementation Report
 
 **Date:** 2026-09-10 (America/Toronto)  
-**Branch:** `m2.5/controlled-demo-launch`  
+**Branch:** `m2.5/controlled-demo-launch` @ `f27a377d06079afc3ec7f28511f53b6cbddde804`  
+**PR:** https://github.com/mjacquot82-svg/jds-branded-ordering/pull/5 (open, **not merged**)  
 **Base:** `feature-production-image-foundation` @ `a96df600ac0b4078b62c3dc8780b47ab7b526352`  
 **Production deploy:** none  
 **PR merge:** not performed (open PR only)  
@@ -150,7 +151,8 @@ Optional later: CAPTCHA keys per `docs/DEMO_PILOT_CAPTCHA_CONFIG.md`.
 
 ```
 Base SHA: a96df600ac0b4078b62c3dc8780b47ab7b526352
-M2.5 branch: m2.5/controlled-demo-launch
+M2.5 branch: m2.5/controlled-demo-launch @ f27a377
+PR: https://github.com/mjacquot82-svg/jds-branded-ordering/pull/5
 Backend: 386 passed (incl. 20 M2 + 10 M2.5)
 Frontend: 397/397 pass
 Build: pass
