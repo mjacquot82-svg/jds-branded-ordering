@@ -1,7 +1,8 @@
 # M1 Payment Provider Abstraction — Implementation Report
 
 **Date:** 2026-09-10 (America/Toronto)  
-**Branch:** `m1/payment-provider-abstraction`  
+**Branch:** `m1/payment-provider-abstraction` @ `8f09e6c`
+**PR:** https://github.com/mjacquot82-svg/jds-branded-ordering/pull/3 (open, **not merged**)  
 **Base:** `origin/feature-production-image-foundation` @ `2fd55d2` (M0 PR #2 merge)  
 **Production deploy:** none  
 **PR merge:** not performed (open PR only)
@@ -39,7 +40,7 @@ Documented in design §9. Key deltas: dual-write (keep `clover_*` columns), read
 
 - Branch: `m1/payment-provider-abstraction` from `2fd55d2`  
 - PR target: `feature-production-image-foundation`  
-- PR URL: *(filled after `gh pr create`)*  
+- PR URL: https://github.com/mjacquot82-svg/jds-branded-ordering/pull/3  
 
 ## 6. Interface (port)
 
