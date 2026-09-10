@@ -5,7 +5,8 @@ export function tenantStorageKey(tenantId, key) { return `jds:${tenantId}:${key}
 
 export function TenantProvider({ children }) {
   const [state, setState] = useState({ status: "loading", value: null });
-  const operationsRoute = /^\/(admin|owner|staff)(\/|$)/.test(globalThis.location?.pathname || "");
+  // /build is the self-service demo funnel — must not require a resolved café hostname.
+  const operationsRoute = /^\/(admin|owner|staff|build|activate|setup|go-live)(\/|$)/.test(globalThis.location?.pathname || "");
   useEffect(() => {
     let active = true;
     const reviewTenant = new URLSearchParams(globalThis.location?.search || "").get("review_tenant");
