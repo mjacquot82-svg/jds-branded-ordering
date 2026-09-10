@@ -29,6 +29,33 @@ from app.db.migrate import (
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 
+
+def reset_public_schema(database_url: str) -> None:
+    """Give migration tests an empty schema so shared TEST_DATABASE_URL dirt cannot
+    trip intentional data-loss downgrade guards from earlier application tests.
+
+    The V1 platform downgrade guard must keep refusing non-baseline tenant data.
+    Migration tests therefore cannot start from `alembic downgrade base` when the
+    shared integration database still holds fixture tenants/hostnames/media.
+    """
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP SCHEMA public CASCADE"))
+            connection.execute(text("CREATE SCHEMA public"))
+            connection.execute(text("GRANT ALL ON SCHEMA public TO CURRENT_USER"))
+            connection.execute(text("GRANT ALL ON SCHEMA public TO public"))
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def postgresql_url(postgresql_url: str) -> str:
+    reset_public_schema(postgresql_url)
+    return postgresql_url
+
+
 def make_alembic_config(database_url: str) -> Config:
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)

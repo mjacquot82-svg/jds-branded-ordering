@@ -19,7 +19,7 @@ from app.catalog.models import Product
 from app.jds_auth.service import AuthPrincipal
 from app.platform.assets import launch_qr_svg, tenant_icon_png, tenant_media_icon_png
 from app.platform.acquisition import AcquisitionError, AcquisitionRequest, MerchantAcquisitionService
-from app.platform.config import STANDARD_STOREFRONT_BASE_DOMAIN, hosted_storefront_hostname, storefront_url
+from app.platform.config import STANDARD_STOREFRONT_BASE_DOMAIN, hosted_storefront_hostname, storefront_base_domain, storefront_url
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
 from app.platform.entitlements import entitlement_features
 from app.platform.models import BillingPlan, BusinessProfile, DesignMediaReference, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
@@ -219,8 +219,22 @@ def choose_storefront(payload: StorefrontSlugInput, principal: AuthPrincipal = D
     item=session.scalar(select(StorefrontHostname).where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.hostname==hostname))
     if item is None:
         item=StorefrontHostname(organization_id=tenant.organization_id,hostname=hostname,status="pending",is_canonical=False);session.add(item)
-    session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="storefront.hostname_requested",target_type="storefront_hostname",target_id=str(item.id),outcome="success",metadata_json={"hostname":hostname}));session.commit()
-    return {"id":str(item.id),"slug":payload.slug,"hostname":hostname,"status":item.status}
+    # JDS-hosted subdomains under JDS_STOREFRONT_BASE_DOMAIN are platform-owned DNS/TLS.
+    # Auto-verify them so merchants are not blocked waiting for a platform admin call.
+    # Custom domains (future) still require explicit platform verification.
+    base = storefront_base_domain()
+    hosted = bool(base) and hostname == f"{payload.slug}.{base}"
+    if hosted:
+        session.execute(StorefrontHostname.__table__.update().where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.id!=item.id).values(is_canonical=False))
+        item.status="verified";item.is_canonical=True;item.verified_at=datetime.now(timezone.utc)
+        action="storefront.hostname_auto_verified"
+    else:
+        if item.status != "verified":
+            item.status="pending";item.is_canonical=False;item.verified_at=None
+        action="storefront.hostname_requested"
+    synchronize_public_readiness(session,tenant.organization_id)
+    session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action=action,target_type="storefront_hostname",target_id=str(item.id),outcome="success",metadata_json={"hostname":hostname,"hosted":hosted}));session.commit()
+    return {"id":str(item.id),"slug":payload.slug,"hostname":hostname,"status":item.status,"canonical":bool(item.is_canonical)}
 
 @router.post("/owner/storefront/{hostname_id}/retry")
 def retry_storefront(hostname_id: UUID, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:

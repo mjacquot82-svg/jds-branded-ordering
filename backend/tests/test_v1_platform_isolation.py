@@ -523,6 +523,45 @@ def test_storefront_uniqueness_and_tenant_scope_remain_authoritative(platform_db
         assert session.get(Organization,b).slug == beta.slug
 
 
+
+@pytest.mark.postgresql
+def test_hosted_storefront_choice_auto_verifies_under_configured_base_domain(platform_db, monkeypatch):
+    """JDS-owned subdomains must not require a platform-admin verify round-trip."""
+    engine, (a, _b, actor, _, _) = platform_db
+    principal = AuthPrincipal(
+        user_id=actor,
+        membership_id=uuid4(),
+        organization_id=a,
+        application_id=uuid4(),
+        session_id=uuid4(),
+        email="owner@example.com",
+        display_name="Owner",
+        role="owner",
+        permissions=frozenset(),
+        assurance_level="password",
+    )
+    monkeypatch.setenv("JDS_STOREFRONT_BASE_DOMAIN", "orders.example.test")
+    with Session(engine) as session:
+        organization = session.get(Organization, a)
+        chosen = choose_storefront(
+            StorefrontSlugInput(slug=organization.slug),
+            principal,
+            context(a, organization.slug),
+            session,
+        )
+        assert chosen["hostname"] == f"{organization.slug}.orders.example.test"
+        assert chosen["status"] == "verified"
+        assert chosen["canonical"] is True
+        row = session.scalar(
+            select(StorefrontHostname).where(
+                StorefrontHostname.organization_id == a,
+                StorefrontHostname.hostname == chosen["hostname"],
+            )
+        )
+        assert row is not None and row.status == "verified" and row.is_canonical is True
+        assert row.verified_at is not None
+
+
 def test_local_media_storage_keys_are_tenant_and_asset_scoped(tmp_path, monkeypatch):
     monkeypatch.setenv("JDS_LOCAL_MEDIA_ROOT", str(tmp_path))
     tenant_a, tenant_b, asset = uuid4(), uuid4(), uuid4()
