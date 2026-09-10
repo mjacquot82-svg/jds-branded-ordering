@@ -28,7 +28,7 @@ from app.platform.starter_media import STARTER_MEDIA_ASSETS, starter_asset_avail
 from app.platform.readiness import evaluate_publish_readiness, evaluate_storefront_readiness, onboarding_completed_steps, synchronize_public_readiness
 from app.tenancy.context import TenantContext
 from app.platform.commercial import enforce_not_self_upgrade, is_prospect
-from app.platform.demo_service import enforce_demo_media_limits, record_funnel_event
+from app.platform.demo_service import enforce_demo_media_limits, enforce_demo_upload_rate, record_funnel_event
 
 router = APIRouter(tags=["platform"])
 class Strict(BaseModel): model_config = ConfigDict(extra="forbid")
@@ -409,6 +409,11 @@ async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf
         prepared=prepare_image(data,content_type)
         width,height=prepared.width,prepared.height
         if purpose == "product" and (width < 800 or height < 800): raise MediaValidationError("Product images must be at least 800 × 800 pixels.")
+        # M2.5: enforce prospect quotas BEFORE writing bytes (fail closed).
+        enforce_demo_media_limits(session, tenant.organization_id, incoming_bytes=len(prepared.data))
+        settings = getattr(request.app.state, "auth_settings", None)
+        if settings is not None:
+            enforce_demo_upload_rate(session, settings.session_pepper, tenant.organization_id)
         storage=media_storage(request);storage_key,checksum=storage.put(tenant.organization_id,media_id,prepared.data,prepared.media_type)
     except MediaValidationError as error: raise HTTPException(422,detail=str(error)) from error
     except MediaStorageError as error: raise HTTPException(503,detail="Permanent media storage is unavailable.") from error
@@ -444,6 +449,10 @@ def create_media(payload: MediaInput, request: Request, principal: AuthPrincipal
     except (MediaStorageError,MediaValidationError,OSError) as error: raise HTTPException(422,detail="Stored media could not be verified.") from error
     stored_checksum=hashlib.sha256(stored_data).hexdigest()
     if payload.byte_size!=len(stored_data) or payload.checksum!=stored_checksum: raise HTTPException(422,detail="Stored media metadata does not match the object.")
+    enforce_demo_media_limits(session, tenant.organization_id, incoming_bytes=len(stored_data))
+    settings = getattr(request.app.state, "auth_settings", None)
+    if settings is not None:
+        enforce_demo_upload_rate(session, settings.session_pepper, tenant.organization_id)
     item=MediaAsset(organization_id=tenant.organization_id,created_by_user_id=principal.user_id,storage_key=payload.storage_key,media_type=prepared.media_type,byte_size=len(stored_data),checksum=stored_checksum,alt_text=payload.alt_text,width=prepared.width,height=prepared.height)
     session.add(item);session.flush();session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.created",target_type="media_asset",target_id=str(item.id),outcome="success"));session.commit()
     return {"id":str(item.id)}
