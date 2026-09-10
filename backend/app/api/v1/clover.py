@@ -36,6 +36,12 @@ from app.jds_auth.models import Organization
 from app.jds_auth.service import AuthPrincipal
 from app.orders.pricing import calculate_tax_cents
 from app.tenancy.context import TenantContext
+from app.payments.order_payment import (
+    mark_electronically_paid,
+    mark_electronic_payment_failed,
+    sync_checkout_started,
+)
+from app.payments.service import ensure_clover_selected_when_connected
 
 
 def reject_staging_clover(request: Request) -> None:
@@ -396,6 +402,7 @@ def oauth_callback(
         installation.connection_state = "connected"
         installation.reconnect_reason = None
         installation.page_config_uuid = settings.page_config_uuid
+        ensure_clover_selected_when_connected(session, tenant.organization_id)
         session.commit()
     except (CloverApiError, InvalidOAuthState, SQLAlchemyError, ValueError) as error:
         session.rollback()
@@ -935,8 +942,21 @@ def create_hosted_checkout(
         )
         if order.clover_checkout_expires_at <= now:
             raise ValueError("Clover returned an expired checkout session.")
+        sync_checkout_started(
+            order,
+            provider="clover",
+            checkout_ref=order.clover_checkout_session_id,
+            redirect_url=order.clover_checkout_url,
+            expires_at=order.clover_checkout_expires_at,
+            installation_id=installation.id,
+            provider_metadata={
+                "environment": installation.environment,
+                "merchant_id": merchant_id,
+            },
+        )
         order.status = OrderStatus.PAYMENT_PENDING
         order.version += 1
+        ensure_clover_selected_when_connected(session, order.organization_id)
         session.commit()
     except CloverApiError as error:
         session.rollback()
@@ -1256,13 +1276,13 @@ async def hosted_checkout_webhook(
 
     previous_status = order.status
     if payment_status == "APPROVED" and order.status != OrderStatus.PAID:
-        order.status = OrderStatus.PAID
+        mark_electronically_paid(order, provider_txn_ref=payment_id)
         event.outcome = "paid_transition_applied"
     elif (
         payment_status in {"DECLINED", "FAILED"}
         and order.status != OrderStatus.PAID
     ):
-        order.status = OrderStatus.PAYMENT_FAILED
+        mark_electronic_payment_failed(order, failure_code=payment_status or "failed")
         event.outcome = "failed_transition_applied"
     else:
         if order.status == OrderStatus.PAID:
@@ -1414,7 +1434,7 @@ def reconcile_hosted_checkout_payment(
             detail={"code": "clover_payment_already_reconciled"},
         )
     if order.status != OrderStatus.PAID:
-        order.status = OrderStatus.PAID
+        mark_electronically_paid(order, provider_txn_ref=payment_id)
         order.version += 1
     else:
         event.outcome = "duplicate_or_ignored"

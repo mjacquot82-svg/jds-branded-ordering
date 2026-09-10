@@ -12,7 +12,8 @@ const checkNames = {
   hours: "Weekly hours",
   catalog: "Published menu",
   published_design: "Published design",
-  clover: "Clover connection",
+  payment_connected: "Payment connection",
+  clover: "Payment connection",
 };
 const checkActions = {
   business_profile: ["Add your business details", "/admin/setup#business"],
@@ -21,7 +22,8 @@ const checkActions = {
   hours: ["Add your business hours", "/admin/scheduling"],
   catalog: ["Add at least one menu item", "/admin/products"],
   published_design: ["Review and publish your design", "/admin/design/preview"],
-  clover: ["Connect Clover before accepting payments", "/admin/setup#payments"],
+  payment_connected: ["Connect payments before accepting orders", "/admin/setup#payments"],
+  clover: ["Connect payments before accepting orders", "/admin/setup#payments"],
 };
 const subscriptionMessages = {
   unconfigured: "Billing is not enabled in this environment. All V1 features remain available.",
@@ -44,8 +46,8 @@ export default function LaunchPage({ setupMode = false }) {
   if(state.status==="error")return <section className="page-section launch-page"><h1>Launch area unavailable</h1><p role="alert">{state.error}</p><button className="secondary-button" type="button" onClick={()=>globalThis.location?.reload?.()}>Try again</button></section>;
   const {readiness,storefront,entitlements,onboarding,kit}=state;
   const launched=Boolean(onboarding.initialSetupCompletedAt);
-  const commerceReady=["business_profile","verified_hostname","fulfillment","hours","catalog","clover"].every((key)=>readiness.checks[key]);
-  const wizardActions={business_profile:"/setup/business",verified_hostname:"/setup/business",fulfillment:"/setup/ordering",hours:"/setup/ordering",catalog:"/setup/catalog",published_design:"/setup/preview",clover:"/setup/payments"};
+  const paymentOk=Boolean(readiness.checks.payment_connected ?? readiness.checks.clover); const commerceReady=["business_profile","verified_hostname","fulfillment","hours","catalog"].every((key)=>readiness.checks[key]) && paymentOk;
+  const wizardActions={business_profile:"/setup/business",verified_hostname:"/setup/business",fulfillment:"/setup/ordering",hours:"/setup/ordering",catalog:"/setup/catalog",published_design:"/setup/preview",payment_connected:"/setup/payments",clover:"/setup/payments"};
   const firstMissing=Object.keys(readiness.checks).find((key)=>!readiness.checks[key]);
   async function launch(){if(!globalThis.confirm?.("Launch the ordering app you reviewed?"))return;try{setState({...state,status:"publishing"});await launchMerchant(session.csrf_token);await load();}catch(error){setState({...state,status:"ready",error:error.message});}}
   async function enterApplication(){await refreshSession();navigate("/admin",{replace:true});}

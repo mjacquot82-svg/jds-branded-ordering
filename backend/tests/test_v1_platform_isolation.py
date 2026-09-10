@@ -16,6 +16,7 @@ from app.jds_auth.models import JdsApplication, JdsUser, Membership, MerchantAcq
 from app.availability.models import BusinessHour, BusinessSettings
 from app.catalog.models import Category, Product
 from app.clover.models import CloverInstallation
+from app.payments.models import OrganizationPaymentSettings
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
 from app.api.v1.platform import (
     BusinessInput,
@@ -147,6 +148,7 @@ def make_storefront_operationally_ready(session: Session, organization_id, actor
             access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             connection_state="connected",
         ),
+        OrganizationPaymentSettings(organization_id=organization_id, provider_key="clover"),
     ])
     session.flush()
     DesignService(session, context(organization_id, "ready")).publish(actor)

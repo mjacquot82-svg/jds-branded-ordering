@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 from app.availability.models import BusinessHour, BusinessSettings
 from app.catalog.models import Category, Product
 from app.availability.models import ProductAvailability
-from app.clover.models import CloverInstallation
 from app.jds_auth.models import Organization
+from app.payments.service import is_payment_connected
 from app.platform.models import BusinessProfile, DesignWorkspace, StorefrontHostname
 
 
@@ -20,13 +20,19 @@ class ReadinessResult:
 
     @property
     def public_ready(self) -> bool:
-        return all(self.checks.values())
+        # Ignore deprecated alias keys when computing readiness.
+        return all(
+            value
+            for key, value in self.checks.items()
+            if key != "clover"  # alias of payment_connected
+        )
 
 
 def evaluate_storefront_readiness(session: Session, organization_id: UUID) -> ReadinessResult:
     organization = session.get(Organization, organization_id)
     profile = session.get(BusinessProfile, organization_id)
     settings = session.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == organization_id))
+    payment_ok = is_payment_connected(session, organization_id)
     checks = {
         "organization": bool(organization and organization.is_active and organization.lifecycle_status == "active"),
         "business_profile": bool(
@@ -62,10 +68,9 @@ def evaluate_storefront_readiness(session: Session, organization_id: UUID) -> Re
             (workspace := session.get(DesignWorkspace, organization_id))
             and workspace.published_version_id
         ),
-        "clover": bool(session.scalar(select(CloverInstallation.id).where(
-            CloverInstallation.organization_id == organization_id,
-            CloverInstallation.connection_state == "connected",
-        ).limit(1))),
+        # Canonical readiness key (M1). "clover" retained as deprecated alias.
+        "payment_connected": payment_ok,
+        "clover": payment_ok,
     }
     return ReadinessResult(checks=checks)
 
@@ -89,7 +94,7 @@ def evaluate_publish_readiness(session: Session, organization_id: UUID) -> Readi
     launch = evaluate_storefront_readiness(session, organization_id)
     return ReadinessResult(checks={
         key: value for key, value in launch.checks.items()
-        if key in {"business_profile", "fulfillment", "hours", "catalog", "clover"}
+        if key in {"business_profile", "fulfillment", "hours", "catalog", "payment_connected"}
     })
 
 
@@ -97,6 +102,9 @@ def onboarding_completed_steps(result: ReadinessResult) -> list[str]:
     mapping = {
         "business": "business_profile", "storefront": "verified_hostname",
         "hours": "hours", "fulfillment": "fulfillment",
-        "design": "published_design", "catalog": "catalog", "clover": "clover",
+        "design": "published_design", "catalog": "catalog",
+        # Prefer payments; keep clover as accepted alias in completed_steps lists.
+        "payments": "payment_connected",
+        "clover": "payment_connected",
     }
     return [step for step, check in mapping.items() if result.checks.get(check, False)]

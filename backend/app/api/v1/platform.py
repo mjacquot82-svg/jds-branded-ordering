@@ -307,7 +307,7 @@ def save_onboarding(payload: OnboardingInput, _: AuthPrincipal = Depends(csrf_pr
         if item.completed_steps==derived_steps and item.current_step==payload.current_step and item.state==requested_state:
             return {"state":item.state,"currentStep":item.current_step,"completedSteps":item.completed_steps,"publicReady":item.public_ready,"revision":item.revision}
         raise HTTPException(409, detail="Onboarding changed in another session.")
-    allowed={"business","storefront","hours","fulfillment","design","catalog","clover"}
+    allowed={"business","storefront","hours","fulfillment","design","catalog","clover","payments"}
     journey_steps={"welcome","look","brand","business","catalog","ordering","payments","preview","launch","complete"}
     if not set(payload.completed_steps)<=allowed or payload.current_step not in journey_steps|allowed: raise HTTPException(422,detail="Invalid onboarding checkpoint.")
     item.completed_steps=derived_steps; item.current_step=payload.current_step; item.revision+=1
