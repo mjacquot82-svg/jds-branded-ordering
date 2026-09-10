@@ -73,7 +73,8 @@ test("customer password fields have accessible visibility toggles", () => {
 
 test("saved orders transition checkout to payment-only recovery", () => {
   assert.match(cartPageSource, /setSavedOrder\(order\)/);
-  assert.match(cartPageSource, /createCloverCheckout\(savedOrder\.public_token\)/);
+  assert.match(cartPageSource, /createCheckout\(savedOrder\.public_token\)/);
+  assert.match(cartPageSource, /from \"\.\.\/services\/paymentService\.js\"/);
   assert.match(cartPageSource, /The café has your order/);
   assert.match(cartPageSource, /Payment needed<\/span><strong>Complete now/);
   assert.match(cartPageSource, /Complete secure payment/);

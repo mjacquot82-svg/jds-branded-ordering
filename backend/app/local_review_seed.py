@@ -13,6 +13,7 @@ from app.availability.models import BusinessClosure, BusinessHour, BusinessSetti
 from app.catalog.models import Category, ModifierGroup, ModifierOption, Product, ProductModifierGroup, SelectionType
 from app.catalog.seed import seed_catalog
 from app.clover.models import CloverInstallation
+from app.payments.models import OrganizationPaymentSettings
 from app.db.engine import create_database_engine
 from app.jds_auth.foundation import ensure_foundation
 from app.jds_auth.models import ExternalIdentity, JdsUser, Membership, MerchantAcquisition, MerchantActivation, Organization, OwnerSession, Role
@@ -29,6 +30,13 @@ SECOND_CAFE_SLUG = "second-street-cafe"
 NEW_MERCHANT_SLUG = "new-merchant-demo"
 NEW_MERCHANT_RESET_CONFIRMATION = "reset-synthetic-new-merchant"
 NEW_MERCHANT_ACTIVATION_SECRET = "build-new-merchant-demo-review-app-2026"
+
+
+def _ensure_payment_settings(session, organization_id):
+    if session.get(OrganizationPaymentSettings, organization_id) is None:
+        session.add(OrganizationPaymentSettings(organization_id=organization_id, provider_key="clover"))
+
+
 
 
 def assert_safe_local_review(database_url: str) -> None:
@@ -86,6 +94,7 @@ def _seed_new_merchant(session: Session, organization: Organization, owner: JdsU
             access_token_expires_at=datetime.now(timezone.utc) + timedelta(days=3650),
             connection_state="connected",
         ))
+    _ensure_payment_settings(session, organization.id)
     existing_workspace = session.get(DesignWorkspace, organization.id)
     workspace = DesignService(session, _tenant(organization)).workspace()
     if existing_workspace is None:
@@ -244,6 +253,7 @@ def _seed_tenant_details(
         installation = CloverInstallation(organization_id=organization.id, merchant_id=f"{'fixture-disabled' if staging else 'local'}-{organization.slug}", environment="sandbox", app_id="staging-fixture-disabled" if staging else "local-review", access_token_encrypted="fixture-disabled-not-a-token" if staging else "synthetic-local-token", refresh_token_encrypted="fixture-disabled-not-a-refresh-token" if staging else "synthetic-local-refresh", access_token_expires_at=datetime.now(timezone.utc) + timedelta(days=3650))
         session.add(installation)
     installation.connection_state = "connected"
+    _ensure_payment_settings(session, organization.id)
     local_hostname = (
         "second-street-cafe.staging.invalid"
         if staging and second

@@ -13,7 +13,7 @@ import {
   isCheckoutContactComplete,
 } from "../services/checkoutOrder.js";
 import { createPendingOrder } from "../services/orderApi.js";
-import { createCloverCheckout } from "../services/cloverService.js";
+import { createCheckout } from "../services/paymentService.js";
 import { useCustomerCatalog } from "../stores/customerCatalogStore.js";
 import { isOrderingCustomerSession, useCustomerAuth } from "../auth/CustomerAuthContext.jsx";
 import { fetchCustomerProfile } from "../services/customerAccountApi.js";
@@ -291,7 +291,7 @@ export default function CartPage() {
       const submission = await prepareOrderSubmission(request);
       const order = await createPendingOrder(submission);
       setSavedOrder(order);
-      const checkout = await createCloverCheckout(order.public_token);
+      const checkout = await createCheckout(order.public_token);
 
       window.location.assign(checkout.checkout_url);
     } catch (error) {
@@ -311,7 +311,7 @@ export default function CartPage() {
     setIsPlacingOrder(true);
     setCheckoutError("");
     try {
-      const checkout = await createCloverCheckout(savedOrder.public_token);
+      const checkout = await createCheckout(savedOrder.public_token);
       window.location.assign(checkout.checkout_url);
     } catch (error) {
       setCheckoutError(getOrderErrorMessage(error));

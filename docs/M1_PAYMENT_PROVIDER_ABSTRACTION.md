@@ -190,3 +190,19 @@ When implementation begins, still **out of scope** unless separately chartered:
 - `.env.example` — Clover vs provider-neutral env classification
 - `docs/MERCHANT_HOSTNAME_PROVISIONING.md` — tenancy routing (not payments)
 - `docs/PRODUCTION_DEPLOYMENT.md` — optional Clover adapter enablement
+
+
+---
+
+## 9. Implementation deltas (verified against code during M1)
+
+Applied in `m1/payment-provider-abstraction`:
+
+1. **Port location:** `backend/app/payments/port.py` (+ `registry.py`, `service.py`, `errors.py`, `order_payment.py`).
+2. **Clover adapter:** `backend/app/payments/adapters/clover_adapter.py` wraps existing Clover client/settings and reuses `api/v1/clover.py` helpers for checkout payload/credentials — no Clover rewrite.
+3. **Generic API:** `POST /api/v1/payments/orders/{token}/checkout` and `GET /api/v1/payments/connection`. Legacy `/api/v1/clover/...` remains.
+4. **Readiness:** canonical check `payment_connected`; deprecated alias `clover` still emitted with the same boolean for transition. `public_ready` ignores the alias so it is not double-counted.
+5. **Schema:** additive `organization_payment_settings`, `payment_events`, and nullable `orders.payment_*` columns with Clover backfill + dual-write. Clover columns retained (not dropped in M1).
+6. **Fail closed:** missing `organization_payment_settings` or unsupported `provider_key` never falls back to Clover silently — even if a `clover_installations` row exists.
+7. **Frontend:** `CartPage` uses `paymentService.createCheckout` → `/payments/...`. `cloverService.js` remains for OAuth/admin Clover connection.
+8. **Refunds:** port method exists; Clover refund execution not exposed in M1 (explicit error).

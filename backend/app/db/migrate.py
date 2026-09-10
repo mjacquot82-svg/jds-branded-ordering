@@ -17,6 +17,7 @@ from app.jds_auth import models as auth_models  # noqa: F401
 from app.customers import models as customer_models  # noqa: F401
 from app.push import models as push_models  # noqa: F401
 from app.clover import models as clover_models  # noqa: F401
+from app.payments import models as payment_models  # noqa: F401
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 CATALOG_BASELINE_REVISION = "20260727_01"
@@ -78,6 +79,16 @@ ORDER_CLOVER_COLUMN_NAMES = frozenset(
         "ready_at",
         "completed_at",
         "cancelled_at",
+        # M1 provider-neutral payment columns (head-only vs order baseline)
+        "payment_provider",
+        "payment_status",
+        "payment_checkout_ref",
+        "payment_redirect_url",
+        "payment_expires_at",
+        "payment_provider_txn_id",
+        "payment_failure_code",
+        "payment_paid_at",
+        "payment_provider_metadata",
     }
 )
 ORDER_TENANT_COLUMN_NAMES = frozenset({"organization_id"})
@@ -92,6 +103,7 @@ ORDER_HEAD_ONLY_CHECK_NAMES = frozenset(
         "ck_orders_tax_name_nonblank",
         "ck_orders_tax_rate_millionths_valid",
         "ck_orders_fulfillment_status_valid",
+        "ck_orders_payment_status_valid",
     }
 )
 ORDER_ITEM_MODIFIER_HEAD_ONLY_COLUMN_NAMES = frozenset({"quantity"})

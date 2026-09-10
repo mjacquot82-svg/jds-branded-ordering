@@ -1,5 +1,6 @@
 import { OrderApiError } from "./orderApi.js";
 import { CloverCheckoutError } from "./cloverService.js";
+import { PaymentCheckoutError } from "./paymentService.js";
 import { normalizeCustomerPhone } from "./customerPhone.js";
 import { tenantBrowserKey } from "./tenantBrowserState.js";
 
@@ -201,7 +202,7 @@ export function clearOrderSubmission(
 }
 
 export function getOrderErrorMessage(error) {
-  if (error instanceof CloverCheckoutError) {
+  if (error instanceof PaymentCheckoutError || error instanceof CloverCheckoutError) {
     return error.message;
   }
   if (!(error instanceof OrderApiError)) {
