@@ -20,7 +20,7 @@ from app.platform.design import DEFAULT_CONFIG
 from app.platform.models import DesignWorkspace, OnboardingState, OperationalAuditEvent
 
 
-ALLOWED_ACQUISITION_SOURCES = frozenset({"clover", "direct", "invitation", "platform", "local_review", "staging_review"})
+ALLOWED_ACQUISITION_SOURCES = frozenset({"clover", "direct", "invitation", "platform", "local_review", "staging_review", "self_service_demo"})
 
 
 class AcquisitionError(ValueError):

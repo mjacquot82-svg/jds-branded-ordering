@@ -6,7 +6,7 @@ const studio=readFileSync(new URL("../../src/admin/DesignStudioPage.jsx",import.
 const styles=readFileSync(new URL("../../src/style.css",import.meta.url),"utf8");
 
 test("hydration settles Step 2 into retryable ready or explicit error state",()=>{
-  assert.match(studio,/Promise\.all\(\[fetchDesignDraft\(\),fetchDesignVersions\(\),fetchMedia\(\),fetchReadiness\(\)\]\)/);
+  assert.match(studio,/Promise\.all\(\[fetchDesignDraft\(\),fetchDesignVersions\(\),fetchMedia\(\),fetchReadiness\(\),fetchDemoStatus\(\)\.catch\(\(\)=>null\)\]\)/);
   assert.match(studio,/setStatus\("ready"\)/);assert.match(studio,/setStatus\("error"\)/);
   assert.doesNotMatch(studio,/setStatus\("loading"\)[\s\S]*finally/);
 });

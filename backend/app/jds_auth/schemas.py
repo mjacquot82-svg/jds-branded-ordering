@@ -101,6 +101,7 @@ class SessionResponse(AuthSchema):
     csrf_token: str
     app_launched: bool = False
     onboarding_current_step: str = "welcome"
+    commercial_mode: str = "live"
 
 
 class AuthorizedOrganizationResponse(AuthSchema):
@@ -111,6 +112,7 @@ class AuthorizedOrganizationResponse(AuthSchema):
     role: str
     app_launched: bool = False
     onboarding_current_step: str = "welcome"
+    commercial_mode: str = "live"
 
 
 class MessageResponse(AuthSchema):

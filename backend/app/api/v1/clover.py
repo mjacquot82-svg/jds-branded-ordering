@@ -42,6 +42,7 @@ from app.payments.order_payment import (
     sync_checkout_started,
 )
 from app.payments.service import ensure_clover_selected_when_connected
+from app.platform.commercial import enforce_live_commerce
 
 
 def reject_staging_clover(request: Request) -> None:
@@ -295,6 +296,7 @@ def oauth_start(
     principal: AuthPrincipal = Depends(require_read_permission("integrations.manage")),
     tenant: TenantContext = Depends(authenticated_owner_tenant),
 ) -> RedirectResponse:
+    enforce_live_commerce(session, tenant.organization_id, action="clover_oauth")
     state = create_oauth_state(
         settings.state_secret, organization_id=str(tenant.organization_id),
         membership_id=str(principal.membership_id), environment=settings.environment,
@@ -890,6 +892,7 @@ def create_hosted_checkout(
         ) from error
     if order is None:
         raise HTTPException(status_code=404, detail={"code": "order_not_found"})
+    enforce_live_commerce(session, order.organization_id, action="clover_checkout")
     installation, access_token = _active_credential(
         session,
         settings,

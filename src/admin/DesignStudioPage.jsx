@@ -11,13 +11,14 @@ import { createMediaUrlIndex, headerBrandingMode, imagePositionContracts, resolv
 import { describeLayoutCapabilities, getLayoutDefinition, layoutChoices, layoutComparisonRows } from "../design/layoutDefinitions.js";
 import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
 import { archiveMedia, fetchDesignDraft, fetchDesignVersions, fetchMedia, fetchReadiness, publishDesign, revertDesign, saveDesignDraft, uploadMedia } from "../services/designStudioApi.js";
+import { fetchDemoStatus } from "../services/demoFunnelApi.js";
 import { useCatalogProducts } from "../stores/catalogStore.js";
 
 const builderStages = [
   { label: "Choose your app layout", to: "/admin/design" }, { label: "Make it yours", to: "/admin/design#brand" },
   { label: "Business details", to: "/admin/setup#business" }, { label: "Build your menu", to: "/admin/products" },
   { label: "Set up ordering", to: "/admin/scheduling" }, { label: "Connect payments", to: "/admin/setup#payments" },
-  { label: "Preview", to: "/admin/design/preview" }, { label: "Launch", to: "/admin/launch" },
+  { label: "Preview", to: "/admin/design/preview" }, { label: "Launch", to: "/admin/launch" }, { label: "Go Live", to: "/admin/go-live" },
 ];
 function channel(value){const normalized=value/255;return normalized<=.04045?normalized/12.92:((normalized+.055)/1.055)**2.4;}
 function luminance(color){return .2126*channel(parseInt(color.slice(1,3),16))+.7152*channel(parseInt(color.slice(3,5),16))+.0722*channel(parseInt(color.slice(5,7),16));}
@@ -30,10 +31,10 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
   const [draft,setDraft]=useState(null);const [savedConfig,setSavedConfig]=useState(null);const [status,setStatus]=useState("loading");const [message,setMessage]=useState("");
   const [saveError,setSaveError]=useState("");
   const [versions,setVersions]=useState([]);const [media,setMedia]=useState([]);const [uploading,setUploading]=useState(false);const [readiness,setReadiness]=useState(null);const [mobileView,setMobileView]=useState("edit");const [imageFeedback,setImageFeedback]=useState({});
-  const [activeSlot,setActiveSlot]=useState(null);const [showLayoutAreas,setShowLayoutAreas]=useState(false);
+  const [activeSlot,setActiveSlot]=useState(null);const [showLayoutAreas,setShowLayoutAreas]=useState(false);const [demoStatus,setDemoStatus]=useState(null);
   const mediaById=useMemo(()=>createMediaUrlIndex(media),[media]);
   const refreshVersions=()=>fetchDesignVersions().then(setVersions);
-  useEffect(()=>{Promise.all([fetchDesignDraft(),fetchDesignVersions(),fetchMedia(),fetchReadiness()]).then(([value,history,assets,checks])=>{setDraft({...value,config:withInstalledAppDefaults(value.config)});setSavedConfig(value.config);setVersions(history);setMedia(assets);setReadiness(checks);setStatus("ready");}).catch((error)=>{setMessage(error.message);setStatus("error");});},[]);
+  useEffect(()=>{Promise.all([fetchDesignDraft(),fetchDesignVersions(),fetchMedia(),fetchReadiness(),fetchDemoStatus().catch(()=>null)]).then(([value,history,assets,checks,demo])=>{setDraft({...value,config:withInstalledAppDefaults(value.config)});setSavedConfig(value.config);setVersions(history);setMedia(assets);setReadiness(checks);setDemoStatus(demo);setStatus("ready");}).catch((error)=>{setMessage(error.message);setStatus("error");});},[]);
   if(status==="loading")return <section className="page-section">
 <h1>Design Studio</h1>
 <p>Loading your design…</p>
@@ -84,6 +85,7 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
     {guided&&!wizardStep?<nav className="builder-progress" aria-label="Build your app progress">{builderStages.map((stage,index)=>
 <Link className={index<2?"active":""} key={stage.label} to={stage.to}>
 <span>{index+1}</span>{stage.label}</Link>)}</nav>:null}
+    {demoStatus?.isProspect?<aside className="demo-prospect-banner" role="status"><strong>Free demo mode</strong><span>Real orders and payments are locked. Preview anytime, then <Link to="/admin/go-live">request activation</Link> (~{demoStatus.pricing?.amountDisplay || "CAD $150/month"}, JDS takes 0% of sales).</span></aside>:null}
     <header className="design-studio-header">
 <div>
 <p className="eyebrow">{wizardStep==="look"?"Step 1":wizardStep==="brand"?"Step 2":guided?"Welcome to JDS":"Your storefront"}</p>
