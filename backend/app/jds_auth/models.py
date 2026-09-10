@@ -24,12 +24,17 @@ class JdsApplication(Timestamped, Base):
 
 class Organization(Timestamped, Base):
     __tablename__ = "organizations"
-    __table_args__ = (CheckConstraint("lifecycle_status IN ('onboarding','active','suspended','archived')", name="ck_organizations_lifecycle_status"),)
+    __table_args__ = (
+        CheckConstraint("lifecycle_status IN ('onboarding','active','suspended','archived')", name="ck_organizations_lifecycle_status"),
+        CheckConstraint("commercial_mode IN ('prospect','live')", name="ck_organizations_commercial_mode"),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     slug: Mapped[str] = mapped_column(String(100), unique=True)
     name: Mapped[str] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     lifecycle_status: Mapped[str] = mapped_column(String(20), default="active", server_default="active")
+    # M2: free self-service demos are prospect; paying/legacy merchants are live.
+    commercial_mode: Mapped[str] = mapped_column(String(20), default="live", server_default="live")
 
 
 class JdsUser(Timestamped, Base):

@@ -34,7 +34,7 @@ def evaluate_storefront_readiness(session: Session, organization_id: UUID) -> Re
     settings = session.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == organization_id))
     payment_ok = is_payment_connected(session, organization_id)
     checks = {
-        "organization": bool(organization and organization.is_active and organization.lifecycle_status == "active"),
+        "organization": bool(organization and organization.is_active and organization.lifecycle_status == "active" and getattr(organization, "commercial_mode", "live") == "live"),
         "business_profile": bool(
             profile and profile.display_name.strip() and profile.timezone.strip()
             and profile.currency.strip() and profile.fulfillment_wording.strip()

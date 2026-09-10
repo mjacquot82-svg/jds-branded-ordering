@@ -27,6 +27,8 @@ from app.platform.media import MediaStorage, MediaStorageError, MediaValidationE
 from app.platform.starter_media import STARTER_MEDIA_ASSETS, starter_asset_available, starter_asset_path, starter_reference
 from app.platform.readiness import evaluate_publish_readiness, evaluate_storefront_readiness, onboarding_completed_steps, synchronize_public_readiness
 from app.tenancy.context import TenantContext
+from app.platform.commercial import enforce_not_self_upgrade, is_prospect
+from app.platform.demo_service import enforce_demo_media_limits, record_funnel_event
 
 router = APIRouter(tags=["platform"])
 class Strict(BaseModel): model_config = ConfigDict(extra="forbid")
@@ -122,11 +124,20 @@ def design_versions(response: Response, tenant: TenantContext = Depends(authenti
 
 @router.put("/owner/design")
 def save_design(payload: DraftInput, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
-    try: return design_payload(DesignService(session, tenant).save(payload.config, payload.revision, principal.user_id))
+    try:
+        result = design_payload(DesignService(session, tenant).save(payload.config, payload.revision, principal.user_id))
+        if is_prospect(session, tenant.organization_id):
+            event = "logo_added" if payload.config.get("logoMediaId") else "branding_changed"
+            record_funnel_event(session, event_name=event, organization_id=tenant.organization_id, actor_user_id=principal.user_id)
+            record_funnel_event(session, event_name="demo_saved", organization_id=tenant.organization_id, actor_user_id=principal.user_id)
+            session.commit()
+        return result
     except DesignValidationError as error: raise HTTPException(409, detail={"code":"design_invalid","message":str(error)}) from error
 
 @router.post("/owner/design/publish")
 def publish_design(principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    if is_prospect(session, tenant.organization_id):
+        raise HTTPException(403, detail={"code":"demo_publish_locked","message":"Free demos use authenticated preview only. Request activation to publish a live storefront."})
     readiness = evaluate_publish_readiness(session, tenant.organization_id)
     if not readiness.public_ready:
         raise HTTPException(409, detail={"code":"storefront_not_ready","message":"Complete required commerce setup before publishing.","checks":readiness.checks})
@@ -143,11 +154,13 @@ def revert_design(payload: RevertInput, principal: AuthPrincipal = Depends(csrf_
     except DesignValidationError as error: raise HTTPException(404, detail={"code":"version_not_found","message":str(error)}) from error
 
 @router.get("/owner/design/preview")
-def design_preview(response: Response, tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+def design_preview(response: Response, principal: AuthPrincipal = Depends(current_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     response.headers["Cache-Control"]="private, no-store"
     workspace=DesignService(session,tenant).workspace();profile=session.get(BusinessProfile,tenant.organization_id)
     assets=session.scalars(select(MediaAsset).where(MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active")).all()
-    return {"tenant":{"id":str(tenant.organization_id),"slug":tenant.organization_slug},"business":business_payload(profile) if profile else None,"design":workspace.draft_config,"draftRevision":workspace.revision,"checkoutEnabled":False,"media":[{"id":str(asset.id),"url":f"/api/v1/owner/media/{asset.id}/content","altText":asset.alt_text} for asset in assets]}
+    if is_prospect(session, tenant.organization_id):
+        record_funnel_event(session, event_name="preview_opened", organization_id=tenant.organization_id, actor_user_id=principal.user_id); session.commit()
+    return {"tenant":{"id":str(tenant.organization_id),"slug":tenant.organization_slug},"business":business_payload(profile) if profile else None,"design":workspace.draft_config,"draftRevision":workspace.revision,"checkoutEnabled":False,"commercialMode":"prospect" if is_prospect(session, tenant.organization_id) else "live","media":[{"id":str(asset.id),"url":f"/api/v1/owner/media/{asset.id}/content","altText":asset.alt_text} for asset in assets]}
 
 @router.get("/owner/businesses")
 def businesses(principal: AuthPrincipal = Depends(current_principal), session: Session = Depends(get_catalog_session)) -> list[dict]:
@@ -210,6 +223,8 @@ def launch_print(tenant: TenantContext = Depends(authenticated_owner_tenant), se
 
 @router.put("/owner/storefront")
 def choose_storefront(payload: StorefrontSlugInput, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    if is_prospect(session, tenant.organization_id):
+        raise HTTPException(403, detail={"code":"demo_hostname_locked","message":"Production storefront addresses unlock after JDS activation. Use Design Studio preview while building your free demo."})
     hostname=hosted_storefront_hostname(payload.slug)
     if not hostname: raise HTTPException(503,detail="Hosted storefront domains are not configured in this environment.")
     conflict=session.scalar(select(Organization.id).where(Organization.slug==payload.slug,Organization.id!=tenant.organization_id))
@@ -320,6 +335,7 @@ def save_onboarding(payload: OnboardingInput, _: AuthPrincipal = Depends(csrf_pr
 
 @router.post("/owner/launch")
 def initial_launch(principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    enforce_not_self_upgrade(session, tenant.organization_id)
     onboarding = session.scalar(select(OnboardingState).where(OnboardingState.organization_id == tenant.organization_id).with_for_update())
     if onboarding is None:
         onboarding = OnboardingState(organization_id=tenant.organization_id, current_step="launch")

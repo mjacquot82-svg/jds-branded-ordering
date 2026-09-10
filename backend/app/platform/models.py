@@ -241,3 +241,93 @@ class OperationalAuditEvent(Base):
     outcome: Mapped[str] = mapped_column(String(30))
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+class BillingPlanPricing(Base):
+    """Central, non-hard-coded public list price for a billing plan (M2)."""
+
+    __tablename__ = "billing_plan_pricing"
+    __table_args__ = (
+        CheckConstraint("amount_cents >= 0", name="ck_billing_plan_pricing_amount"),
+        CheckConstraint("jds_sales_take_percent = 0", name="ck_billing_plan_pricing_jds_take"),
+        CheckConstraint("interval IN ('month')", name="ck_billing_plan_pricing_interval"),
+    )
+    plan_key: Mapped[str] = mapped_column(ForeignKey("billing_plans.key", ondelete="CASCADE"), primary_key=True)
+    currency: Mapped[str] = mapped_column(String(3), default="CAD", server_default="CAD")
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    interval: Mapped[str] = mapped_column(String(20), default="month", server_default="month")
+    jds_sales_take_percent: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    public_label: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DemoPendingSignup(Base):
+    __tablename__ = "demo_pending_signups"
+    __table_args__ = (
+        UniqueConstraint("email_hash", name="uq_demo_pending_signups_email_hash"),
+        CheckConstraint("status IN ('pending','claimed','expired','cancelled')", name="ck_demo_pending_signups_status"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    email_hash: Mapped[str] = mapped_column(String(64))
+    business_name: Mapped[str] = mapped_column(String(200))
+    contact_name: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    desired_slug: Mapped[str | None] = mapped_column(String(63))
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claimed_organization_id: Mapped[UUID | None] = mapped_column(ForeignKey("organizations.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DemoActivationRequest(Base):
+    __tablename__ = "demo_activation_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "processor_preference IN ('clover','square','stripe','moneris','other','not_sure')",
+            name="ck_demo_activation_processor",
+        ),
+        CheckConstraint(
+            "status IN ('requested','in_review','approved','rejected','withdrawn')",
+            name="ck_demo_activation_status",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("jds_users.id", ondelete="SET NULL"))
+    business_name: Mapped[str] = mapped_column(String(200))
+    contact_name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str] = mapped_column(String(320))
+    phone: Mapped[str | None] = mapped_column(String(30))
+    city: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    desired_domain: Mapped[str | None] = mapped_column(String(253))
+    processor_preference: Mapped[str] = mapped_column(String(40), default="not_sure", server_default="not_sure")
+    status: Mapped[str] = mapped_column(String(30), default="requested", server_default="requested", index=True)
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    quoted_plan_key: Mapped[str] = mapped_column(String(50), default="jds-standard", server_default="jds-standard")
+    quoted_amount_cents: Mapped[int] = mapped_column(Integer, default=15000, server_default="15000")
+    quoted_currency: Mapped[str] = mapped_column(String(3), default="CAD", server_default="CAD")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DemoFunnelEvent(Base):
+    __tablename__ = "demo_funnel_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_name IN ("
+            "'demo_started','logo_added','branding_changed','menu_edited',"
+            "'preview_opened','demo_saved','activation_viewed','activation_requested'"
+            ")",
+            name="ck_demo_funnel_event_name",
+        ),
+        Index("ix_demo_funnel_events_org_time", "organization_id", "occurred_at"),
+        Index("ix_demo_funnel_events_name", "event_name"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID | None] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    actor_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("jds_users.id", ondelete="SET NULL"))
+    event_name: Mapped[str] = mapped_column(String(60))
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+

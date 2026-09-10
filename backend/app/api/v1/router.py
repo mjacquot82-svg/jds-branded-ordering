@@ -18,6 +18,7 @@ from app.api.v1.customer_push import router as customer_push_router
 from app.api.v1.staff_access import router as staff_access_router
 from app.api.v1.loyalty import router as loyalty_router
 from app.api.v1.platform import router as platform_router
+from app.api.v1.demo import router as demo_router
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(catalog_router)
@@ -38,3 +39,4 @@ router.include_router(customer_push_router)
 router.include_router(staff_access_router)
 router.include_router(loyalty_router)
 router.include_router(platform_router)
+router.include_router(demo_router)

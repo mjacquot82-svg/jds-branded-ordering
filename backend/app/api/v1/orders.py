@@ -25,6 +25,7 @@ from app.orders.service import (
 from app.api.v1.customer_auth import current_ordering_customer
 from app.jds_auth.service import AuthPrincipal
 from app.tenancy.context import TenantContext
+from app.platform.commercial import enforce_live_commerce
 
 class OrderApiRoute(APIRoute):
     def get_route_handler(
@@ -135,6 +136,7 @@ def create_pending_order(
         domain_request = request.to_domain()
         if customer.organization_id != tenant.organization_id:
             raise_order_http_error(status.HTTP_404_NOT_FOUND, "tenant_not_found", "Storefront is unavailable.")
+        enforce_live_commerce(session, tenant.organization_id, action="create_order")
         order = OrderCreationService(session, tenant).create_pending_order(
             domain_request,
             now=now,

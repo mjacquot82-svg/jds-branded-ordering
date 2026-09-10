@@ -39,6 +39,7 @@ from app.jds_auth.schemas import (
     PasswordResetRequest,
     SessionResponse,
 )
+from app.platform.commercial import enforce_live_commerce
 from app.jds_auth.service import (
     AuthPrincipal,
     AuthenticationError,
@@ -49,6 +50,7 @@ from app.jds_auth.service import (
     SessionInvalid,
     utc_now,
 )
+from app.jds_auth.models import Organization
 from app.platform.models import OnboardingState, StorefrontHostname
 from app.platform.acquisition import ActivationInvalid, MerchantAcquisitionService
 
@@ -180,6 +182,7 @@ def require_read_permission(permission: str) -> Callable[..., AuthPrincipal]:
 
 def session_response(principal: AuthPrincipal, csrf_token: str, session: Session | None = None) -> SessionResponse:
     onboarding = session.get(OnboardingState, principal.organization_id) if session is not None else None
+    organization = session.get(Organization, principal.organization_id) if session is not None else None
     return SessionResponse(
         user_id=str(principal.user_id), email=principal.email,
         display_name=principal.display_name, organization_id=str(principal.organization_id),
@@ -188,6 +191,7 @@ def session_response(principal: AuthPrincipal, csrf_token: str, session: Session
         # problem must never turn an established merchant back into a new one.
         app_launched=bool(onboarding and onboarding.initial_setup_completed_at is not None),
         onboarding_current_step=onboarding.current_step if onboarding else "welcome",
+        commercial_mode=getattr(organization, "commercial_mode", "live") if organization else "live",
     )
 
 
@@ -263,6 +267,7 @@ def authorized_organizations(
                 and onboarding.initial_setup_completed_at is not None
             ),
             onboarding_current_step=onboarding.current_step if onboarding else "welcome",
+            commercial_mode=getattr(organization, "commercial_mode", "live"),
         )
         for membership, organization, role in service.workforce_organizations(principal)
     ]
@@ -336,6 +341,7 @@ def accept_invitation(payload: InvitationAcceptRequest, request: Request, _: Non
 def create_invitation(payload: InvitationCreateRequest, principal: AuthPrincipal = Depends(require_permission("members.invite")), service: AuthenticationService = Depends(get_auth_service), now: datetime = Depends(utc_now)) -> MessageResponse:
     enforce_limit(service, INVITE_CREATE_ACTOR, str(principal.user_id), now)
     enforce_limit(service, INVITE_CREATE_ORGANIZATION, str(principal.organization_id), now)
+    enforce_live_commerce(service._session, principal.organization_id, action="invite_staff")
     try:
         service.create_invitation(payload.email, payload.role, now=now, invited_by=principal)
     except (IdentityProviderError, SQLAlchemyError, ValueError):

@@ -31,6 +31,7 @@ from app.payments.service import (
     get_payment_settings,
 )
 from app.tenancy.context import TenantContext
+from app.platform.commercial import enforce_live_commerce
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 logger = logging.getLogger(__name__)
@@ -138,6 +139,7 @@ def create_order_checkout(
         raise HTTPException(status_code=404, detail={"code": "order_not_found"})
 
     try:
+        enforce_live_commerce(session, order.organization_id, action="checkout")
         checkout = create_checkout_for_order(session, order)
         session.commit()
     except PaymentPortError as error:
