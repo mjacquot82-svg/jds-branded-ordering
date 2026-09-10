@@ -459,7 +459,7 @@ Cost risks: unbounded media without quotas; chatty Clover reconciliation; web pu
 COFFEE SAAS MARKET READINESS AUDIT COMPLETE
 Repo: jds-branded-ordering
 Branch: audit/market-readiness-20260910 (from feature-production-image-foundation @ be56dab)
-Commit: bbb376054133fdc16fa4b257330e92e28005f27f
+Commit: see branch tip after docs commit (audited product tip be56dab71beef72cd9c2a5c7008bd328e186a849)
 Tests: frontend 389/389 pass; build pass; backend 323 pass / 20 fail (all test_migrations.py); isolation/media recheck pass; lint/typecheck/format N/A
 Current readiness: ~70% (first Clover coffee shop) / ~45% (processor-neutral thesis)
 Verdict: B
