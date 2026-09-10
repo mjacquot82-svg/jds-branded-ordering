@@ -1,7 +1,8 @@
 # M2 Self-Service Demo-to-Customer Funnel — Implementation Report
 
 **Date:** 2026-09-10 (America/Toronto)  
-**Branch:** `m2/self-service-demo-funnel`  
+**Branch:** `m2/self-service-demo-funnel` @ `7369930`  
+**PR:** https://github.com/mjacquot82-svg/jds-branded-ordering/pull/4 (open, **not merged**)  
 **Base:** `feature-production-image-foundation` @ `4195c10fdf39048ba39d34a9d85802b6a42c701b`  
 **Production deploy:** none  
 **PR merge:** not performed (open PR only)
@@ -46,7 +47,7 @@ Existing pieces reused rather than reinvented:
 
 - Branch: `m2/self-service-demo-funnel` from `4195c10`  
 - PR target: `feature-production-image-foundation`  
-- PR URL: (filled after open)
+- PR URL: https://github.com/mjacquot82-svg/jds-branded-ordering/pull/4
 
 ## 6. Lifecycle model
 
@@ -153,7 +154,7 @@ Covered in `tests/test_self_service_demo_funnel.py` (migration, signup starter, 
 
 | Suite | Result |
 | --- | --- |
-| Backend full pytest | **304+ passed** (full green run; includes 20 M2 scenarios) — confirm: all green at 100% |
+| Backend full pytest | **376 passed**, 0 failed |
 | `test_self_service_demo_funnel.py` | **20 passed** |
 | Migrations | **passed** (incl. downgrade cleanup) |
 | Frontend `npm run test:frontend` | **395/395 pass** |
@@ -204,7 +205,7 @@ Flat monthly software fee (~C$150 configurable). **JDS takes 0% of sales.** Proc
 ```
 Base SHA: 4195c10fdf39048ba39d34a9d85802b6a42c701b
 M2 branch: m2/self-service-demo-funnel
-Backend: green (incl. 20 M2 scenarios + migrations)
+Backend: 376 passed (incl. 20 M2 scenarios + migrations)
 Frontend: 395/395 pass
 Build: pass
 Commerce lockout: server enforce_live_commerce (orders/payments/clover/staff/launch)
