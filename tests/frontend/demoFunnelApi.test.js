@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { enterDemo, fetchDemoPricing, signupDemo } from "../../src/services/demoFunnelApi.js";
+import {
+  enterDemo,
+  fetchDemoPilotConfig,
+  fetchDemoPricing,
+  resendDemoVerification,
+  signupDemo,
+} from "../../src/services/demoFunnelApi.js";
 
 test("signupDemo posts to /api/v1/demo/signup", async () => {
   const calls = [];
@@ -42,4 +48,29 @@ test("enterDemo posts credentials", async () => {
   };
   const result = await enterDemo({ email: "a@example.com", password: "password1234" }, { fetchImpl });
   assert.equal(result.status, "verification_required");
+});
+
+test("fetchDemoPilotConfig reads public pilot knobs", async () => {
+  const fetchImpl = async (url) => {
+    assert.match(url, /\/api\/v1\/demo\/pilot-config$/);
+    return {
+      ok: true,
+      async json() {
+        return { inviteRequired: true, captcha: { enabled: false }, jdsSalesTakePercent: 0 };
+      },
+    };
+  };
+  const config = await fetchDemoPilotConfig({ fetchImpl, apiBaseUrl: "" });
+  assert.equal(config.inviteRequired, true);
+  assert.equal(config.jdsSalesTakePercent, 0);
+});
+
+test("resendDemoVerification posts email", async () => {
+  const fetchImpl = async (url, init) => {
+    assert.match(url, /\/api\/v1\/demo\/resend-verification$/);
+    assert.equal(init.method, "POST");
+    return { ok: true, async json() { return { status: "accepted" }; } };
+  };
+  const result = await resendDemoVerification({ email: "a@example.com" }, { fetchImpl });
+  assert.equal(result.status, "accepted");
 });

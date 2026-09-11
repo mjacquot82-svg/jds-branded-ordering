@@ -11,7 +11,7 @@ function customerLinks(layout) { return [
   { to: "/cart", label: "Cart", icon: ShoppingBag },
 ]; }
 
-const operationalPathPrefixes = ["/admin", "/owner", "/staff", "/setup", "/activate", "/kitchen"];
+const operationalPathPrefixes = ["/admin", "/owner", "/staff", "/setup", "/activate", "/build", "/go-live", "/kitchen"];
 
 export function isCustomerFacingPath(pathname) {
   return !operationalPathPrefixes.some(
@@ -24,7 +24,7 @@ export default function AppLayout() {
   const tenant = useTenant();
   const { pathname } = useLocation();
   const showCustomerFooter = isCustomerFacingPath(pathname);
-  const setupWizard = pathname === "/setup" || pathname.startsWith("/setup/") || pathname === "/activate";
+  const setupWizard = pathname === "/setup" || pathname.startsWith("/setup/") || pathname === "/activate" || pathname === "/build" || pathname.startsWith("/build/");
   const storefrontLayout = getLayoutDefinition(tenant.value?.design?.template);
   const primaryLinks = [
     ...customerLinks(storefrontLayout),
