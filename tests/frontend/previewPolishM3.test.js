@@ -35,3 +35,11 @@ test("category manager controls are styled, finger-sized and use the wizard font
   const page = await source("../../src/admin/ProductsPage.jsx");
   assert.match(page, /className="category-delete-button"/);
 });
+
+test("opening another product resets the starter search so suggestions for the new product show", async () => {
+  const page = await source("../../src/admin/ProductsPage.jsx");
+  for (const fn of ["startCreate", "startEdit"]) {
+    const line = page.split("\n").find((item) => item.includes(`const ${fn} = useCallback`));
+    assert.match(line, /setStarterQuery\(""\); setStarterCategory\("all"\); setStarterPickerOpen\(false\); setImageLibraryOpen\(false\);/);
+  }
+});
