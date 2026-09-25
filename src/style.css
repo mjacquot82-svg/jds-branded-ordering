@@ -8312,3 +8312,6 @@ body {
 .go-live-page.wizard-focus-card .owner-login-form{display:grid;gap:.75rem;max-width:none}
 .go-live-page.wizard-focus-card .owner-login-form label{display:grid;gap:.3rem;font-weight:700}
 .go-live-page.wizard-focus-card .owner-login-form input,.go-live-page.wizard-focus-card .owner-login-form select{min-height:44px;padding:.55rem .7rem;border:1px solid #b9b4aa;border-radius:.55rem;font:inherit}
+/* M3 mobile (owner setup only): show all 8 progress steps and stack inline designer fields. */
+@media(max-width:800px){.wizard-progress-shell ol{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:.2rem;overflow:visible}.wizard-progress-shell li{flex:none;min-width:0}.wizard-progress-shell li>span{width:26px;height:26px;font-size:.8rem}}
+@media(max-width:680px){.designer-control-group label:has(> select),.designer-control-group label:has(> input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file])){display:grid!important;gap:.35rem;align-items:start;min-width:0}.designer-control-group label>select,.designer-control-group label>input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]){width:100%;max-width:100%;min-width:0}}

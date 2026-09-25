@@ -82,3 +82,10 @@ def test_starter_http_route_serves_public_image_without_path_escape() -> None:
         assert image.content[:4] == b"RIFF" and image.content[8:12] == b"WEBP"
         assert client.get("/api/v1/storefront/starter-media/cafe-restaurant/%2E%2E%2Fsecret?version=1").status_code == 404
         assert client.get("/api/v1/storefront/starter-media/cafe-restaurant/latte?version=abc").status_code == 422
+
+
+def test_harbor_and_hearth_design_uses_canonical_values_so_it_loads_as_saved() -> None:
+    from app.platform.demo_starter import STARTER_DESIGN
+    from app.platform.design import HERO_CONTENT
+
+    assert STARTER_DESIGN["heroContent"] == "cta" and "cta" in HERO_CONTENT

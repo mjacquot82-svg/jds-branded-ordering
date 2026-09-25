@@ -32,7 +32,7 @@ STARTER_DESIGN = {
     "typography": "classic",
     "buttonStyle": "rounded",
     "branding": {"showLogo": True, "showHero": True, "headerMode": "tagline"},
-    "heroContent": "tagline-cta",
+    "heroContent": "cta",  # canonical form of the old "tagline-cta" (same rendering)
     "hero": {"mode": "color", "mediaId": None},
     "announcement": {"enabled": True, "text": "Demo menu — customize me for your shop"},
     "pwa": {"shortName": "Harbor", "themeColor": "#4a5d4e", "backgroundColor": "#f6f1ea"},

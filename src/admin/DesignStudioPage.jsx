@@ -34,7 +34,7 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
   const [activeSlot,setActiveSlot]=useState(null);const [showLayoutAreas,setShowLayoutAreas]=useState(false);const [demoStatus,setDemoStatus]=useState(null);
   const mediaById=useMemo(()=>createMediaUrlIndex(media),[media]);
   const refreshVersions=()=>fetchDesignVersions().then(setVersions);
-  useEffect(()=>{Promise.all([fetchDesignDraft(),fetchDesignVersions(),fetchMedia(),fetchReadiness(),fetchDemoStatus().catch(()=>null)]).then(([value,history,assets,checks,demo])=>{setDraft({...value,config:withInstalledAppDefaults(value.config)});setSavedConfig(value.config);setVersions(history);setMedia(assets);setReadiness(checks);setDemoStatus(demo);setStatus("ready");}).catch((error)=>{setMessage(error.message);setStatus("error");});},[]);
+  useEffect(()=>{Promise.all([fetchDesignDraft(),fetchDesignVersions(),fetchMedia(),fetchReadiness(),fetchDemoStatus().catch(()=>null)]).then(([value,history,assets,checks,demo])=>{const loadedConfig=withInstalledAppDefaults(value.config);setDraft({...value,config:loadedConfig});setSavedConfig(loadedConfig);setVersions(history);setMedia(assets);setReadiness(checks);setDemoStatus(demo);setStatus("ready");}).catch((error)=>{setMessage(error.message);setStatus("error");});},[]);
   if(status==="loading")return <section className="page-section">
 <h1>Design Studio</h1>
 <p>Loading your design…</p>
