@@ -85,7 +85,7 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
     {guided&&!wizardStep?<nav className="builder-progress" aria-label="Build your app progress">{builderStages.map((stage,index)=>
 <Link className={index<2?"active":""} key={stage.label} to={stage.to}>
 <span>{index+1}</span>{stage.label}</Link>)}</nav>:null}
-    {demoStatus?.isProspect?<aside className="demo-prospect-banner" role="status"><strong>Free demo mode</strong><span>Real orders and payments are locked. Preview anytime, then <Link to="/admin/go-live">request activation</Link> (~{demoStatus.pricing?.amountDisplay || "CAD $150/month"}, JDS takes 0% of sales).</span></aside>:null}
+    {demoStatus?.isProspect?<aside className="demo-prospect-banner" role="status"><strong>Free demo mode</strong><span>Real orders and payments are locked. Preview anytime, then <Link to="/setup/launch">request activation</Link> (~{demoStatus.pricing?.amountDisplay || "CAD $150/month"}, JDS takes 0% of sales).</span></aside>:null}
     <header className="design-studio-header">
 <div>
 <p className="eyebrow">{wizardStep==="look"?"Step 1":wizardStep==="brand"?"Step 2":guided?"Welcome to JDS":"Your storefront"}</p>

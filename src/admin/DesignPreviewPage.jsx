@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchDesignPreview, fetchReadiness } from "../services/designStudioApi.js";
+import { fetchDemoStatus } from "../services/demoFunnelApi.js";
 import { useCatalogProducts } from "../stores/catalogStore.js";
 import { getLayoutDefinition, layoutShowsHero, layoutShowsHomeQuickOrder, previewAnnouncementText } from "../design/layoutDefinitions.js";
 import PositionedSlotImage from "../design/PositionedSlotImage.jsx";
@@ -16,11 +17,21 @@ const previewActions = {
   hours:["Add your business hours.","/setup/ordering"],
   catalog:["Add at least one menu item.","/setup/catalog"],
   clover:["Finish connecting payments.","/setup/payments"],
+  payment_connected:["Finish connecting payments.","/setup/payments"],
+  organization:["Activate your store with JDS.","/setup/launch"],
 };
+// Readiness items a free-demo prospect cannot complete until JDS activates the store.
+const ACTIVATION_ONLY_CHECKS = new Set(["organization","verified_hostname","fulfillment","payment_connected","clover"]);
+
+export function previewMissingChecks(checks = {}, isProspect = false) {
+  return Object.entries(checks).filter(([key,ready])=>!ready&&key!=="published_design"&&!(key==="clover"&&"payment_connected" in checks)&&!(isProspect&&ACTIVATION_ONLY_CHECKS.has(key))).map(([key])=>key);
+}
 
 export default function DesignPreviewPage({ setupMode = false }) {
   const [preview,setPreview]=useState(null);const [error,setError]=useState("");
   const [readiness,setReadiness]=useState(null);
+  const [demo,setDemo]=useState(null);
+  useEffect(()=>{fetchDemoStatus().then(setDemo).catch(()=>setDemo(null));},[]);
   const {categories,products:catalogProducts,loading,error:catalogError}=useCatalogProducts();
   const products=useMemo(()=>catalogProducts.map(withOwnerProductImage),[catalogProducts]);
   useEffect(()=>{Promise.all([fetchDesignPreview(),fetchReadiness()]).then(([nextPreview,nextReadiness])=>{setPreview(nextPreview);setReadiness(nextReadiness);}).catch((reason)=>setError(reason.message));},[]);
@@ -37,10 +48,11 @@ export default function DesignPreviewPage({ setupMode = false }) {
     intro:<header key="intro" className="minimal-preview-intro"><p>{design.displayName}</p><h1>{design.tagline}</h1><button disabled type="button">Browse menu</button></header>,
     featured:<main key="featured">{menuSection(layout.id==="cozy"?"Featured favourites":"Today’s menu")}</main>,
   })[section]||null;
-  const missing=Object.entries(readiness?.checks||{}).filter(([key,ready])=>!ready&&key!=="published_design");
+  const isProspect=demo?.isProspect===true;
+  const missing=previewMissingChecks(readiness?.checks||{},isProspect);
   return <section className={`full-design-preview template-${design.template} full-layout-${layout.id} typography-${design.typography} buttons-${design.buttonStyle}`} data-layout={layout.id} style={{"--preview-primary":design.colors.primary,"--preview-accent":design.colors.accent,"--preview-bg":design.colors.background,"--preview-surface":design.colors.surface,"--preview-text":design.colors.text}}>
     <aside className="preview-safety-banner"><strong>{setupMode?"Here’s what your customers will see":"Your app preview"}</strong><span>Preview only — customers can’t order here.</span><Link to={setupMode?"/setup/brand":"/admin/design"}>Back to editor</Link></aside>
-    {setupMode&&missing.length?<aside className="preview-readiness-guide"><strong>Before you launch</strong>{missing.map(([key])=>{const [label,to]=previewActions[key]||[key.replaceAll("_"," "),"/setup/business"];return <Link key={key} to={to}>{label}</Link>;})}</aside>:null}
+    {setupMode&&(missing.length||isProspect)?<aside className="preview-readiness-guide"><strong>{isProspect?"Free demo":"Before you launch"}</strong>{missing.map((key)=>{const [label,to]=previewActions[key]||["Finish your store setup.","/setup/business"];return <Link key={key} to={to}>{label}</Link>;})}{isProspect?<Link to="/setup/launch">Checkout is off in the demo. Request activation when you’re ready.</Link>:null}</aside>:null}
     <nav className={`preview-navigation navigation-${layout.navigation}`}><HeaderBrandingIdentity config={design} layout={layout} logoUrl={logo?.url}/><span>{layout.id==="minimal"?"Menu · Contact · Account · Cart":layout.id==="modern"?"Home · Browse · Orders · Account · Bag":"Home · Menu · Rewards · Account · Bag"}</span></nav>
     {layout.homeSections.map(renderSection)}
   </section>;

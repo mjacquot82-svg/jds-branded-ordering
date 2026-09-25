@@ -12,7 +12,7 @@ const PROCESSORS = [
   ["not_sure", "Not sure yet"],
 ];
 
-export default function GoLiveActivationPage() {
+export default function GoLiveActivationPage({ embedded = false }) {
   const { session } = useOwnerAuth();
   const [status, setStatus] = useState({ kind: "loading" });
   const [form, setForm] = useState({
@@ -48,7 +48,7 @@ export default function GoLiveActivationPage() {
       <section className="page-section">
         <h1>Your store is on the live plan</h1>
         <p>Continue to launch checks and payments when you are ready.</p>
-        <Link className="primary-button" to="/admin/launch">Open launch</Link>
+        <Link className="primary-button" to={embedded ? "/setup/launch" : "/admin/launch"}>Open launch</Link>
       </section>
     );
   }
@@ -66,10 +66,10 @@ export default function GoLiveActivationPage() {
   }
 
   return (
-    <section className="page-section go-live-page">
+    <section className={`page-section go-live-page${embedded ? " wizard-focus-card" : ""}`}>
       <header>
-        <p className="eyebrow">Go live</p>
-        <h1>Start taking orders with JDS</h1>
+        <p className="eyebrow">{embedded ? "Step 8" : "Go live"}</p>
+        <h1>{embedded ? "Ready to take real orders?" : "Start taking orders with JDS"}</h1>
         <p>
           Your demo design, menu, and media are preserved. Request activation and JDS will turn
           <strong> this exact store</strong> into a live customer on the {demo.pricing?.amountDisplay} plan.
@@ -82,7 +82,7 @@ export default function GoLiveActivationPage() {
           <h2>Activation requested</h2>
           <p>Status: <strong>{demo.activationRequest.status.replaceAll("_", " ")}</strong></p>
           <p>We have your lead for {demo.activationRequest.businessName}. Keep editing your demo anytime — nothing is discarded.</p>
-          <Link className="secondary-button" to="/admin/design">Back to Design Studio</Link>
+          {embedded ? <div className="activation-next-links"><Link className="secondary-button" to="/setup/brand">Keep editing my demo</Link><Link className="secondary-button" to="/setup/preview">Open preview</Link></div> : <Link className="secondary-button" to="/admin/design">Back to Design Studio</Link>}
         </div>
       ) : (
         <form className="operations-panel owner-login-form" onSubmit={submit}>
