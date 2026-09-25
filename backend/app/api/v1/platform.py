@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from html import escape
 import hashlib
@@ -463,6 +464,8 @@ def archive_media(media_id: UUID, principal: AuthPrincipal = Depends(csrf_princi
     if item is None: raise HTTPException(404,detail="Media not found.")
     referenced=session.scalar(select(DesignMediaReference.id).where(DesignMediaReference.organization_id==tenant.organization_id,DesignMediaReference.media_asset_id==media_id).limit(1))
     if referenced is not None: raise HTTPException(409,detail="This image is used by a published design.")
+    workspace=session.get(DesignWorkspace,tenant.organization_id)
+    if workspace is not None and str(media_id) in json.dumps(workspace.draft_config or {}): raise HTTPException(409,detail="This image is used by your design draft.")
     product_reference=f"/api/v1/storefront/media/{media_id}"
     if session.scalar(select(Product.id).where(Product.organization_id==tenant.organization_id,Product.media_asset_id==media_id).limit(1)) is not None: raise HTTPException(409,detail="This image is used by a product.")
     item.status="archived";session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.archived",target_type="media_asset",target_id=str(item.id),outcome="success"));session.commit();return Response(status_code=204)
