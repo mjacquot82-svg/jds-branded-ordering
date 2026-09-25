@@ -8331,3 +8331,5 @@ body {
 .product-image-save-hint{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.6rem;padding:.75rem .85rem;border:1px solid #e6c98f;border-radius:.7rem;background:#fff6df;color:#5b4308}
 .product-image-save-hint span{flex:1 1 220px}
 @media(max-width:480px){.product-image-save-hint .primary-button{width:100%}}
+/* M3: keep the wizard footer Back button its natural size when the "save or cancel" hint is shown. */
+.wizard-actions{align-items:flex-end}.wizard-actions>.secondary-button{flex:0 0 auto}

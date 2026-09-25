@@ -61,3 +61,8 @@ test("platform admin shows prospect and activation times in local time, not raw 
   assert.match(page, /created \{formatPlatformTime\(item\.createdAt\)\}/);
   assert.doesNotMatch(page, /\{item\.createdAt\}/);
 });
+
+test("wizard footer keeps Back at its natural size beside the save-or-cancel hint", async () => {
+  const css = await source("../../src/style.css");
+  assert.match(css, /\.wizard-actions\{align-items:flex-end\}\.wizard-actions>\.secondary-button\{flex:0 0 auto\}/);
+});
