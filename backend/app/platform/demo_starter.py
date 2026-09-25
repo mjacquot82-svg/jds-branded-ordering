@@ -12,6 +12,7 @@ from app.availability.models import BusinessHour, BusinessSettings
 from app.catalog.models import Category, Product
 from app.platform.design import DEFAULT_CONFIG
 from app.platform.models import BusinessProfile, DesignWorkspace
+from app.platform.starter_media import CAFE_RESTAURANT_COLLECTION, starter_reference
 
 # Polished fictional café — deliberately not a real shop brand.
 STARTER_CAFE_NAME = "Harbor & Hearth Café"
@@ -55,6 +56,25 @@ STARTER_PRODUCTS = (
     ("breakfast", "avocado-toast", "Avocado Toast", "Sourdough, smashed avocado, chili flake.", 895, 10),
     ("breakfast", "yogurt-parfait", "Yogurt Parfait", "Greek yogurt, granola, seasonal fruit.", 650, 20),
 )
+
+# Platform starter illustrations (shared, read-only; never tenant media rows, so they
+# never count toward prospect storage/file quotas). Merchants can replace any of them.
+STARTER_PRODUCT_IMAGES = {
+    "house-drip": "brewed-coffee",
+    "cafe-latte": "latte",
+    "cappuccino": "cappuccino",
+    "iced-latte": "iced-latte",
+    "butter-croissant": "plain-croissant",
+    "blueberry-muffin": "muffin",
+    "chocolate-cookie": "cookie",
+    "avocado-toast": "toast",
+    "yogurt-parfait": "yogurt-granola",
+}
+
+
+def starter_product_image_reference(product_slug: str) -> str | None:
+    key = STARTER_PRODUCT_IMAGES.get(product_slug)
+    return starter_reference(CAFE_RESTAURANT_COLLECTION, key, 1) if key else None
 
 
 def apply_demo_starter(session: Session, organization_id: UUID, *, business_name: str | None = None) -> None:
@@ -136,5 +156,6 @@ def apply_demo_starter(session: Session, organization_id: UUID, *, business_name
                 base_price_cents=price_cents,
                 sort_order=sort_order,
                 is_published=True,
+                image_reference=starter_product_image_reference(slug),
             )
         )
