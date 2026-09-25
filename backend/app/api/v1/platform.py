@@ -24,7 +24,7 @@ from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationE
 from app.platform.entitlements import entitlement_features
 from app.platform.models import BillingPlan, BusinessProfile, DesignMediaReference, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
 from app.platform.media import MediaStorage, MediaStorageError, MediaValidationError, default_media_storage, image_dimensions, prepare_image
-from app.platform.starter_media import STARTER_MEDIA_ASSETS, starter_asset_available, starter_asset_path, starter_reference
+from app.platform.starter_media import STARTER_MEDIA_ART_STYLE, STARTER_MEDIA_ASSETS, starter_asset_available, starter_asset_path, starter_reference
 from app.platform.readiness import evaluate_publish_readiness, evaluate_storefront_readiness, onboarding_completed_steps, synchronize_public_readiness
 from app.tenancy.context import TenantContext
 from app.platform.commercial import enforce_not_self_upgrade, is_prospect
@@ -387,7 +387,7 @@ def list_starter_media(collection: str = "cafe-restaurant", _: TenantContext = D
             "key":item.key,"name":item.name,"collection":item.collection,"category":item.category,
             "tags":list(item.tags),"width":item.width,"height":item.height,"active":item.active,
             "sortOrder":item.sort_order,"altText":item.alt_text,"assetVersion":item.version,
-            "available":available,"reference":item.reference,
+            "available":available,"reference":item.reference,"artStyle":STARTER_MEDIA_ART_STYLE if available else None,
             "thumbnailUrl":f"/api/v1/storefront/starter-media/{item.collection}/{item.key}?version={item.version}" if available else None,
         })
     return {"manifestVersion":1,"collection":{"key":collection,"name":"Café & Restaurant"},"assets":assets}
