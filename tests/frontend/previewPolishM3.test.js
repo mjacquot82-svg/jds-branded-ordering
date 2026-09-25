@@ -73,3 +73,24 @@ test("modern-layout owner preview rows scroll sideways instead of hiding product
   assert.match(css, /@media\(max-width:600px\)\{\.full-layout-modern \.preview-products\{grid-template-columns:none;grid-auto-columns:minmax\(200px,78%\)\}\}/);
   assert.match(css, /\.full-design-preview>main\{grid-template-columns:minmax\(0,1fr\)\}\.full-design-preview \.preview-catalog-section\{min-width:0\}/);
 });
+
+test("free demos without a hero photo get an intentional starter hero with a readable activation note", async () => {
+  const page = await source("../../src/admin/DesignPreviewPage.jsx");
+  assert.match(page, /export function showDemoHero\(\{ isProspect = false, hasHeroImage = false \} = \{\}\) \{\n  return isProspect === true && !hasHeroImage;/);
+  assert.match(page, /const demoHero=showDemoHero\(\{isProspect,hasHeroImage:Boolean\(hero\)\}\)/);
+  assert.match(page, /<small>Ordering opens after activation<\/small>/);
+  assert.match(page, /<h1>\{design\.tagline\|\|/);
+  assert.match(page, /DEMO_HERO_STARTERS\.map/);
+  for (const key of ["latte", "plain-croissant", "muffin"]) assert.match(page, new RegExp(`starter:cafe-restaurant/${key}@1`));
+  // the non-demo hero branch (live stores / own photo) is unchanged
+  assert.match(page, /:<section className=\{`full-hero-composition full-hero-\$\{layout\.id\}`\} key="hero"><header className=\{heroContent\.cta&&layout\.id==="modern"\?"has-hero-content":""\} style=\{\{aspectRatio:layout\.heroSlot\.aspectRatio\}\}>/);
+  const css = await source("../../src/style.css");
+  assert.match(css, /\.full-design-preview \.demo-hero-cta button:disabled\{[^}]*background:#fff;color:#1f2420;[^}]*opacity:1/);
+});
+
+test("on phones Edit is the prominent product action and secondary actions share a compact grid", async () => {
+  const page = await source("../../src/admin/ProductsPage.jsx");
+  assert.match(page, /<button className="product-edit-button" type="button" onClick=\{\(\) => requestProductAction\(\(\) => startEdit\(product\)\)\}>Edit<\/button>/);
+  const css = await source("../../src/style.css");
+  assert.match(css, /@media\(max-width:760px\)\{\.product-row-actions\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:\.5rem\}\.product-row-actions button\{min-height:44px;[^}]*\}\.product-row-actions \.product-edit-button\{grid-column:1\/-1;order:-1;/);
+});

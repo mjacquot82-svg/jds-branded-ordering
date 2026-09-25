@@ -8340,3 +8340,19 @@ body {
 /* The preview's inner grid column grew to the rows' full content width (1000px+ on a 375px phone), so rows were clipped, not scrollable. */
 .full-design-preview>main{grid-template-columns:minmax(0,1fr)}.full-design-preview .preview-catalog-section{min-width:0}
 @media(max-width:600px){.full-layout-modern .preview-products{grid-template-columns:none;grid-auto-columns:minmax(200px,78%)}}
+/* M3 free-demo starter hero (owner preview only, prospects without their own hero photo). Live/Guest House heroes are untouched. */
+.full-hero-composition.demo-hero-composition>header.demo-hero{aspect-ratio:auto;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:center;place-content:stretch;gap:1.25rem;min-height:260px;padding:clamp(1.25rem,4vw,2.75rem);background:radial-gradient(circle at 85% 15%,color-mix(in srgb,var(--preview-accent) 45%,transparent),transparent 55%),linear-gradient(135deg,var(--preview-primary),color-mix(in srgb,var(--preview-primary) 62%,#000));color:#fff;text-align:left;text-shadow:0 1px 2px #0005}
+.demo-hero-copy{display:grid;gap:.65rem;justify-items:start}
+.demo-hero-name{margin:0;font-size:.8rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.full-design-preview .demo-hero h1{margin:0;font-size:clamp(1.45rem,3.2vw,2.4rem);line-height:1.12;color:#fff}
+.demo-hero-cta{display:grid;gap:.4rem;justify-items:start}
+.full-design-preview .demo-hero-cta button:disabled{min-height:44px;padding:.65rem 1.35rem;border:0;border-radius:999px;background:#fff;color:#1f2420;font:inherit;font-weight:800;opacity:1;text-shadow:none;cursor:not-allowed}
+.demo-hero-cta small{padding:.25rem .65rem;border-radius:999px;background:#000000a6;color:#fff;font-size:.8rem;font-weight:700;text-shadow:none}
+.demo-hero-art{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.6rem}
+.demo-hero-art img{display:block;width:100%;aspect-ratio:1;object-fit:cover;border:3px solid #fff;border-radius:1rem;box-shadow:0 10px 24px #0004}
+.demo-hero-art img:nth-child(2){transform:translateY(-10px)}
+.demo-hero-note{grid-column:1/-1;margin:0;font-size:.72rem;font-weight:600;opacity:.9}
+@media(max-width:600px){.full-hero-composition.demo-hero-composition>header.demo-hero{grid-template-columns:1fr;min-height:0}.demo-hero-art{max-width:320px}}
+/* M3 phones: Edit is the main product action (first, full width, prominent); the four secondary actions sit in a compact
+   two-column grid of finger-sized buttons instead of five stacked full-width buttons per product. */
+@media(max-width:760px){.product-row-actions{grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem}.product-row-actions button{min-height:44px;padding-inline:.5rem;font-size:.82rem;line-height:1.15}.product-row-actions .product-edit-button{grid-column:1/-1;order:-1;border-color:#26312a;background:#26312a;color:#fff;font-size:.95rem}}
