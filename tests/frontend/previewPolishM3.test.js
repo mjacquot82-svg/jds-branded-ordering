@@ -43,3 +43,14 @@ test("opening another product resets the starter search so suggestions for the n
     assert.match(line, /setStarterQuery\(""\); setStarterCategory\("all"\); setStarterPickerOpen\(false\); setImageLibraryOpen\(false\);/);
   }
 });
+
+test("deep links to /admin/platform wait for platform capabilities instead of bouncing to Overview", async () => {
+  const context = await source("../../src/auth/OwnerAuthContext.jsx");
+  assert.match(context, /platform_capabilities: capabilities, platform_capabilities_loaded: true/);
+  assert.equal((context.match(/platform_capabilities: \[\], platform_capabilities_loaded: false/g) || []).length, 2);
+  const guard = await source("../../src/auth/RequireOwner.jsx");
+  const waitIndex = guard.indexOf('session.platform_capabilities_loaded === false && location.pathname.startsWith("/admin/platform")');
+  assert.ok(waitIndex > 0);
+  assert.ok(waitIndex < guard.indexOf('if (session) return <Navigate replace to={operationsLinks(session)[0]?.to'));
+  assert.ok(guard.indexOf("canAccessOwnerPath(session, location.pathname)") < waitIndex, "authorized sessions render before the wait state");
+});

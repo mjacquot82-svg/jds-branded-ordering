@@ -13,15 +13,23 @@ export function OwnerAuthProvider({ children }) {
   const pendingSession = useRef(null);
   const loadBusinesses=useCallback(async()=>{setBusinessStatus("loading");setBusinessError("");try{const items=await fetchAuthorizedOrganizations();setBusinesses(items);setBusinessStatus("ready");return items;}catch(error){setBusinesses([]);setBusinessStatus("error");setBusinessError(error.message);throw error;}},[]);
 
+  // Platform capabilities load after the session; routes such as /admin/platform wait for
+  // platform_capabilities_loaded instead of bouncing a deep link to the first operations page.
+  const loadPlatformCapabilities = useCallback(() => {
+    fetchPlatformCapabilities()
+      .then(({ capabilities }) => setSession((current) => current ? ({ ...current, platform_capabilities: capabilities, platform_capabilities_loaded: true }) : current))
+      .catch(() => setSession((current) => current ? ({ ...current, platform_capabilities_loaded: true }) : current));
+  }, []);
+
   const refreshSession = useCallback(async () => {
     if (pendingSession.current) return pendingSession.current;
     setStatus("loading");
     pendingSession.current = fetchOwnerSession()
       .then((nextSession) => {
-        setSession({ ...nextSession, platform_capabilities: [] });
+        setSession({ ...nextSession, platform_capabilities: [], platform_capabilities_loaded: false });
         setStatus("authenticated");
         loadBusinesses().catch(() => {});
-        fetchPlatformCapabilities().then(({ capabilities }) => setSession((current) => current ? ({ ...current, platform_capabilities: capabilities }) : current)).catch(() => {});
+        loadPlatformCapabilities();
         return nextSession;
       })
       .catch((error) => {
@@ -33,16 +41,16 @@ export function OwnerAuthProvider({ children }) {
         pendingSession.current = null;
       });
     return pendingSession.current;
-  }, [loadBusinesses]);
+  }, [loadBusinesses, loadPlatformCapabilities]);
 
   const login = useCallback(async (email, password) => {
     const nextSession = await loginOwner(email, password);
-    setSession({ ...nextSession, platform_capabilities: [] });
+    setSession({ ...nextSession, platform_capabilities: [], platform_capabilities_loaded: false });
     setStatus("authenticated");
     loadBusinesses().catch(() => {});
-    fetchPlatformCapabilities().then(({ capabilities }) => setSession((current) => current ? ({ ...current, platform_capabilities: capabilities }) : current)).catch(() => {});
+    loadPlatformCapabilities();
     return nextSession;
-  }, [loadBusinesses]);
+  }, [loadBusinesses, loadPlatformCapabilities]);
 
   const staffLogin = useCallback(async (staffId, pin) => {
     const nextSession = await loginStaff(staffId, pin);
