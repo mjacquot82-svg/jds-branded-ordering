@@ -8333,3 +8333,8 @@ body {
 @media(max-width:480px){.product-image-save-hint .primary-button{width:100%}}
 /* M3: keep the wizard footer Back button its natural size when the "save or cancel" hint is shown. */
 .wizard-actions{align-items:flex-end}.wizard-actions>.secondary-button{flex:0 0 auto}
+/* M3: modern-layout owner preview rows were overflow:hidden, silently hiding the 4th+ product (and the 2nd+ on phones).
+   Let them scroll sideways like a carousel, with the next card peeking on phones. Owner preview only. */
+.full-layout-modern .preview-products{overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain;scroll-snap-type:x proximity;scrollbar-width:thin;padding-bottom:.4rem}
+.full-layout-modern .preview-products article{scroll-snap-align:start}
+@media(max-width:600px){.full-layout-modern .preview-products{grid-auto-columns:minmax(200px,78%)}}
