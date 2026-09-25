@@ -8337,4 +8337,6 @@ body {
    Let them scroll sideways like a carousel, with the next card peeking on phones. Owner preview only. */
 .full-layout-modern .preview-products{overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain;scroll-snap-type:x proximity;scrollbar-width:thin;padding-bottom:.4rem}
 .full-layout-modern .preview-products article{scroll-snap-align:start}
-@media(max-width:600px){.full-layout-modern .preview-products{grid-auto-columns:minmax(200px,78%)}}
+/* The preview's inner grid column grew to the rows' full content width (1000px+ on a 375px phone), so rows were clipped, not scrollable. */
+.full-design-preview>main{grid-template-columns:minmax(0,1fr)}.full-design-preview .preview-catalog-section{min-width:0}
+@media(max-width:600px){.full-layout-modern .preview-products{grid-template-columns:none;grid-auto-columns:minmax(200px,78%)}}

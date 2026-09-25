@@ -70,5 +70,6 @@ test("wizard footer keeps Back at its natural size beside the save-or-cancel hin
 test("modern-layout owner preview rows scroll sideways instead of hiding products", async () => {
   const css = await source("../../src/style.css");
   assert.match(css, /\.full-layout-modern \.preview-products\{overflow-x:auto;overflow-y:hidden;/);
-  assert.match(css, /@media\(max-width:600px\)\{\.full-layout-modern \.preview-products\{grid-auto-columns:minmax\(200px,78%\)\}\}/);
+  assert.match(css, /@media\(max-width:600px\)\{\.full-layout-modern \.preview-products\{grid-template-columns:none;grid-auto-columns:minmax\(200px,78%\)\}\}/);
+  assert.match(css, /\.full-design-preview>main\{grid-template-columns:minmax\(0,1fr\)\}\.full-design-preview \.preview-catalog-section\{min-width:0\}/);
 });
