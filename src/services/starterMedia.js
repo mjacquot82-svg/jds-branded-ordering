@@ -55,3 +55,34 @@ export function starterPreviewUrl(reference) {
   const match = /^starter:([a-z0-9-]+)\/([a-z0-9-]+)@(\d+)$/.exec(reference || "");
   return match ? `/api/v1/storefront/starter-media/${match[1]}/${match[2]}?version=${match[3]}` : reference || "";
 }
+
+const STARTER_REFERENCE = /^starter:[a-z0-9-]+\/[a-z0-9-]+@\d+$/;
+const TENANT_MEDIA_URL = /^\/api\/v1\/storefront\/media\/([0-9a-f-]{36})$/i;
+
+// Classify a product image reference without exposing storage details to owners.
+export function productImageSource(image) {
+  const value = String(image || "").trim();
+  if (!value) return "none";
+  if (STARTER_REFERENCE.test(value)) return "starter";
+  if (TENANT_MEDIA_URL.test(value)) return "upload";
+  return "legacy";
+}
+
+// Owner-side display URL. Owner tools and previews are authenticated and may run
+// before a storefront hostname exists, so tenant uploads are read through the
+// owner media endpoint (tenant-scoped by session), never by hostname.
+export function ownerProductImageUrl(image) {
+  const value = String(image || "").trim();
+  const source = productImageSource(value);
+  if (source === "starter") return starterPreviewUrl(value);
+  if (source === "upload") return `/api/v1/owner/media/${TENANT_MEDIA_URL.exec(value)[1]}/content`;
+  return value;
+}
+
+export function withOwnerProductImage(product) {
+  return product ? { ...product, image: ownerProductImageUrl(product.image) } : product;
+}
+
+export function productImageSourceLabel(image) {
+  return { starter: "Illustrated starter image", upload: "Your photo", legacy: "Current image", none: "No image yet" }[productImageSource(image)];
+}

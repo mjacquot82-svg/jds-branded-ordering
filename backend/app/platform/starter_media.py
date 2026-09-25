@@ -168,3 +168,13 @@ def starter_public_url(reference: str) -> str:
 
 def starter_reference(collection: str, key: str, version: int) -> str:
     return f"{STARTER_REFERENCE_PREFIX}{collection}/{key}@{version}"
+
+
+def product_image_source(media_asset_id: object, image_reference: str | None) -> str:
+    """Distinguish merchant upload, platform starter, legacy seed token, or no image."""
+    if media_asset_id:
+        return "upload"
+    reference = (image_reference or "").strip()
+    if not reference:
+        return "none"
+    return "starter" if reference.startswith(STARTER_REFERENCE_PREFIX) else "legacy"

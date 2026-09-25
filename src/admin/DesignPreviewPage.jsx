@@ -7,6 +7,7 @@ import PositionedSlotImage from "../design/PositionedSlotImage.jsx";
 import HeaderBrandingIdentity from "../design/HeaderBrandingIdentity.jsx";
 import { heroContentVisibility } from "../design/imageSlotRendering.js";
 import ProductImage from "../components/ProductImage.jsx";
+import { withOwnerProductImage } from "../services/starterMedia.js";
 
 const previewActions = {
   business_profile:["Add your business details.","/setup/business"],
@@ -20,7 +21,8 @@ const previewActions = {
 export default function DesignPreviewPage({ setupMode = false }) {
   const [preview,setPreview]=useState(null);const [error,setError]=useState("");
   const [readiness,setReadiness]=useState(null);
-  const {categories,products,loading,error:catalogError}=useCatalogProducts();
+  const {categories,products:catalogProducts,loading,error:catalogError}=useCatalogProducts();
+  const products=useMemo(()=>catalogProducts.map(withOwnerProductImage),[catalogProducts]);
   useEffect(()=>{Promise.all([fetchDesignPreview(),fetchReadiness()]).then(([nextPreview,nextReadiness])=>{setPreview(nextPreview);setReadiness(nextReadiness);}).catch((reason)=>setError(reason.message));},[]);
   const assets=useMemo(()=>new Map((preview?.media||[]).map((asset)=>[asset.id,asset])),[preview]);
   if(error)return <section className="page-section"><h1>App preview unavailable</h1><p role="alert">{error}</p><Link to="/admin/design">Return to Design Studio</Link></section>;

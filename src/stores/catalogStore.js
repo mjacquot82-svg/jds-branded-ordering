@@ -50,6 +50,7 @@ function adaptOwnerCatalog(payload) {
     category: categoryByBackendId.get(item.category_id) || item.category_id,
     categoryBackendId: item.category_id,
     image: item.image,
+    imageSource: item.image_source || "none",
     available: item.available,
     featured: item.featured,
     lunchSpecial: item.lunch_special,
