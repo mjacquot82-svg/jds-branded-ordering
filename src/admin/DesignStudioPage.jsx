@@ -34,7 +34,7 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
   const [activeSlot,setActiveSlot]=useState(null);const [showLayoutAreas,setShowLayoutAreas]=useState(false);const [demoStatus,setDemoStatus]=useState(null);
   const mediaById=useMemo(()=>createMediaUrlIndex(media),[media]);
   const refreshVersions=()=>fetchDesignVersions().then(setVersions);
-  useEffect(()=>{Promise.all([fetchDesignDraft(),fetchDesignVersions(),fetchMedia(),fetchReadiness(),fetchDemoStatus().catch(()=>null)]).then(([value,history,assets,checks,demo])=>{setDraft({...value,config:withInstalledAppDefaults(value.config)});setSavedConfig(value.config);setVersions(history);setMedia(assets);setReadiness(checks);setDemoStatus(demo);setStatus("ready");}).catch((error)=>{setMessage(error.message);setStatus("error");});},[]);
+  useEffect(()=>{Promise.all([fetchDesignDraft(),fetchDesignVersions(),fetchMedia(),fetchReadiness(),fetchDemoStatus().catch(()=>null)]).then(([value,history,assets,checks,demo])=>{const loadedConfig=withInstalledAppDefaults(value.config);setDraft({...value,config:loadedConfig});setSavedConfig(loadedConfig);setVersions(history);setMedia(assets);setReadiness(checks);setDemoStatus(demo);setStatus("ready");}).catch((error)=>{setMessage(error.message);setStatus("error");});},[]);
   if(status==="loading")return <section className="page-section">
 <h1>Design Studio</h1>
 <p>Loading your design…</p>
@@ -85,7 +85,7 @@ export default function DesignStudioPage({guided=false,onContinue,wizardStep=nul
     {guided&&!wizardStep?<nav className="builder-progress" aria-label="Build your app progress">{builderStages.map((stage,index)=>
 <Link className={index<2?"active":""} key={stage.label} to={stage.to}>
 <span>{index+1}</span>{stage.label}</Link>)}</nav>:null}
-    {demoStatus?.isProspect?<aside className="demo-prospect-banner" role="status"><strong>Free demo mode</strong><span>Real orders and payments are locked. Preview anytime, then <Link to="/admin/go-live">request activation</Link> (~{demoStatus.pricing?.amountDisplay || "CAD $150/month"}, JDS takes 0% of sales).</span></aside>:null}
+    {demoStatus?.isProspect?<aside className="demo-prospect-banner" role="status"><strong>Free demo mode</strong><span>Real orders and payments are locked. Preview anytime, then <Link to="/setup/launch">request activation</Link> (~{demoStatus.pricing?.amountDisplay || "CAD $150/month"}, JDS takes 0% of sales).</span></aside>:null}
     <header className="design-studio-header">
 <div>
 <p className="eyebrow">{wizardStep==="look"?"Step 1":wizardStep==="brand"?"Step 2":guided?"Welcome to JDS":"Your storefront"}</p>

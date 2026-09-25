@@ -4,6 +4,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.jds_auth.models import Organization
@@ -20,6 +21,14 @@ def _read_mode(session: Session, organization_id: UUID) -> str:
     session already autobegan from an earlier ``get()``. Use a side Session on
     the same bind for the authoritative read.
     """
+    if session.in_transaction():
+        # The caller's transaction is already open (and usually holds a pooled connection), so reading
+        # through it cannot trip the autobegin problem above. Opening a side Session here would make one
+        # request hold two connections at once, which can starve the pool under concurrent saves. A
+        # column-level SELECT (not ``get``) bypasses the identity map, so this is still a fresh read.
+        with session.no_autoflush:
+            mode = session.scalar(select(Organization.commercial_mode).where(Organization.id == organization_id))
+        return mode if mode in VALID_COMMERCIAL_MODES else COMMERCIAL_LIVE
     bind = session.get_bind()
     with Session(bind) as side:
         organization = side.get(Organization, organization_id)

@@ -475,10 +475,12 @@ def platform_promote_to_live(
     service: DemoFunnelService = Depends(get_demo_service),
     now: datetime = Depends(utc_now),
 ) -> dict:
+    # Promotion changes commercial state, so it needs the platform *write* capability
+    # (read-only platform viewers can see prospects but cannot promote them).
     grant = session.scalar(
         select(PlatformGrant.id).where(
             PlatformGrant.user_id == principal.user_id,
-            PlatformGrant.capability == "platform.organizations.read",
+            PlatformGrant.capability == "platform.organizations.write",
             PlatformGrant.is_active.is_(True),
         )
     )

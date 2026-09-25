@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from html import escape
 import hashlib
@@ -24,7 +25,7 @@ from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationE
 from app.platform.entitlements import entitlement_features
 from app.platform.models import BillingPlan, BusinessProfile, DesignMediaReference, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
 from app.platform.media import MediaStorage, MediaStorageError, MediaValidationError, default_media_storage, image_dimensions, prepare_image
-from app.platform.starter_media import STARTER_MEDIA_ASSETS, starter_asset_available, starter_asset_path, starter_reference
+from app.platform.starter_media import STARTER_MEDIA_ART_STYLE, STARTER_MEDIA_ASSETS, starter_asset_available, starter_asset_path, starter_reference
 from app.platform.readiness import evaluate_publish_readiness, evaluate_storefront_readiness, onboarding_completed_steps, synchronize_public_readiness
 from app.tenancy.context import TenantContext
 from app.platform.commercial import enforce_not_self_upgrade, is_prospect
@@ -387,7 +388,7 @@ def list_starter_media(collection: str = "cafe-restaurant", _: TenantContext = D
             "key":item.key,"name":item.name,"collection":item.collection,"category":item.category,
             "tags":list(item.tags),"width":item.width,"height":item.height,"active":item.active,
             "sortOrder":item.sort_order,"altText":item.alt_text,"assetVersion":item.version,
-            "available":available,"reference":item.reference,
+            "available":available,"reference":item.reference,"artStyle":STARTER_MEDIA_ART_STYLE if available else None,
             "thumbnailUrl":f"/api/v1/storefront/starter-media/{item.collection}/{item.key}?version={item.version}" if available else None,
         })
     return {"manifestVersion":1,"collection":{"key":collection,"name":"Café & Restaurant"},"assets":assets}
@@ -400,8 +401,19 @@ def storefront_starter_media(collection: str, asset_key: str, version: int = 1) 
     if not path.is_file(): raise HTTPException(404,detail="Starter image is not available.")
     return FileResponse(path,media_type="image/webp",headers={"Cache-Control":"public, max-age=31536000, immutable"})
 
+def upload_catalog_session(session: Session = Depends(get_catalog_session)) -> Session:
+    """Check out the upload request's DB connection in the threadpool (sync dependency).
+
+    ``upload_media`` must stay ``async`` to read the request body, and its sync queries run on the event loop.
+    With the connection already held, those queries never wait for the pool on the loop, where a wait would
+    freeze every in-flight request (QueuePool timeouts). Same session, same transaction semantics.
+    """
+    session.connection()
+    return session
+
+
 @router.post("/owner/media/upload", status_code=201)
-async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session), content_type: str = Header(alias="Content-Type"), alt_text: str = Header(default="",alias="X-Media-Alt"), purpose: str = Header(default="design", alias="X-Media-Purpose")) -> dict:
+async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(upload_catalog_session), content_type: str = Header(alias="Content-Type"), alt_text: str = Header(default="",alias="X-Media-Alt"), purpose: str = Header(default="design", alias="X-Media-Purpose")) -> dict:
     if len(alt_text) > 300: raise HTTPException(422,detail="Alternative text is too long.")
     if purpose not in {"design","product"}: raise HTTPException(422,detail="Media purpose must be design or product.")
     data=await request.body(); media_id=uuid4()
@@ -463,6 +475,8 @@ def archive_media(media_id: UUID, principal: AuthPrincipal = Depends(csrf_princi
     if item is None: raise HTTPException(404,detail="Media not found.")
     referenced=session.scalar(select(DesignMediaReference.id).where(DesignMediaReference.organization_id==tenant.organization_id,DesignMediaReference.media_asset_id==media_id).limit(1))
     if referenced is not None: raise HTTPException(409,detail="This image is used by a published design.")
+    workspace=session.get(DesignWorkspace,tenant.organization_id)
+    if workspace is not None and str(media_id) in json.dumps(workspace.draft_config or {}): raise HTTPException(409,detail="This image is used by your design draft.")
     product_reference=f"/api/v1/storefront/media/{media_id}"
     if session.scalar(select(Product.id).where(Product.organization_id==tenant.organization_id,Product.media_asset_id==media_id).limit(1)) is not None: raise HTTPException(409,detail="This image is used by a product.")
     item.status="archived";session.add(OperationalAuditEvent(organization_id=tenant.organization_id,scope="tenant",actor_user_id=principal.user_id,action="media.archived",target_type="media_asset",target_id=str(item.id),outcome="success"));session.commit();return Response(status_code=204)
