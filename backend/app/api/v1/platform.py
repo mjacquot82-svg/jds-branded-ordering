@@ -401,8 +401,19 @@ def storefront_starter_media(collection: str, asset_key: str, version: int = 1) 
     if not path.is_file(): raise HTTPException(404,detail="Starter image is not available.")
     return FileResponse(path,media_type="image/webp",headers={"Cache-Control":"public, max-age=31536000, immutable"})
 
+def upload_catalog_session(session: Session = Depends(get_catalog_session)) -> Session:
+    """Check out the upload request's DB connection in the threadpool (sync dependency).
+
+    ``upload_media`` must stay ``async`` to read the request body, and its sync queries run on the event loop.
+    With the connection already held, those queries never wait for the pool on the loop, where a wait would
+    freeze every in-flight request (QueuePool timeouts). Same session, same transaction semantics.
+    """
+    session.connection()
+    return session
+
+
 @router.post("/owner/media/upload", status_code=201)
-async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session), content_type: str = Header(alias="Content-Type"), alt_text: str = Header(default="",alias="X-Media-Alt"), purpose: str = Header(default="design", alias="X-Media-Purpose")) -> dict:
+async def upload_media(request: Request, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(upload_catalog_session), content_type: str = Header(alias="Content-Type"), alt_text: str = Header(default="",alias="X-Media-Alt"), purpose: str = Header(default="design", alias="X-Media-Purpose")) -> dict:
     if len(alt_text) > 300: raise HTTPException(422,detail="Alternative text is too long.")
     if purpose not in {"design","product"}: raise HTTPException(422,detail="Media purpose must be design or product.")
     data=await request.body(); media_id=uuid4()
