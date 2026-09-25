@@ -54,3 +54,10 @@ test("deep links to /admin/platform wait for platform capabilities instead of bo
   assert.ok(waitIndex < guard.indexOf('if (session) return <Navigate replace to={operationsLinks(session)[0]?.to'));
   assert.ok(guard.indexOf("canAccessOwnerPath(session, location.pathname)") < waitIndex, "authorized sessions render before the wait state");
 });
+
+test("platform admin shows prospect and activation times in local time, not raw UTC ISO strings", async () => {
+  const page = await source("../../src/admin/PlatformAdminPage.jsx");
+  assert.match(page, /export function formatPlatformTime\(value\)/);
+  assert.match(page, /created \{formatPlatformTime\(item\.createdAt\)\}/);
+  assert.doesNotMatch(page, /\{item\.createdAt\}/);
+});
