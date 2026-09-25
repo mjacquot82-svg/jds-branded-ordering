@@ -8315,3 +8315,19 @@ body {
 /* M3 mobile (owner setup only): show all 8 progress steps and stack inline designer fields. */
 @media(max-width:800px){.wizard-progress-shell ol{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:.2rem;overflow:visible}.wizard-progress-shell li{flex:none;min-width:0}.wizard-progress-shell li>span{width:26px;height:26px;font-size:.8rem}}
 @media(max-width:680px){.designer-control-group label:has(> select),.designer-control-group label:has(> input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file])){display:grid!important;gap:.35rem;align-items:start;min-width:0}.designer-control-group label>select,.designer-control-group label>input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]){width:100%;max-width:100%;min-width:0}}
+/* M3 owner previews only (DesignPreviewPage + LayoutPhonePreview; customer storefront classes untouched):
+   show whole product images at 4:3 instead of a 70px strip that cut off cups and mugs. */
+.full-design-preview .preview-products article>img,.full-design-preview .preview-products article>.product-image-placeholder{height:auto;aspect-ratio:4/3;object-fit:cover;object-position:center}
+.layout-product-grid .sample-product-image{height:auto;aspect-ratio:4/3;object-fit:cover}
+/* M3 category manager: consistent, finger-sized controls and wizard typography. */
+.catalog-category-manager .section-heading h2{margin:0;font-family:inherit;font-size:1.15rem;font-weight:850;letter-spacing:-.01em}
+.category-management-list article button{min-height:44px;padding:.45rem .95rem;border:1px solid #d9d2c7;border-radius:999px;background:#fffdf8;color:#3a3f36;font:inherit;font-size:.85rem;font-weight:800;cursor:pointer}
+.category-management-list article button:hover:not(:disabled){border-color:#8a6545;background:#fff}
+.category-management-list article button:disabled{cursor:not-allowed;opacity:.45}
+.category-management-list article .category-delete-button:not(:disabled){border-color:#e3c3bd;color:#8a2f24}
+.category-management-list article input{flex:1 1 180px;min-height:44px;padding:.5rem .7rem;border:1px solid #b9b4aa;border-radius:.55rem;font:inherit}
+@media(max-width:480px){.category-management-list article button{flex:1 1 calc(50% - .5rem)}}
+/* M3 product editor: explicit save prompt right after choosing an image. */
+.product-image-save-hint{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.6rem;padding:.75rem .85rem;border:1px solid #e6c98f;border-radius:.7rem;background:#fff6df;color:#5b4308}
+.product-image-save-hint span{flex:1 1 220px}
+@media(max-width:480px){.product-image-save-hint .primary-button{width:100%}}
