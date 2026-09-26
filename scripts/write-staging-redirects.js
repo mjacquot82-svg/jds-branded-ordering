@@ -26,3 +26,6 @@ await writeFile(
   ].join("\n"),
   "utf8",
 );
+if (process.env.JDS_PILOT_SITE === "true") {
+  await writeFile("dist/_headers", "/*\n  X-Robots-Tag: noindex, nofollow\n", "utf8");
+}
