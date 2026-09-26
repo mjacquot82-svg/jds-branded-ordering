@@ -57,7 +57,7 @@ This pilot must not create permanently free live ecommerce or bill merchants.
 
 ```text
 JDS_STAGING_API_ORIGIN=<https://pilot-api-host>   # build-time proxy target (same pattern as staging)
-NETLIFY_CONFIG_PATH=netlify.pilot.toml
+JDS_PILOT_SITE=true                              # selects the pilot build and emits noindex headers
 ```
 
 Do **not** set secrets in `VITE_*` variables.
@@ -69,7 +69,7 @@ Reuse the staging-review variable *names* where sensible, with pilot values:
 ```text
 DATABASE_URL=<pilot DB>
 FRONTEND_URL=<pilot Netlify URL>
-PUBLIC_APP_URL=<pilot Netlify URL>
+PUBLIC_APP_URL=<pilot Render API URL> # API origin for callback URLs
 JDS_ENVIRONMENT=staging
 JDS_AUTH_PROVIDER=supabase
 JDS_AUTH_SESSION_PEPPER=<new random >=32>
@@ -109,7 +109,7 @@ Head includes M2 revision `20260910_33` (commercial_mode, demo tables). No destr
 2. Create a **new** Supabase project for pilot Auth (and optional storage).
 3. Create a **new** Render PostgreSQL + web service from `render.pilot.yaml` (manual approve; autoDeploy false).
 4. Set Render env vars; run migrate via pre-deploy.
-5. Create a **new** Netlify site; set config path to `netlify.pilot.toml`; set `JDS_STAGING_API_ORIGIN` to the Render URL; deploy branch `m2.5/controlled-demo-launch` (or merged foundation later — not automatic).
+5. Create a **new** Netlify site with production branch `m2.5/controlled-demo-launch`. Set `JDS_PILOT_SITE=true` and `JDS_STAGING_API_ORIGIN` to the Render URL. The root `netlify.toml` selects the pilot build, which writes API redirects and `X-Robots-Tag: noindex, nofollow` into the output. Turn off automatic publishing until the pilot environment is configured. Do not rely on `NETLIFY_CONFIG_PATH`: it is not a documented Netlify Git-build setting. Deploy only after inspecting the output `_redirects` and `_headers`.
 6. Set `JDS_DEMO_INVITE_CODE` and share `https://<pilot>/build?invite=<code>` with 5–10 people only.
 7. Configure Supabase email template redirect to `https://<pilot>/build/verify`.
 8. Bootstrap platform grant for Marc’s owner user so `/admin` platform prospects/activations are visible.
