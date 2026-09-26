@@ -67,7 +67,7 @@ Verified unchanged. Screenshots of `/`, `/menu`, `/cart` and `/account/sign-in` 
 ## Known limitations / follow-ups
 
 B-level (remaining):
-- `GET /api/v1/owner/auth/session` rotates the CSRF token. A second tab (or any extra session read) makes the first tab's next save fail with 403.
+- ~~`GET /api/v1/owner/auth/session` rotates the CSRF token. A second tab (or any extra session read) makes the first tab's next save fail with 403.~~ **Resolved in M3.1** (`m3.1/csrf-multi-tab-session-fix`). Root cause: `read_session` called `AuthenticationService.rotate_csrf`, which overwrote the session's CSRF hash on every read. The token is now derived from the session token (stable for the session, still verified against the session-bound hash, and new on every login or org switch). See `docs/M3_1_CSRF_MULTI_TAB_FIX.md`.
 - Residual (generic, not M3-specific): with the production pool (5 + 5) and the default 40-thread worker pool, more than about 70–80 owner requests in flight at the same instant in one process can still hit 30s `QueuePool` timeouts. Sync endpoints validate their responses in the worker threadpool while still holding their DB connection, so when every worker thread is waiting on the pool, the requests that hold connections can't finish. Up to 70 concurrent requests completed with no errors; 80 gave 4 timeouts. Options (a product/ops decision): size pool + overflow to at least the worker-thread limit, cap concurrent requests per process, or release sessions before serialization.
 - Illustrations are placeholders, not photos; 44 archetypes have no art yet.
 - The hero can't use starter art in the published design (hero requires tenant media); the demo hero exists in the preview only.
