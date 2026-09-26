@@ -8266,3 +8266,93 @@ body {
 .platform-prospect-list { list-style: none; padding: 0; display: grid; gap: .75rem; }
 .platform-prospect-list li { display: grid; gap: .25rem; padding: .75rem; border: 1px solid #ddd6c8; border-radius: 10px; }
 .go-live-page header { margin-bottom: 1rem; }
+
+/* M3 starter image library: owner product editor (owner tools only). */
+.product-image-picker-intro{display:grid}
+.product-image-current{display:grid;grid-template-columns:minmax(0,180px) minmax(0,1fr);align-items:center;gap:.9rem}
+.product-image-current img{grid-row:auto;width:100%}
+.product-card-mini-preview{display:grid;gap:.35rem;padding:.45rem;border:1px solid #ded8ce;border-radius:.75rem;background:#fff;box-shadow:0 6px 16px #2a2f2812}
+.product-card-mini-preview img,.product-card-mini-empty{display:grid;place-items:center;width:100%;aspect-ratio:1;object-fit:cover;border-radius:.55rem;background:linear-gradient(145deg,#ece9e2,#ddd8ce);color:#777168;font-size:.8rem;font-weight:800}
+.product-card-mini-preview>div{display:grid;gap:.1rem;padding:0 .15rem .15rem}
+.product-card-mini-preview b{overflow:hidden;font-size:.9rem;text-overflow:ellipsis;white-space:nowrap}
+.product-card-mini-preview small{color:#68645d;font-weight:700}
+.product-image-current-copy{display:grid;gap:.3rem;align-content:center}
+.product-image-current-copy strong{color:#315b2a}
+.product-image-current-copy small{color:#5d5a53}
+.image-source-badge{justify-self:start;padding:.2rem .55rem;border-radius:999px;background:#ece9e3;color:#4f4b45;font-size:.72rem;font-weight:900;letter-spacing:.03em;text-transform:uppercase}
+.image-source-badge.source-starter{background:#fdf0e3;color:#8a4b1c}
+.image-source-badge.source-upload{background:#e7f1e3;color:#2f5a28}
+.text-danger-button{min-height:44px;padding:.55rem .9rem;border:1px solid #e3c3bd;border-radius:999px;background:#fff;color:#8a2f24;font-weight:800}
+.starter-image-grid button.is-selected{border-color:#5f6d54;box-shadow:0 0 0 3px #5f6d5440}
+.starter-image-grid button.is-selected small{color:#315b2a;font-weight:800}
+.starter-image-grid button{min-height:0}
+.starter-image-grid b{font-size:.85rem;line-height:1.25}
+.starter-empty{margin:0;padding:.8rem;border-radius:.6rem;background:#fff;color:#5d5a53}
+.starter-image-picker{max-height:min(70vh,760px);overflow:auto;overscroll-behavior:contain}
+.starter-picker-heading{position:sticky;top:-.9rem;z-index:1;margin:-.9rem -.9rem 0;padding:.9rem;background:#faf8f4;border-bottom:1px solid #ece6dc}
+.starter-picker-heading small{color:#68645d}
+.starter-picker-heading button{align-self:start;min-height:40px;padding:.4rem .8rem;border:1px solid #d9d2c7;border-radius:999px;background:#fff;font-weight:800}
+.tenant-image-picker .starter-picker-heading{position:static;margin:0;padding:0;border:0;background:none}
+.media-library-tile{display:grid;gap:.35rem;align-content:start}
+.media-remove-button{min-height:38px;padding:.35rem .6rem;border:1px solid #e3c3bd;border-radius:.5rem;background:#fff;color:#8a2f24;font-size:.78rem;font-weight:800}
+.media-in-use{color:#315b2a;font-size:.75rem;font-weight:800}
+.product-row-copy{display:grid;grid-template-columns:56px minmax(0,1fr);column-gap:.75rem;align-content:start}
+.product-row-copy>:not(.product-row-thumb){grid-column:2}
+.product-row .product-row-thumb{display:grid;grid-row:1/span 3;place-items:center;width:56px;height:56px;margin:0;overflow:hidden;border-radius:.6rem;background:linear-gradient(145deg,#ece9e2,#ddd8ce)}
+.product-row-thumb img{width:100%;height:100%;object-fit:cover}
+.product-row-thumb i{color:#777168;font-size:.6rem;font-style:normal;font-weight:800;text-align:center}
+@media(max-width:680px){.product-image-current{grid-template-columns:120px minmax(0,1fr)}.product-image-current img{width:100%}.starter-image-picker{max-height:none}}
+@media(max-width:480px){.starter-picker-filters{grid-template-columns:1fr}.starter-image-grid{grid-template-columns:1fr 1fr}.product-image-current{grid-template-columns:104px minmax(0,1fr);gap:.65rem}}
+/* M3 mobile: the two-column products layout (min 480px + 620px) must collapse on phones too. */
+@media (max-width: 760px){.admin-products-page .admin-products-layout{grid-template-columns:minmax(0,1fr)}.admin-products-page .product-list-panel,.admin-products-page .product-editor-panel{min-width:0;max-width:100%}}
+/* M3 prospect wizard: payments explainer and in-wizard activation request (owner tools only). */
+.prospect-step-list{display:grid;gap:.45rem;margin:.5rem 0 0;padding-left:1.1rem;color:#4f4b45}
+.activation-next-links{display:flex;flex-wrap:wrap;gap:.6rem}
+.go-live-page.wizard-focus-card{max-width:720px;margin-inline:auto}
+.go-live-page.wizard-focus-card .owner-login-form{display:grid;gap:.75rem;max-width:none}
+.go-live-page.wizard-focus-card .owner-login-form label{display:grid;gap:.3rem;font-weight:700}
+.go-live-page.wizard-focus-card .owner-login-form input,.go-live-page.wizard-focus-card .owner-login-form select{min-height:44px;padding:.55rem .7rem;border:1px solid #b9b4aa;border-radius:.55rem;font:inherit}
+/* M3 mobile (owner setup only): show all 8 progress steps and stack inline designer fields. */
+@media(max-width:800px){.wizard-progress-shell ol{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:.2rem;overflow:visible}.wizard-progress-shell li{flex:none;min-width:0}.wizard-progress-shell li>span{width:26px;height:26px;font-size:.8rem}}
+@media(max-width:680px){.designer-control-group label:has(> select),.designer-control-group label:has(> input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file])){display:grid!important;gap:.35rem;align-items:start;min-width:0}.designer-control-group label>select,.designer-control-group label>input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]){width:100%;max-width:100%;min-width:0}}
+/* M3 owner previews only (DesignPreviewPage + LayoutPhonePreview; customer storefront classes untouched):
+   show whole product images at 4:3 instead of a 70px strip that cut off cups and mugs. */
+.full-design-preview .preview-products article>img,.full-design-preview .preview-products article>.product-image-placeholder{height:auto;aspect-ratio:4/3;object-fit:cover;object-position:center}
+.layout-product-grid .sample-product-image{height:auto;aspect-ratio:4/3;object-fit:cover}
+/* M3 category manager: consistent, finger-sized controls and wizard typography. */
+.catalog-category-manager .section-heading h2{margin:0;font-family:inherit;font-size:1.15rem;font-weight:850;letter-spacing:-.01em}
+.category-management-list article button{min-height:44px;padding:.45rem .95rem;border:1px solid #d9d2c7;border-radius:999px;background:#fffdf8;color:#3a3f36;font:inherit;font-size:.85rem;font-weight:800;cursor:pointer}
+.category-management-list article button:hover:not(:disabled){border-color:#8a6545;background:#fff}
+.category-management-list article button:disabled{cursor:not-allowed;opacity:.45}
+.category-management-list article .category-delete-button:not(:disabled){border-color:#e3c3bd;color:#8a2f24}
+.category-management-list article input{flex:1 1 180px;min-height:44px;padding:.5rem .7rem;border:1px solid #b9b4aa;border-radius:.55rem;font:inherit}
+@media(max-width:480px){.category-management-list article button{flex:1 1 calc(50% - .5rem)}}
+/* M3 product editor: explicit save prompt right after choosing an image. */
+.product-image-save-hint{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.6rem;padding:.75rem .85rem;border:1px solid #e6c98f;border-radius:.7rem;background:#fff6df;color:#5b4308}
+.product-image-save-hint span{flex:1 1 220px}
+@media(max-width:480px){.product-image-save-hint .primary-button{width:100%}}
+/* M3: keep the wizard footer Back button its natural size when the "save or cancel" hint is shown. */
+.wizard-actions{align-items:flex-end}.wizard-actions>.secondary-button{flex:0 0 auto}
+/* M3: modern-layout owner preview rows were overflow:hidden, silently hiding the 4th+ product (and the 2nd+ on phones).
+   Let them scroll sideways like a carousel, with the next card peeking on phones. Owner preview only. */
+.full-layout-modern .preview-products{overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain;scroll-snap-type:x proximity;scrollbar-width:thin;padding-bottom:.4rem}
+.full-layout-modern .preview-products article{scroll-snap-align:start}
+/* The preview's inner grid column grew to the rows' full content width (1000px+ on a 375px phone), so rows were clipped, not scrollable. */
+.full-design-preview>main{grid-template-columns:minmax(0,1fr)}.full-design-preview .preview-catalog-section{min-width:0}
+@media(max-width:600px){.full-layout-modern .preview-products{grid-template-columns:none;grid-auto-columns:minmax(200px,78%)}}
+/* M3 free-demo starter hero (owner preview only, prospects without their own hero photo). Live/Guest House heroes are untouched. */
+.full-hero-composition.demo-hero-composition>header.demo-hero{aspect-ratio:auto;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:center;place-content:stretch;gap:1.25rem;min-height:260px;padding:clamp(1.25rem,4vw,2.75rem);background:radial-gradient(circle at 85% 15%,color-mix(in srgb,var(--preview-accent) 45%,transparent),transparent 55%),linear-gradient(135deg,var(--preview-primary),color-mix(in srgb,var(--preview-primary) 62%,#000));color:#fff;text-align:left;text-shadow:0 1px 2px #0005}
+.demo-hero-copy{display:grid;gap:.65rem;justify-items:start}
+.demo-hero-name{margin:0;font-size:.8rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.full-design-preview .demo-hero h1{margin:0;font-size:clamp(1.45rem,3.2vw,2.4rem);line-height:1.12;color:#fff}
+.demo-hero-cta{display:grid;gap:.4rem;justify-items:start}
+.full-design-preview .demo-hero-cta button:disabled{min-height:44px;padding:.65rem 1.35rem;border:0;border-radius:999px;background:#fff;color:#1f2420;font:inherit;font-weight:800;opacity:1;text-shadow:none;cursor:not-allowed}
+.demo-hero-cta small{padding:.25rem .65rem;border-radius:999px;background:#000000a6;color:#fff;font-size:.8rem;font-weight:700;text-shadow:none}
+.demo-hero-art{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.6rem}
+.demo-hero-art img{display:block;width:100%;aspect-ratio:1;object-fit:cover;border:3px solid #fff;border-radius:1rem;box-shadow:0 10px 24px #0004}
+.demo-hero-art img:nth-child(2){transform:translateY(-10px)}
+.demo-hero-note{grid-column:1/-1;margin:0;font-size:.72rem;font-weight:600;opacity:.9}
+@media(max-width:600px){.full-hero-composition.demo-hero-composition>header.demo-hero{grid-template-columns:1fr;min-height:0}.demo-hero-art{max-width:320px}}
+/* M3 phones: Edit is the main product action (first, full width, prominent); the four secondary actions sit in a compact
+   two-column grid of finger-sized buttons instead of five stacked full-width buttons per product. */
+@media(max-width:760px){.product-row-actions{grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem}.product-row-actions button{min-height:44px;padding-inline:.5rem;font-size:.82rem;line-height:1.15}.product-row-actions .product-edit-button{grid-column:1/-1;order:-1;border-color:#26312a;background:#26312a;color:#fff;font-size:.95rem}}

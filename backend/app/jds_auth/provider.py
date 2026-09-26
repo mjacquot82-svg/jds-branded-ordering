@@ -1,3 +1,6 @@
+import json
+import os
+from pathlib import Path
 from dataclasses import dataclass
 import logging
 import secrets
@@ -76,34 +79,83 @@ class IdentityProvider(Protocol):
 
 
 class DevelopmentIdentityProvider:
-    """Fixed local identity adapter; enabled only by the guarded app factory."""
+    """Local identity adapter; enabled only by the guarded app factory.
+
+    Default: one fixed owner (legacy local review).
+    When JDS_LOCAL_DEMO_SIGNUP=true: also allow multi-user register/login for
+    $0 private preview of the Build Your Store Free funnel (emails auto-verified;
+    no Supabase/email). Users persist in a local JSON file for process reloads.
+    """
 
     ISSUER = "https://local-auth.jds.test"
     SUBJECT = "jds-local-review-owner"
+    _DEMO_USERS_PATH = Path(os.getenv("JDS_LOCAL_DEMO_USERS_FILE", "/tmp/jds-local-demo-users.json"))
 
     def __init__(self, *, email: str, password: str) -> None:
         self._email = email.strip().lower()
         self._password = password
+        self._demo_signup = os.getenv("JDS_LOCAL_DEMO_SIGNUP", "false").lower() == "true"
+
+    def _load_demo_users(self) -> dict[str, str]:
+        if not self._DEMO_USERS_PATH.exists():
+            return {}
+        try:
+            payload = json.loads(self._DEMO_USERS_PATH.read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return {str(k).lower(): str(v) for k, v in payload.items()} if isinstance(payload, dict) else {}
+
+    def _save_demo_users(self, users: dict[str, str]) -> None:
+        self._DEMO_USERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self._DEMO_USERS_PATH.write_text(json.dumps(users, indent=2, sort_keys=True))
 
     def authenticate_password(self, email: str, password: str) -> ProviderAuthentication:
-        if not (
-            secrets.compare_digest(email.strip().lower(), self._email)
-            and secrets.compare_digest(password, self._password)
-        ):
-            raise InvalidCredentialsError("Authentication failed.")
-        return ProviderAuthentication(
-            ProviderIdentity(
-                issuer=self.ISSUER,
-                subject=self.SUBJECT,
-                email=self._email,
-                email_verified=True,
-                display_name="Local Review Owner",
-            ),
-            "local-review-session-evidence",
-        )
+        normalized = email.strip().lower()
+        if secrets.compare_digest(normalized, self._email) and secrets.compare_digest(password, self._password):
+            return ProviderAuthentication(
+                ProviderIdentity(
+                    issuer=self.ISSUER,
+                    subject=self.SUBJECT,
+                    email=self._email,
+                    email_verified=True,
+                    display_name="Local Review Owner",
+                ),
+                "local-review-session-evidence",
+            )
+        if self._demo_signup:
+            users = self._load_demo_users()
+            stored = users.get(normalized)
+            if stored is not None and secrets.compare_digest(password, stored):
+                return ProviderAuthentication(
+                    ProviderIdentity(
+                        issuer=self.ISSUER,
+                        subject=f"local-demo:{normalized}",
+                        email=normalized,
+                        email_verified=True,
+                        display_name=normalized.split("@")[0],
+                    ),
+                    "local-demo-session-evidence",
+                )
+        raise InvalidCredentialsError("Authentication failed.")
 
     def register_user(self, email: str, password: str, redirect_url: str) -> ProviderIdentity:
-        raise IdentityProviderError("Registration is unavailable in local review mode.")
+        if not self._demo_signup:
+            raise IdentityProviderError("Registration is unavailable in local review mode.")
+        normalized = email.strip().lower()
+        if len(password) < 10:
+            raise IdentityProviderError("Password too short.")
+        users = self._load_demo_users()
+        if normalized in users or secrets.compare_digest(normalized, self._email):
+            raise IdentityProviderError("User already exists")
+        users[normalized] = password
+        self._save_demo_users(users)
+        return ProviderIdentity(
+            issuer=self.ISSUER,
+            subject=f"local-demo:{normalized}",
+            email=normalized,
+            email_verified=True,
+            display_name=normalized.split("@")[0] or "Prospect",
+        )
 
     def request_password_reset(self, email: str, redirect_url: str) -> None:
         return None

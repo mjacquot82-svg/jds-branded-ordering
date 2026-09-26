@@ -1,11 +1,14 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { applyOperationsBranding, applyStorefrontBranding, isOperationsPath } from "./operationsBranding.js";
 
 const TenantContext = createContext(null);
 export function tenantStorageKey(tenantId, key) { return `jds:${tenantId}:${key}`; }
 
 export function TenantProvider({ children }) {
   const [state, setState] = useState({ status: "loading", value: null });
-  const operationsRoute = /^\/(admin|owner|staff)(\/|$)/.test(globalThis.location?.pathname || "");
+  // /build is the self-service demo funnel — must not require a resolved café hostname.
+  const operationsRoute = /^\/(admin|owner|staff|build|activate|setup|go-live)(\/|$)/.test(globalThis.location?.pathname || "");
   useEffect(() => {
     let active = true;
     const reviewTenant = new URLSearchParams(globalThis.location?.search || "").get("review_tenant");
@@ -14,29 +17,20 @@ export function TenantProvider({ children }) {
       .then(async (response) => { if (!response.ok) throw new Error("Storefront unavailable"); return response.json(); })
       .then((value) => {
         if (!active) return;
-        const colors = value.design?.colors || {};
-        document.documentElement.style.setProperty("--tenant-primary", colors.primary || "#6f7d5f");
-        document.documentElement.style.setProperty("--tenant-accent", colors.accent || "#b98564");
-        document.documentElement.style.setProperty("--tenant-background", colors.background || "#f7f0e6");
-        document.documentElement.style.setProperty("--tenant-surface", colors.surface || "#ffffff");
-        document.documentElement.style.setProperty("--tenant-text", colors.text || "#2f3328");
-        document.documentElement.dataset.tenantTemplate = value.design?.template || "cozy";
-        document.documentElement.dataset.tenantTypography = value.design?.typography || "classic";
-        document.documentElement.dataset.tenantButtons = value.design?.buttonStyle || "rounded";
-        const theme = document.querySelector('meta[name="theme-color"]');
-        if (theme) theme.setAttribute("content", value.design?.pwa?.themeColor || colors.primary || "#6f7d5f");
-        const touchIcon = document.querySelector('link[rel="apple-touch-icon"]');
-        const iconUrl = `/api/v1/storefront/icon/192.png?tenant=${encodeURIComponent(value.tenant.id)}&v=${value.designVersion || 0}`;
-        if (touchIcon) touchIcon.setAttribute("href", iconUrl);
-        document.querySelectorAll('link[rel="icon"],link[rel="shortcut icon"]').forEach((icon) => icon.setAttribute("href", iconUrl));
-        document.title = `${value.business?.displayName || "Order ahead"} · Order online`;
         setState({ status: "ready", value });
       })
       .catch(() => { if (active) setState(operationsRoute ? { status: "operations", value: { tenant: { id: "membership-scoped", slug: "operations" }, business: { displayName: "JDS Operations" }, design: {} } } : { status: "error", value: null }); });
     return () => { active = false; delete document.documentElement.dataset.tenantTemplate; delete document.documentElement.dataset.tenantTypography; delete document.documentElement.dataset.tenantButtons; };
   }, []);
+  const location = useLocation();
+  // Operations routes get neutral JDS branding; storefront routes get tenant branding.
+  // Re-evaluated on client-side navigation so neither leaks into the other.
+  useEffect(() => {
+    if (isOperationsPath(location.pathname)) applyOperationsBranding(document, location.pathname);
+    else if (state.status === "ready") applyStorefrontBranding(document, state.value);
+  }, [location.pathname, state]);
   const context = useMemo(() => ({ ...state, storageKey: (key) => tenantStorageKey(state.value?.tenant?.id || "unresolved", key) }), [state]);
-  if (state.status === "loading") return <main className="tenant-gate"><p>Opening storefront…</p></main>;
+  if (state.status === "loading") return <main className="tenant-gate"><p>{isOperationsPath(location.pathname) ? "Loading…" : "Opening storefront…"}</p></main>;
   if (state.status === "error") return <main className="tenant-gate"><h1>Storefront unavailable</h1><p>Check the address and try again.</p></main>;
   return <TenantContext.Provider value={context}>{children}</TenantContext.Provider>;
 }

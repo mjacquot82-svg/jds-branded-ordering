@@ -25,8 +25,28 @@ from app.jds_auth.rate_limit import RateLimit, RateLimitExceeded
 from app.jds_auth.service import AuthenticationService, IssuedSession, MembershipInactive
 from app.platform.commercial import COMMERCIAL_LIVE, COMMERCIAL_PROSPECT
 from app.platform.demo_limits import (
+    DEMO_ACTIVATION_REQUEST_MAX,
+    DEMO_ACTIVATION_REQUEST_WINDOW_SECONDS,
+    DEMO_ENTER_IP_MAX,
+    DEMO_ENTER_IP_WINDOW_SECONDS,
+    DEMO_FUNNEL_EVENT_MAX,
+    DEMO_FUNNEL_EVENT_WINDOW_SECONDS,
     DEMO_PLAN_KEY,
+    DEMO_RESEND_VERIFICATION_EMAIL_MAX,
+    DEMO_RESEND_VERIFICATION_EMAIL_WINDOW_SECONDS,
+    DEMO_RESEND_VERIFICATION_IP_MAX,
+    DEMO_RESEND_VERIFICATION_IP_WINDOW_SECONDS,
+    DEMO_SIGNUP_EMAIL_MAX,
+    DEMO_SIGNUP_EMAIL_WINDOW_SECONDS,
+    DEMO_SIGNUP_IP_MAX,
+    DEMO_SIGNUP_IP_WINDOW_SECONDS,
+    DEMO_TENANT_CREATE_IP_MAX,
+    DEMO_TENANT_CREATE_IP_WINDOW_SECONDS,
+    DEMO_UPLOAD_ORG_MAX,
+    DEMO_UPLOAD_ORG_WINDOW_SECONDS,
     STANDARD_PLAN_KEY,
+    demo_invite_code,
+    demo_invite_code_required,
     standard_plan_amount_cents,
 )
 from app.platform.demo_starter import apply_demo_starter
@@ -55,10 +75,23 @@ ALLOWED_FUNNEL_EVENTS = frozenset(
 )
 PROCESSOR_PREFERENCES = frozenset({"clover", "square", "stripe", "moneris", "other", "not_sure"})
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-DEMO_SIGNUP_IP = RateLimit("demo-signup-ip", 8, 60 * 60)
-DEMO_ENTER_IP = RateLimit("demo-enter-ip", 20, 60 * 60)
-DEMO_ACTIVATION_ORG = RateLimit("demo-activation-org", 3, 24 * 60 * 60)
-DEMO_FUNNEL_ORG = RateLimit("demo-funnel-org", 120, 60 * 60)
+DEMO_SIGNUP_IP = RateLimit("demo-signup-ip", DEMO_SIGNUP_IP_MAX, DEMO_SIGNUP_IP_WINDOW_SECONDS)
+DEMO_SIGNUP_EMAIL = RateLimit("demo-signup-email", DEMO_SIGNUP_EMAIL_MAX, DEMO_SIGNUP_EMAIL_WINDOW_SECONDS)
+DEMO_ENTER_IP = RateLimit("demo-enter-ip", DEMO_ENTER_IP_MAX, DEMO_ENTER_IP_WINDOW_SECONDS)
+DEMO_TENANT_CREATE_IP = RateLimit(
+    "demo-tenant-create-ip", DEMO_TENANT_CREATE_IP_MAX, DEMO_TENANT_CREATE_IP_WINDOW_SECONDS
+)
+DEMO_UPLOAD_ORG = RateLimit("demo-upload-org", DEMO_UPLOAD_ORG_MAX, DEMO_UPLOAD_ORG_WINDOW_SECONDS)
+DEMO_ACTIVATION_ORG = RateLimit(
+    "demo-activation-org", DEMO_ACTIVATION_REQUEST_MAX, DEMO_ACTIVATION_REQUEST_WINDOW_SECONDS
+)
+DEMO_FUNNEL_ORG = RateLimit("demo-funnel-org", DEMO_FUNNEL_EVENT_MAX, DEMO_FUNNEL_EVENT_WINDOW_SECONDS)
+DEMO_RESEND_IP = RateLimit(
+    "demo-resend-ip", DEMO_RESEND_VERIFICATION_IP_MAX, DEMO_RESEND_VERIFICATION_IP_WINDOW_SECONDS
+)
+DEMO_RESEND_EMAIL = RateLimit(
+    "demo-resend-email", DEMO_RESEND_VERIFICATION_EMAIL_MAX, DEMO_RESEND_VERIFICATION_EMAIL_WINDOW_SECONDS
+)
 
 
 def enforce_demo_rate_limit(session: Session, pepper: str, policy: RateLimit, identifier: str, *, now: datetime) -> None:
@@ -111,6 +144,20 @@ class PublicPricing:
 
 def email_hash(email: str) -> str:
     return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+
+
+def invite_code_matches(provided: str | None) -> bool:
+    """Constant-time-ish compare for optional controlled-pilot invite gate."""
+    expected = demo_invite_code()
+    if not expected:
+        return True
+    candidate = (provided or "").strip()
+    if len(candidate) != len(expected):
+        # Still hash both sides to avoid trivial timing oracle on length alone for short codes.
+        hashlib.sha256(candidate.encode("utf-8")).digest()
+        hashlib.sha256(expected.encode("utf-8")).digest()
+        return False
+    return hashlib.sha256(candidate.encode("utf-8")).digest() == hashlib.sha256(expected.encode("utf-8")).digest()
 
 
 def slugify_business(name: str) -> str:
@@ -457,9 +504,18 @@ class DemoFunnelService:
         now: datetime,
         user_agent: str | None,
         client_id: str,
+        invite_code: str | None = None,
     ) -> tuple[str, IssuedSession | None]:
+        if demo_invite_code_required() and not invite_code_matches(invite_code):
+            raise DemoServiceError(
+                "invite_required",
+                "This controlled pilot needs a valid invite link or code from JDS.",
+            )
         try:
             enforce_demo_rate_limit(self.session, self.settings.session_pepper, DEMO_SIGNUP_IP, client_id, now=now)
+            enforce_demo_rate_limit(
+                self.session, self.settings.session_pepper, DEMO_SIGNUP_EMAIL, email.strip().lower(), now=now
+            )
         except RateLimitExceeded as error:
             raise DemoServiceError("rate_limited", f"Too many signup attempts. Retry in {error.retry_after}s.") from error
 
@@ -497,7 +553,20 @@ class DemoFunnelService:
         try:
             authentication = self.provider.authenticate_password(normalized, password)
         except (InvalidCredentialsError, IdentityProviderError) as error:
-            raise DemoServiceError("registration_failed", "Account created but sign-in failed. Verify email, then continue.") from error
+            raise DemoServiceError(
+                "registration_failed",
+                "Account created but sign-in failed. Verify email, then continue.",
+            ) from error
+
+        try:
+            enforce_demo_rate_limit(
+                self.session, self.settings.session_pepper, DEMO_TENANT_CREATE_IP, client_id, now=now
+            )
+        except RateLimitExceeded as error:
+            raise DemoServiceError(
+                "rate_limited",
+                f"Too many demo workspaces from this network. Retry in {error.retry_after}s.",
+            ) from error
 
         issued = self.provision_prospect(
             email=normalized,
@@ -576,6 +645,15 @@ class DemoFunnelService:
         if pending is None or pending.expires_at <= now:
             raise DemoServiceError("signup_required", "Start with Build Your Store Free to create a demo.")
 
+        try:
+            enforce_demo_rate_limit(
+                self.session, self.settings.session_pepper, DEMO_TENANT_CREATE_IP, client_id, now=now
+            )
+        except RateLimitExceeded as error:
+            raise DemoServiceError(
+                "rate_limited",
+                f"Too many demo workspaces from this network. Retry in {error.retry_after}s.",
+            ) from error
         issued = self.provision_prospect(
             email=normalized,
             business_name=pending.business_name,
@@ -589,6 +667,31 @@ class DemoFunnelService:
         )
         self.session.commit()
         return "ready", issued
+
+    def resend_verification(
+        self,
+        *,
+        email: str,
+        now: datetime,
+        client_id: str,
+    ) -> None:
+        normalized = email.strip().lower()
+        try:
+            enforce_demo_rate_limit(self.session, self.settings.session_pepper, DEMO_RESEND_IP, client_id, now=now)
+            enforce_demo_rate_limit(self.session, self.settings.session_pepper, DEMO_RESEND_EMAIL, normalized, now=now)
+        except RateLimitExceeded as error:
+            raise DemoServiceError(
+                "rate_limited", f"Too many verification emails. Retry in {error.retry_after}s."
+            ) from error
+        redirect = f"{self.settings.frontend_url.rstrip('/')}/build/verify"
+        try:
+            self.provider.resend_verification(normalized, redirect)
+        except Exception as error:
+            # Do not leak whether the account exists.
+            raise DemoServiceError(
+                "verification_resend_accepted",
+                "If that email still needs verification, check your inbox (and spam) for the link.",
+            ) from error
 
     def request_activation(
         self,
@@ -732,6 +835,30 @@ class DemoFunnelService:
         )
         self.session.commit()
         return organization
+
+
+
+def enforce_demo_upload_rate(session: Session, pepper: str, organization_id: UUID, *, now: datetime | None = None) -> None:
+    """Per-org upload velocity for prospects (in addition to storage quotas)."""
+    from app.platform.commercial import is_prospect
+
+    if not is_prospect(session, organization_id):
+        return
+    stamp = now or datetime.now(timezone.utc)
+    try:
+        enforce_demo_rate_limit(session, pepper, DEMO_UPLOAD_ORG, str(organization_id), now=stamp)
+    except RateLimitExceeded as error:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "demo_upload_rate_limited",
+                "message": f"Too many demo uploads. Retry in {error.retry_after}s.",
+                "retryAfter": error.retry_after,
+            },
+            headers={"Retry-After": str(error.retry_after)},
+        ) from error
 
 
 def enforce_demo_catalog_limits(session: Session, organization_id: UUID) -> None:

@@ -147,6 +147,7 @@ class OwnerProductResponse(CatalogSchema):
     base_price_cents: int
     category_id: str
     image: str
+    image_source: str = "none"
     available: bool
     featured: bool
     lunch_special: bool

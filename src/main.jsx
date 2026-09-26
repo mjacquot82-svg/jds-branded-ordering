@@ -6,6 +6,10 @@ import { CustomerAuthProvider } from "./auth/CustomerAuthContext.jsx";
 import AppErrorBoundary from "./components/AppErrorBoundary.jsx";
 import "./style.css";
 import { TenantProvider } from "./tenant/TenantContext.jsx";
+import { applyOperationsBranding, isOperationsPath } from "./tenant/operationsBranding.js";
+
+// Avoid flashing a café title/icon on owner, setup, and /build pages before React mounts.
+if (isOperationsPath(location.pathname)) applyOperationsBranding(document, location.pathname);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register(`/service-worker.js?tenant=${encodeURIComponent(location.hostname)}`, { scope: "/", updateViaCache: "none" }).catch((error) => {
