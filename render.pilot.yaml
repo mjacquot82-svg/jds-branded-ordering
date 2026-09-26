@@ -4,12 +4,15 @@ services:
   - type: web
     name: jds-branded-ordering-demo-pilot-api
     runtime: python
+    branch: m2.5/controlled-demo-launch
+    plan: 0.5c-512mb
+    region: ohio
     rootDir: backend
     buildCommand: pip install .
     preDeployCommand: python -m app.db.migrate
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health/ready
-    autoDeploy: false
+    autoDeployTrigger: off
     disk:
       name: jds-demo-pilot-media
       mountPath: /var/data/jds-demo-pilot-media
@@ -26,3 +29,7 @@ databases:
   - name: jds-branded-ordering-demo-pilot-db
     databaseName: jds_branded_ordering_demo_pilot
     user: jds_demo_pilot
+    plan: 0.1c-256mb
+    diskSizeGB: 1
+    region: ohio
+    postgresMajorVersion: "17"
