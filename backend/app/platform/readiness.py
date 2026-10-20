@@ -11,6 +11,24 @@ from app.catalog.models import Category, Product
 from app.availability.models import ProductAvailability
 from app.jds_auth.models import Organization
 from app.payments.service import is_payment_connected
+
+
+def pay_at_pickup_enabled(session: Session, organization_id: UUID) -> bool:
+    from app.payments.models import OrganizationOrderSettings
+
+    row = session.get(OrganizationOrderSettings, organization_id)
+    return bool(row and row.pay_at_pickup_enabled)
+
+
+def clover_available() -> bool:
+    """True only when the platform has Clover app credentials configured."""
+    from app.clover.config import CloverConfigurationError, CloverSettings
+
+    try:
+        CloverSettings.from_env().validate()
+    except (CloverConfigurationError, ValueError):
+        return False
+    return True
 from app.platform.models import BusinessProfile, DesignWorkspace, StorefrontHostname
 
 
@@ -32,7 +50,9 @@ def evaluate_storefront_readiness(session: Session, organization_id: UUID) -> Re
     organization = session.get(Organization, organization_id)
     profile = session.get(BusinessProfile, organization_id)
     settings = session.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == organization_id))
-    payment_ok = is_payment_connected(session, organization_id)
+    # A shop can take orders with an electronic provider OR with pay at pickup
+    # turned on. Payment stays pluggable: Clover is one provider, not a must.
+    payment_ok = is_payment_connected(session, organization_id) or pay_at_pickup_enabled(session, organization_id)
     checks = {
         "organization": bool(organization and organization.is_active and organization.lifecycle_status == "active" and getattr(organization, "commercial_mode", "live") == "live"),
         "business_profile": bool(

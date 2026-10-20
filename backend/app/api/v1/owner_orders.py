@@ -18,6 +18,12 @@ from app.orders.fulfillment import (
 )
 from app.orders.models import Order
 from app.tenancy.context import TenantContext
+from app.payments.pay_at_pickup import (
+    PayAtPickupError,
+    is_pay_at_pickup,
+    mark_collected_at_counter,
+    mark_no_show,
+)
 
 router = APIRouter(prefix="/owner/orders", tags=["owner-orders"])
 
@@ -38,6 +44,8 @@ class OwnerOrderResponse(OwnerOrderSchema):
     reference: str
     version: int
     payment_status: OrderStatus
+    payment_method: str
+    pay_at_pickup_unpaid: bool
     fulfillment_status: FulfillmentStatus
     customer_name: str
     customer_email: str
@@ -63,6 +71,9 @@ class OwnerOrderResponse(OwnerOrderSchema):
             reference=f"GH-{order.id:06d}",
             version=order.version,
             payment_status=order.status,
+            payment_method="pay_at_pickup" if is_pay_at_pickup(order) else "online",
+            pay_at_pickup_unpaid=is_pay_at_pickup(order) and order.status != OrderStatus.PAID
+            and order.fulfillment_status != FulfillmentStatus.CANCELLED,
             fulfillment_status=order.fulfillment_status,
             customer_name=order.guest_name,
             customer_email=order.guest_email,
@@ -194,3 +205,43 @@ def update_fulfillment(
         return OwnerOrderResponse.from_model(order)
     except (SQLAlchemyError, FulfillmentError) as error:
         _handle_error(error)
+
+
+class PayAtPickupAction(OwnerOrderSchema):
+    expected_version: int = Field(ge=1)
+
+
+def _pay_at_pickup_action(service: OwnerOrderService, order_id: int, principal: AuthPrincipal, payload: PayAtPickupAction, action) -> OwnerOrderResponse:
+    try:
+        order = service.order(order_id)
+        action(service._session, order, actor_user_id=principal.user_id, expected_version=payload.expected_version)
+        service._session.commit()
+        return OwnerOrderResponse.from_model(service.order(order_id))
+    except PayAtPickupError as error:
+        service._session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": error.code, "message": str(error)}) from error
+    except (SQLAlchemyError, FulfillmentError) as error:
+        service._session.rollback()
+        _handle_error(error)
+
+
+@router.post("/{order_id}/mark-paid", response_model=OwnerOrderResponse)
+def mark_pay_at_pickup_paid(
+    payload: PayAtPickupAction,
+    order_id: int = Path(ge=1),
+    principal: AuthPrincipal = Depends(require_permission("orders.fulfill")),
+    service: OwnerOrderService = Depends(get_service),
+) -> OwnerOrderResponse:
+    """Staff took cash/card at the counter for a pay-at-pickup order."""
+    return _pay_at_pickup_action(service, order_id, principal, payload, mark_collected_at_counter)
+
+
+@router.post("/{order_id}/no-show", response_model=OwnerOrderResponse)
+def mark_pay_at_pickup_no_show(
+    payload: PayAtPickupAction,
+    order_id: int = Path(ge=1),
+    principal: AuthPrincipal = Depends(require_permission("orders.fulfill")),
+    service: OwnerOrderService = Depends(get_service),
+) -> OwnerOrderResponse:
+    """Customer never came: cancel the order and turn off pay at pickup for them."""
+    return _pay_at_pickup_action(service, order_id, principal, payload, mark_no_show)

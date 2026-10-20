@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, CalendarDays, CheckCircle2, Clock3, RefreshCw } from "lucide-react";
 import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
+import OrderSettingsPanel from "./OrderSettingsPanel.jsx";
 import {
   createOwnerClosure,
   deleteOwnerClosure,
@@ -226,6 +227,8 @@ export default function SchedulingPage({ setupMode = false }) {
         <summary><span><strong>Scheduling Preferences</strong><small>Minimum notice: {data.minimum_lead_time_minutes} minutes · Pickup times: every {data.pickup_interval_minutes} minutes · Advance orders: up to {data.maximum_advance_days} days</small></span><Clock3 aria-hidden="true" size={20} /></summary>
         <form onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); await perform("preferences", () => updateOwnerPreferences({ minimum_lead_time_minutes: Number(form.get("notice")), pickup_interval_minutes: Number(form.get("spacing")), maximum_advance_days: Number(form.get("advance")) }, session.csrf_token), "Scheduling preferences saved."); }}><p>These settings control the pickup times offered to customers.</p><div className="preference-fields"><label><span>Minimum Notice Before Pickup</span><select defaultValue={data.minimum_lead_time_minutes} name="notice">{includeCurrent([0, 5, 10, 15, 20, 30, 45, 60, 90, 120], data.minimum_lead_time_minutes).map((value) => <option key={value} value={value}>{value === 0 ? "No minimum notice" : value < 60 ? `${value} minutes` : value === 60 ? "1 hour" : Number.isInteger(value / 60) ? `${value / 60} hours` : `${value} minutes`}</option>)}</select><small>The shortest amount of notice you need before an order can be picked up.</small></label><label><span>Pickup Time Spacing</span><select defaultValue={data.pickup_interval_minutes} name="spacing">{includeCurrent([5, 10, 15, 20, 30, 60], data.pickup_interval_minutes).map((value) => <option key={value} value={value}>Every {value} minutes</option>)}</select><small>How often customers can choose a pickup time.</small></label><label><span>How Far Ahead Customers Can Order</span><select defaultValue={data.maximum_advance_days} name="advance">{includeCurrent([1, 2, 3, 7, 14, 30, 60, 90], data.maximum_advance_days).map((value) => <option key={value} value={value}>Up to {value} {value === 1 ? "day" : "days"} ahead</option>)}</select><small>The furthest date customers can choose for pickup.</small></label></div><button className="primary-button" disabled={busy === "preferences"} type="submit">{busy === "preferences" ? "Saving…" : "Save Scheduling Preferences"}</button></form>
       </details>
+
+      {!setupMode ? <OrderSettingsPanel /> : null}
 
       {status ? <p className="owner-page-message success" role="status">{status}</p> : null}{error ? <p className="owner-page-message error" role="alert">{error}</p> : null}
     </section>

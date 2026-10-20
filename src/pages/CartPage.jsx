@@ -13,7 +13,7 @@ import {
   isCheckoutContactComplete,
 } from "../services/checkoutOrder.js";
 import { createPendingOrder } from "../services/orderApi.js";
-import { createCheckout } from "../services/paymentService.js";
+import { choosePayAtPickup, createCheckout, fetchPayAtPickupEligibility, payAtPickupUnavailableMessage } from "../services/paymentService.js";
 import { useCustomerCatalog } from "../stores/customerCatalogStore.js";
 import { isOrderingCustomerSession, useCustomerAuth } from "../auth/CustomerAuthContext.jsx";
 import { fetchCustomerProfile } from "../services/customerAccountApi.js";
@@ -106,6 +106,9 @@ export default function CartPage() {
   const [checkoutError, setCheckoutError] = useState("");
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [savedOrder, setSavedOrder] = useState(null);
+  const [paymentChoice, setPaymentChoice] = useState("online");
+  const [payAtPickup, setPayAtPickup] = useState({ available: false, reason: "not_offered" });
+  const [payAtPickupConfirmed, setPayAtPickupConfirmed] = useState(false);
   const [showAuthRequirement, setShowAuthRequirement] = useState(false);
   const authRequirementRef = useRef(null);
   const submissionGate = useRef(createSubmissionGate());
@@ -178,6 +181,17 @@ export default function CartPage() {
     () => getOrderPricing(resolvedCart.totalCents, catalog.pricing),
     [catalog.pricing, resolvedCart.totalCents]
   );
+  useEffect(() => {
+    if (!orderingCustomer || stagingPaymentsDisabled || savedOrder) return;
+    let isCurrent = true;
+    fetchPayAtPickupEligibility(orderPricing.totalCents).then((value) => {
+      if (!isCurrent) return;
+      setPayAtPickup(value);
+      if (!value.available) setPaymentChoice("online");
+    });
+    return () => { isCurrent = false; };
+  }, [orderingCustomer, orderPricing.totalCents, savedOrder, stagingPaymentsDisabled]);
+  const payAtPickupNote = payAtPickupUnavailableMessage(payAtPickup);
   const selectedPickup = resolveSchedulingSelection(schedule, pickupIntent);
   const pickupSummary = selectedPickup?.requested_pickup_at
     ? `Ready around ${formatReadyTime(new Date(selectedPickup.requested_pickup_at), schedule.business_timezone)}`
@@ -291,6 +305,13 @@ export default function CartPage() {
       const submission = await prepareOrderSubmission(request);
       const order = await createPendingOrder(submission);
       setSavedOrder(order);
+      if (paymentChoice === "pay_at_pickup" && payAtPickup.available) {
+        await choosePayAtPickup(order.public_token);
+        setPayAtPickupConfirmed(true);
+        clearOrderSubmission();
+        storeCart([]);
+        return;
+      }
       const checkout = await createCheckout(order.public_token);
 
       window.location.assign(checkout.checkout_url);
@@ -356,6 +377,33 @@ export default function CartPage() {
             Try again
           </button>
         </div>
+      </section>
+    );
+  }
+
+  if (savedOrder && payAtPickupConfirmed) {
+    return (
+      <section className="page-section ordering-page cart-page saved-order-page">
+        <div className="page-heading cart-heading">
+          <span className="eyebrow">Order placed</span>
+          <h1>See you at pickup</h1>
+          <p>Pay at the counter when you pick up your order.</p>
+        </div>
+        <div className="saved-order-status" role="status" aria-live="polite">
+          <div className="saved-order-status-heading">
+            <span className="saved-order-check" aria-hidden="true">✓</span>
+            <div>
+              <strong>The café has your order</strong>
+              <span>Order {savedOrder.public_token.slice(0, 8).toUpperCase()}</span>
+            </div>
+          </div>
+          <div className="saved-order-milestones" aria-label="Order status">
+            <div className="saved-order-complete"><span>✓ Pickup confirmed</span><strong>{formatReadyTime(new Date(savedOrder.requested_pickup_at), savedOrder.business_timezone)}</strong></div>
+            <div className="saved-order-payment-pending"><span>Pay at pickup</span><strong>{formatPrice(savedOrder.total_cents / 100)}</strong></div>
+          </div>
+          <p>Please come by at your pickup time. If you can’t make it, contact the café so your order isn’t wasted. Missed pay-at-pickup orders turn this option off for your account.</p>
+        </div>
+        <Link className="primary-button" to="/menu">Back to menu</Link>
       </section>
     );
   }
@@ -620,6 +668,20 @@ export default function CartPage() {
           <span>Estimated Total</span>
           <strong>{formatPrice(orderPricing.totalCents / 100)}</strong>
         </div>
+        {payAtPickup.available || payAtPickupNote ? (
+          <fieldset className="checkout-payment-choice" disabled={checkoutLocked}>
+            <legend>How would you like to pay?</legend>
+            <label>
+              <input checked={paymentChoice === "online"} name="payment-choice" type="radio" value="online" onChange={() => setPaymentChoice("online")} />
+              <span>Pay online now</span>
+            </label>
+            <label>
+              <input checked={paymentChoice === "pay_at_pickup"} disabled={!payAtPickup.available} name="payment-choice" type="radio" value="pay_at_pickup" onChange={() => setPaymentChoice("pay_at_pickup")} />
+              <span>Pay at pickup</span>
+            </label>
+            {!payAtPickup.available && payAtPickupNote ? <small>{payAtPickupNote}</small> : null}
+          </fieldset>
+        ) : null}
         {!schedule?.ordering_available && schedule?.unavailable_reason ? (
           <p className="form-status checkout-error" role="alert">{schedule.unavailable_reason}</p>
         ) : scheduleError ? (
@@ -642,7 +704,7 @@ export default function CartPage() {
             onClick={placeOrder}
           >
             <ClipboardList size={17} strokeWidth={2.4} />
-            {isPlacingOrder ? "Placing order…" : "Place order"}
+            {isPlacingOrder ? "Placing order…" : paymentChoice === "pay_at_pickup" && payAtPickup.available ? "Place order · pay at pickup" : "Place order"}
           </button>
         )}
       </div>

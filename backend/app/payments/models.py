@@ -8,6 +8,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -48,6 +50,72 @@ class OrganizationPaymentSettings(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class OrganizationOrderSettings(Base):
+    """Per-shop ordering options that are not tied to an electronic provider.
+
+    Pay at pickup is OFF unless the shop turns it on. The no-show protections
+    (minimum completed orders, maximum order total) always apply when it is on.
+    """
+
+    __tablename__ = "organization_order_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "pay_at_pickup_min_completed_orders BETWEEN 0 AND 100",
+            name="ck_org_order_settings_min_completed",
+        ),
+        CheckConstraint(
+            "pay_at_pickup_max_total_cents BETWEEN 100 AND 100000",
+            name="ck_org_order_settings_max_total",
+        ),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    pay_at_pickup_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    pay_at_pickup_min_completed_orders: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1"
+    )
+    pay_at_pickup_max_total_cents: Mapped[int] = mapped_column(
+        Integer, default=2500, server_default="2500"
+    )
+    new_order_alert_email: Mapped[str | None] = mapped_column(String(320))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class PayAtPickupBlock(Base):
+    """A customer who no-showed a pay-at-pickup order at this shop."""
+
+    __tablename__ = "pay_at_pickup_blocks"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id", "customer_user_id",
+            name="uq_pay_at_pickup_blocks_org_customer",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    customer_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("jds_users.id", ondelete="CASCADE"), index=True
+    )
+    order_id: Mapped[int | None] = mapped_column(BigInteger)
+    reason: Mapped[str] = mapped_column(String(40), default="no_show", server_default="no_show")
+    blocked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
