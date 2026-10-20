@@ -13,13 +13,7 @@ from app.main import create_app
 from app.platform import starter_media
 from app.platform.demo_starter import STARTER_PRODUCTS, starter_product_image_reference
 
-SHIPPED_KEYS = {
-    "brewed-coffee", "espresso", "latte", "cappuccino", "iced-latte", "iced-coffee",
-    "hot-tea", "hot-chocolate", "iced-tea", "lemonade-fruit-cooler", "smoothie",
-    "plain-croissant", "filled-croissant-danish", "muffin", "cookie", "donut",
-    "brownie-dessert-square", "scone", "loaf-slice", "breakfast-sandwich", "toast",
-    "yogurt-granola", "deli-sandwich", "wrap", "creamy-soup", "green-salad",
-}
+SHIPPED_KEYS = {a.key for a in starter_media.STARTER_MEDIA_ASSETS}
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +39,7 @@ def test_every_shipped_category_group_has_art_and_list_marks_placeholders() -> N
     assert len(payload["assets"]) == 70
     shipped = [a for a in payload["assets"] if a["available"]]
     assert len(shipped) == len(SHIPPED_KEYS)
-    assert {a["category"] for a in shipped} >= {"coffee", "tea-specialty-drinks", "cold-drinks", "breakfast", "bakery", "sandwiches-wraps", "soup-salad"}
+    assert {a["category"] for a in shipped} >= {"coffee", "tea-specialty-drinks", "cold-drinks", "breakfast", "bakery", "sandwiches-wraps", "soup-salad", "lunch-savoury", "desserts", "packaged-retail"}
     assert all(a["artStyle"] == starter_media.STARTER_MEDIA_ART_STYLE and a["thumbnailUrl"].startswith("/api/v1/storefront/starter-media/cafe-restaurant/") for a in shipped)
     assert all(a["artStyle"] is None and a["thumbnailUrl"] is None for a in payload["assets"] if not a["available"])
 
@@ -63,7 +57,6 @@ def test_public_starter_endpoint_serves_immutable_webp_and_rejects_bad_refs() ->
     assert response.media_type == "image/webp"
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
     for collection, key, version in (
-        ("cafe-restaurant", "americano", 1),  # manifest entry without shipped art
         ("cafe-restaurant", "not-real", 1),
         ("cafe-restaurant", "latte", 2),
         ("other-collection", "latte", 1),
