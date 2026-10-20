@@ -20,6 +20,24 @@ def secret_matches(secret: str, expected_hash: str, pepper: str) -> bool:
     return hmac.compare_digest(hash_secret(secret, pepper), expected_hash)
 
 
+# Domain separator for session-bound CSRF tokens. The ":" and "." are outside the
+# token_urlsafe alphabet, so no other peppered secret can hash to the same HMAC input.
+CSRF_TOKEN_CONTEXT = "jds.auth.csrf.v1:"
+
+
+def derive_csrf_token(session_token: str, pepper: str) -> str:
+    """Return the CSRF token bound to one opaque session token.
+
+    HMAC-based synchronizer token (OWASP): the value is fixed for the life of the session,
+    so every tab reading the session gets the same token. Computing it needs both the
+    HttpOnly session cookie and the server-side pepper. A new session (login, organization
+    switch, staff login, activation) gets a new token, and a revoked or expired session
+    fails authentication before CSRF is checked.
+    """
+    digest = hmac.new(pepper.encode(), (CSRF_TOKEN_CONTEXT + session_token).encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
 def hash_pin(pin: str, pepper: str) -> str:
     salt = secrets.token_bytes(16)
     derived = hashlib.scrypt(

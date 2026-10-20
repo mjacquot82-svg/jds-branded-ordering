@@ -51,6 +51,14 @@ export default function RequireOwner() {
     </nav>
     <Outlet />
   </>;
+  if (session && session.platform_capabilities_loaded === false && location.pathname.startsWith("/admin/platform")) return (
+    <section className="page-section compact-section" aria-live="polite">
+      <div className="operations-panel">
+        <h1>Platform</h1>
+        <p>Checking your platform access…</p>
+      </div>
+    </section>
+  );
   if (session) return <Navigate replace to={operationsLinks(session)[0]?.to || "/owner/login?denied=1"} />;
   if (status === "anonymous") {
     const returnTo = ownerLoginDestination(location);

@@ -19,10 +19,14 @@ def _resolution_error(error: TenantResolutionError) -> None:
     ) from error
 
 
-async def authenticated_owner_tenant(
+def authenticated_owner_tenant(
     request: Request,
     principal: AuthPrincipal = Depends(current_principal),
 ) -> TenantContext:
+    # Deliberately a plain ``def``: FastAPI runs it in the threadpool. It opens a short-lived blocking DB
+    # session; as ``async def`` that checkout ran on the event loop, and when the pool was momentarily empty
+    # it froze the loop, so in-flight requests could not finish and return their connections (QueuePool
+    # timeouts). Resolution logic and fail-closed errors are unchanged.
     session_factory = request.app.state.db_session_factory
     if session_factory is None:
         raise HTTPException(

@@ -48,6 +48,14 @@ export function fetchDemoPricing(options = {}) {
   return request(`${DEMO_PATH}/pricing`, options);
 }
 
+export function fetchDemoPilotConfig(options = {}) {
+  return request(`${DEMO_PATH}/pilot-config`, options);
+}
+
+export function resendDemoVerification(payload, options = {}) {
+  return request(`${DEMO_PATH}/resend-verification`, { ...options, method: "POST", body: payload });
+}
+
 export function signupDemo(payload, options = {}) {
   return request(`${DEMO_PATH}/signup`, { ...options, method: "POST", body: payload });
 }

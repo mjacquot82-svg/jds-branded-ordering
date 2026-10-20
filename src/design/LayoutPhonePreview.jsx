@@ -3,6 +3,7 @@ import PositionedSlotImage from "./PositionedSlotImage.jsx";
 import HeaderBrandingIdentity from "./HeaderBrandingIdentity.jsx";
 import ProductImage from "../components/ProductImage.jsx";
 import { headerBrandingMode, heroContentVisibility } from "./imageSlotRendering.js";
+import { withOwnerProductImage } from "../services/starterMedia.js";
 
 function money(value) { return `$${Number(value).toFixed(2)}`; }
 
@@ -35,7 +36,7 @@ function ProductShowcase({ layout, products }) {
 
 export default function LayoutPhonePreview({ config, categories = [], products = [], logoUrl, heroUrl, designer = null }) {
   const layout=getLayoutDefinition(config.template);
-  const catalog=previewCatalog(categories,products);
+  const catalog=previewCatalog(categories,products.map(withOwnerProductImage));
   const heroVisible=layoutShowsHero(config.template,config.sections,config.branding);
   const quickVisible=layoutShowsHomeQuickOrder(config.template,config.sections);
   const announcementText=previewAnnouncementText(config);

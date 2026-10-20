@@ -12,7 +12,7 @@ from app.jds_auth.config import AuthSettings
 from app.jds_auth.models import ExternalIdentity, JdsApplication, JdsUser, Membership, MerchantAcquisition, MerchantActivation, Organization, OwnerInvitation, OwnerSession, Role
 from app.jds_auth.provider import IdentityProvider, ProviderAuthentication, ProviderIdentity
 from app.jds_auth.repository import AuthRepository
-from app.jds_auth.security import create_secret, hash_secret, secret_matches
+from app.jds_auth.security import create_secret, derive_csrf_token, hash_secret, secret_matches
 from app.platform.models import CustomerRelationship
 
 
@@ -373,13 +373,24 @@ class AuthenticationService:
             owner_session.idle_expires_at = min(now + idle_lifetime, owner_session.absolute_expires_at)
         return AuthPrincipal(identity_user.id, membership.id, membership.organization_id, membership.application_id, owner_session.id, identity_user.primary_email, identity_user.display_name, role.key, self._repo.permissions_for_role(role.id), owner_session.assurance_level)
 
-    def rotate_csrf(self, token: str, *, now: datetime) -> tuple[AuthPrincipal, str]:
+    def session_csrf(self, token: str, *, now: datetime) -> tuple[AuthPrincipal, str]:
+        """Resolve a session and return its CSRF token without rotating it.
+
+        Reading the session used to mint a new random token and overwrite the stored hash,
+        so any other open tab still holding the previous token got 403 on its next save.
+        The token is now derived from the session token (``derive_csrf_token``) and stays
+        the same for the whole session. It is still checked against the stored hash in
+        ``verify_csrf``. A session issued before this change has a random token hash. The
+        first read re-binds it once to the derived token (the old behaviour, once),
+        and it is stable after that.
+        """
         with self._session.begin():
             principal = self.resolve(token, now=now)
-            csrf = create_secret()
+            csrf = derive_csrf_token(token, self._settings.session_pepper)
             owner_session = self._session.get(OwnerSession, principal.session_id)
             assert owner_session is not None
-            owner_session.csrf_token_hash = hash_secret(csrf, self._settings.session_pepper)
+            if not secret_matches(csrf, owner_session.csrf_token_hash, self._settings.session_pepper):
+                owner_session.csrf_token_hash = hash_secret(csrf, self._settings.session_pepper)
         return principal, csrf
 
     def verify_csrf(self, principal: AuthPrincipal, csrf_token: str) -> None:
@@ -644,7 +655,8 @@ class AuthenticationService:
         return application.id, organization.id
 
     def _issue(self, user: JdsUser, membership: Membership, authentication: ProviderAuthentication, now: datetime, user_agent: str | None, persistent: bool) -> IssuedSession:
-        token, csrf = create_secret(), create_secret()
+        token = create_secret()
+        csrf = derive_csrf_token(token, self._settings.session_pepper)
         absolute_lifetime = (
             timedelta(days=self._settings.customer_persistent_session_days)
             if persistent

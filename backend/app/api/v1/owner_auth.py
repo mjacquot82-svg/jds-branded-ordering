@@ -244,7 +244,7 @@ def read_session(request: Request, service: AuthenticationService = Depends(get_
     if not token:
         auth_error(401, "unauthenticated", "Authentication is required.")
     try:
-        principal, csrf = service.rotate_csrf(token, now=now)
+        principal, csrf = service.session_csrf(token, now=now)
         return session_response(principal, csrf, service._session)
     except SessionInvalid:
         auth_error(401, "session_expired", "The owner session is invalid or expired.")

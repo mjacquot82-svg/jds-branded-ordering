@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import re
 from uuid import UUID
 
-from app.platform.starter_media import STARTER_REFERENCE_PREFIX, starter_asset, starter_asset_available, starter_asset_path, starter_public_url
+from app.platform.starter_media import STARTER_REFERENCE_PREFIX, product_image_source, starter_asset, starter_asset_available, starter_asset_path, starter_public_url
 
 from app.catalog.models import (
     Category,
@@ -526,6 +526,7 @@ class CatalogService:
             id=str(product.id), slug=product.slug, name=product.name,
             description=product.description or "", base_price_cents=product.base_price_cents,
             category_id=str(product.category_id), image=(f"/api/v1/storefront/media/{product.media_asset_id}" if product.media_asset_id else product.image_reference or ""),
+            image_source=product_image_source(product.media_asset_id, product.image_reference),
             available=product.availability.default_available if product.availability else True,
             featured=product.is_featured, lunch_special=product.is_lunch_special,
             published=product.is_published,

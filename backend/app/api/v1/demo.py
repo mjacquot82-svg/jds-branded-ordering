@@ -24,7 +24,7 @@ from app.jds_auth.models import Organization
 from app.jds_auth.schemas import SessionResponse
 from app.jds_auth.service import AuthPrincipal, utc_now
 from app.platform.commercial import COMMERCIAL_PROSPECT, is_prospect
-from app.platform.demo_limits import limits_payload
+from app.platform.demo_limits import limits_payload, pilot_config_payload
 from app.platform.demo_service import (
     ALLOWED_FUNNEL_EVENTS,
     DemoFunnelService,
@@ -54,11 +54,16 @@ class DemoSignupInput(Strict):
     business_name: str = Field(min_length=1, max_length=200)
     contact_name: str = Field(default="", max_length=200)
     desired_slug: str | None = Field(default=None, max_length=63, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    invite_code: str | None = Field(default=None, max_length=128)
 
 
 class DemoEnterInput(Strict):
     email: str = Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(min_length=8, max_length=1024)
+
+
+class DemoResendVerificationInput(Strict):
+    email: str = Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class FunnelEventInput(Strict):
@@ -112,6 +117,12 @@ def demo_limits() -> dict:
     return limits_payload()
 
 
+@router.get("/demo/pilot-config")
+def demo_pilot_config() -> dict:
+    """Public controlled-pilot knobs (invite gate / optional CAPTCHA site key)."""
+    return pilot_config_payload()
+
+
 @router.post("/demo/signup")
 def demo_signup(
     payload: DemoSignupInput,
@@ -132,14 +143,31 @@ def demo_signup(
             now=now,
             user_agent=request.headers.get("user-agent"),
             client_id=client_identifier(request),
+            invite_code=payload.invite_code,
         )
     except DemoServiceError as error:
-        code_status = 429 if error.code == "rate_limited" else 409 if error.code == "account_exists" else 400
+        if error.code == "rate_limited":
+            code_status = 429
+        elif error.code == "account_exists":
+            code_status = 409
+        elif error.code == "invite_required":
+            code_status = 403
+        else:
+            code_status = 400
         _raise_demo(error, code_status)
     if status == "verification_required":
         return {
             "status": "verification_required",
-            "message": "Check your email to verify your account, then continue to enter your demo studio.",
+            "email": payload.email.strip().lower(),
+            "message": (
+                "We sent a verification link to your email. Open it, then return here and choose "
+                "“I already started” with the same email and password to open your demo."
+            ),
+            "nextSteps": [
+                "Check inbox and spam for the JDS verification email",
+                "Open the link (it returns you to /build/verify)",
+                "Use “I already started” with the same email and password",
+            ],
         }
     assert issued is not None
     response.set_cookie(
@@ -180,7 +208,16 @@ def demo_enter(
     if status == "verification_required":
         return {
             "status": "verification_required",
-            "message": "Verify your email, then continue.",
+            "email": payload.email.strip().lower(),
+            "message": (
+                "Your email is not verified yet. Open the verification link we sent, "
+                "or resend it below, then sign in again with the same password."
+            ),
+            "nextSteps": [
+                "Open the verification link from your email",
+                "Or resend verification from this page",
+                "Then use “I already started” again",
+            ],
         }
     assert issued is not None
     response.set_cookie(
@@ -199,6 +236,40 @@ def demo_enter(
         "status": "ready",
         "session": body.model_dump(),
         "commercialMode": getattr(org, "commercial_mode", "live") if org else "live",
+    }
+
+
+@router.post("/demo/resend-verification")
+def demo_resend_verification(
+    payload: DemoResendVerificationInput,
+    request: Request,
+    _: None = Depends(require_trusted_origin),
+    service: DemoFunnelService = Depends(get_demo_service),
+    now: datetime = Depends(utc_now),
+) -> dict:
+    try:
+        service.resend_verification(
+            email=payload.email,
+            now=now,
+            client_id=client_identifier(request),
+        )
+    except DemoServiceError as error:
+        # Always return a calm, non-enumerating message for the pilot UX.
+        if error.code == "rate_limited":
+            _raise_demo(error, 429)
+        return {
+            "status": "accepted",
+            "message": (
+                "If that email still needs verification, check your inbox and spam folder "
+                "for the link. Then use “I already started”."
+            ),
+        }
+    return {
+        "status": "accepted",
+        "message": (
+            "If that email still needs verification, check your inbox and spam folder "
+            "for the link. Then use “I already started”."
+        ),
     }
 
 
@@ -404,10 +475,12 @@ def platform_promote_to_live(
     service: DemoFunnelService = Depends(get_demo_service),
     now: datetime = Depends(utc_now),
 ) -> dict:
+    # Promotion changes commercial state, so it needs the platform *write* capability
+    # (read-only platform viewers can see prospects but cannot promote them).
     grant = session.scalar(
         select(PlatformGrant.id).where(
             PlatformGrant.user_id == principal.user_id,
-            PlatformGrant.capability == "platform.organizations.read",
+            PlatformGrant.capability == "platform.organizations.write",
             PlatformGrant.is_active.is_(True),
         )
     )

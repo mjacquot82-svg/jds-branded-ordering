@@ -240,7 +240,7 @@ def read_session(request: Request, service: AuthenticationService = Depends(get_
     if not token:
         auth_error(401, "unauthenticated", "Authentication is required.")
     try:
-        principal, csrf = service.rotate_csrf(token, now=now)
+        principal, csrf = service.session_csrf(token, now=now)
         storefront = resolve_storefront_context(
             service._session, host=request.headers.get("host"),
             frontend_url=settings.frontend_url, headers=request.headers,

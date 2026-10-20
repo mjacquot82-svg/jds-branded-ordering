@@ -1,5 +1,5 @@
 [build]
-  command = "npm run build"
+  command = "if [ \"$JDS_PILOT_SITE\" = \"true\" ]; then npm run build:staging; else npm run build; fi"
   publish = "dist"
 
 [[headers]]

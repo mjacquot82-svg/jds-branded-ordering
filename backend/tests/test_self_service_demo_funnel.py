@@ -439,3 +439,58 @@ def test_20_same_tenant_architecture_not_second_app(demo_ctx):
         assert session.get(DesignWorkspace, org_id) is not None
         assert session.scalar(select(Product.id).where(Product.organization_id == org_id)) is not None
         # Demo uses organizations + design_workspaces + catalog tables — not a parallel schema.
+
+
+def test_21_harbor_and_hearth_uses_platform_starter_images_without_quota(demo_ctx, monkeypatch):
+    """M3: seeded demo products show shared starter illustrations, never tenant media rows."""
+    from app.platform import starter_media
+    from app.platform.demo_service import enforce_demo_media_limits
+    from app.platform.demo_starter import starter_product_image_reference
+
+    monkeypatch.delenv("JDS_STARTER_MEDIA_ROOT", raising=False)
+    engine, settings, provider = demo_ctx
+    with Session(engine) as session:
+        issued = _signup(session, settings, provider, f"art-{uuid4().hex[:8]}@example.com")
+        org_id = issued.principal.organization_id
+        products = session.scalars(select(Product).where(Product.organization_id == org_id)).all()
+        assert len(products) == len(STARTER_PRODUCTS)
+        for product in products:
+            assert product.media_asset_id is None
+            assert product.image_reference == starter_product_image_reference(product.slug)
+            asset = starter_media.starter_asset(product.image_reference)
+            assert asset is not None and starter_media.starter_asset_available(asset)
+        assert session.scalar(select(MediaAsset.id).where(MediaAsset.organization_id == org_id)) is None
+        # The prospect media allowance is untouched by seeded starter images.
+        enforce_demo_media_limits(session, org_id, incoming_bytes=1_000_000)
+
+
+def test_22_promote_to_live_requires_platform_write_capability(demo_ctx):
+    """M3: read-only platform viewers can list prospects but cannot promote them."""
+    engine, settings, provider = demo_ctx
+    with Session(engine) as session:
+        prospect = _signup(session, settings, provider, f"target-{uuid4().hex[:8]}@example.com", business="Promote Target")
+        viewer = _signup(session, settings, provider, f"viewer-{uuid4().hex[:8]}@example.com", business="Viewer Co")
+        session.add(PlatformGrant(user_id=viewer.principal.user_id, capability="platform.organizations.read", is_active=True))
+        session.commit()
+        target_id = prospect.principal.organization_id
+        assert any(row["id"] == str(target_id) for row in demo_api.platform_demo_prospects(principal=viewer.principal, session=session))
+        service = _service(session, settings, provider)
+        with pytest.raises(HTTPException) as refused:
+            demo_api.platform_promote_to_live(target_id, demo_api.PromoteInput(confirm=True), principal=viewer.principal, session=session, service=service, now=datetime.now(timezone.utc))
+        assert refused.value.status_code == 403
+        assert session.get(Organization, target_id).commercial_mode == "prospect"
+
+        session.add(PlatformGrant(user_id=viewer.principal.user_id, capability="platform.organizations.write", is_active=True))
+        session.commit()
+        result = demo_api.platform_promote_to_live(target_id, demo_api.PromoteInput(confirm=True), principal=viewer.principal, session=session, service=service, now=datetime.now(timezone.utc))
+        assert result["commercialMode"] == "live"
+        assert result["preserved"]["businessName"] == "Promote Target"
+        assert len(session.scalars(select(Product).where(Product.organization_id == target_id)).all()) == len(STARTER_PRODUCTS)
+
+
+def test_23_platform_admin_seeds_keep_promote_ability():
+    """M3: real platform-admin seeds already grant write, so hardening removes no legitimate access."""
+    from pathlib import Path
+    for seed in ("local_review_seed.py", "staging_review_seed.py"):
+        source = (Path(__file__).resolve().parents[1] / "app" / seed).read_text()
+        assert '"platform.organizations.read", "platform.organizations.write"' in source
