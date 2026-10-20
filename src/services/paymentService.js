@@ -121,3 +121,55 @@ export async function confirmPayment(order) {
     note: "Electronic confirmation is server-owned via webhooks/reconcile; client must not invent paid state.",
   };
 }
+
+/** Can this signed-in customer choose pay at pickup for this order total? (advisory; server re-checks) */
+export async function fetchPayAtPickupEligibility(
+  totalCents,
+  { apiBaseUrl = API_BASE_URL, fetchImpl = globalThis.fetch } = {},
+) {
+  const query = Number.isSafeInteger(totalCents) && totalCents >= 0 ? `?total_cents=${totalCents}` : "";
+  try {
+    const response = await fetchImpl(
+      apiUrl(`/api/v1/payments/pay-at-pickup/eligibility${query}`, apiBaseUrl),
+      { credentials: "include", headers: { Accept: "application/json" } },
+    );
+    if (!response.ok) return { available: false, reason: "unavailable" };
+    const payload = await response.json();
+    return { ...payload, available: payload?.available === true };
+  } catch {
+    return { available: false, reason: "unavailable" };
+  }
+}
+
+/** Confirm a saved order as pay at pickup. Never marks anything as paid. */
+export async function choosePayAtPickup(
+  publicToken,
+  { apiBaseUrl = API_BASE_URL, fetchImpl = globalThis.fetch } = {},
+) {
+  let response;
+  try {
+    response = await fetchImpl(
+      apiUrl(`/api/v1/payments/orders/${encodeURIComponent(publicToken)}/pay-at-pickup`, apiBaseUrl),
+      { credentials: "include", headers: { Accept: "application/json" }, method: "POST" },
+    );
+  } catch (cause) {
+    throw new PaymentCheckoutError(
+      "We couldn’t connect to confirm pay at pickup. Your order was saved; please try again.",
+      { cause, code: "network_error" },
+    );
+  }
+  return readResponse(response, {
+    ErrorType: PaymentCheckoutError,
+    fallbackMessage: "Your order was saved, but pay at pickup isn’t available for it. You can pay online instead.",
+  });
+}
+
+export function payAtPickupUnavailableMessage(eligibility) {
+  switch (eligibility?.reason) {
+    case "email_not_verified": return "Verify your email to use pay at pickup.";
+    case "not_enough_completed_orders": return `Pay at pickup unlocks after ${eligibility.min_completed_orders} completed order${eligibility.min_completed_orders === 1 ? "" : "s"}.`;
+    case "order_total_too_high": return `Pay at pickup is for orders up to $${(eligibility.max_total_cents / 100).toFixed(2)}.`;
+    case "blocked_after_no_show": return "Pay at pickup is turned off for your account. Please pay online.";
+    default: return "";
+  }
+}

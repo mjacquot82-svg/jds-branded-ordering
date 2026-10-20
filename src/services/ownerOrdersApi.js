@@ -64,3 +64,15 @@ export const updateOwnerOrderFulfillment = (orderId, status, expectedVersion, cs
     method: "PATCH",
   },
 );
+
+/** Pay at pickup: staff took payment at the counter (no online provider involved). */
+export const markOwnerOrderPaidAtCounter = (orderId, expectedVersion, csrfToken, options = {}) => request(
+  `/${encodeURIComponent(orderId)}/mark-paid`,
+  { ...options, body: { expected_version: expectedVersion }, csrfToken, method: "POST" },
+);
+
+/** Pay at pickup: customer never came. Cancels and turns off pay at pickup for them. */
+export const markOwnerOrderNoShow = (orderId, expectedVersion, csrfToken, options = {}) => request(
+  `/${encodeURIComponent(orderId)}/no-show`,
+  { ...options, body: { expected_version: expectedVersion }, csrfToken, method: "POST" },
+);

@@ -11,6 +11,7 @@ import { fetchOnboarding, fetchReadiness, saveOnboarding } from "../services/des
 import { getCloverConnectUrl } from "../services/cloverService.js";
 import { fetchDemoStatus } from "../services/demoFunnelApi.js";
 import GoLiveActivationPage from "../admin/GoLiveActivationPage.jsx";
+import OrderSettingsPanel from "../admin/OrderSettingsPanel.jsx";
 
 export const setupSteps = ["welcome","look","brand","business","catalog","ordering","payments","preview","launch"];
 const labels = { welcome:"Welcome", look:"Choose your app layout", brand:"Make it yours", business:"Business details", catalog:"Build your menu", ordering:"Set up ordering", payments:"Connect payments", preview:"Preview", launch:"Launch" };
@@ -24,10 +25,13 @@ function ProspectPaymentStep() {
 
 function PaymentSetupStep() {
   const [readiness,setReadiness]=useState(null);
-  useEffect(()=>{fetchReadiness().then(setReadiness);},[]);
-  if(!readiness)return <section className="wizard-focus-card"><h1>Connect payments</h1><p>Checking payment readiness…</p></section>;
+  const load=()=>fetchReadiness().then(setReadiness).catch(()=>setReadiness({checks:{},paymentOptions:{}}));
+  useEffect(()=>{load();},[]);
+  if(!readiness)return <section className="wizard-focus-card"><h1>Choose how customers pay</h1><p>Checking payment readiness…</p></section>;
   const simulated=readiness.reviewMode === "local" || readiness.reviewMode === "staging";
-  return <section className="wizard-focus-card payment-wizard-step"><p className="eyebrow">Step 6</p><h1>Let customers pay through your app.</h1><p>Connect your payment provider so customer payments flow securely through the system you already use. Clover is available now.</p>{simulated?<div className="wizard-simulation-note"><strong>Payment connection is simulated in this review environment.</strong><p>No real Clover request or transaction can be made here.</p></div>:(readiness.checks.payment_connected ?? readiness.checks.clover)?<div className="wizard-success-note"><strong>Payments are connected.</strong><p>Your payment connection is ready for launch.</p></div>:<a className="primary-button" href={getCloverConnectUrl()}>Connect Clover</a>}</section>;
+  const cloverAvailable=readiness.paymentOptions?.cloverAvailable===true;
+  const ready=Boolean(readiness.checks?.payment_connected ?? readiness.checks?.clover);
+  return <section className="wizard-focus-card payment-wizard-step"><p className="eyebrow">Step 6</p><h1>Choose how customers pay.</h1><p>You can let customers pay at the counter when they pick up, connect the card payment system you already use, or both. Card payment providers are connected for you once you tell us which one you use.</p>{ready?<div className="wizard-success-note"><strong>Customers can pay for orders.</strong><p>{readiness.paymentOptions?.payAtPickupEnabled?"Pay at pickup is on.":"Your payment connection is ready for launch."}</p></div>:null}<OrderSettingsPanel onSaved={load}/>{simulated&&cloverAvailable?<div className="wizard-simulation-note"><strong>Payment connection is simulated in this review environment.</strong><p>No real Clover request or transaction can be made here.</p></div>:cloverAvailable&&!ready?<a className="secondary-button" href={getCloverConnectUrl()}>Connect Clover</a>:null}</section>;
 }
 
 export default function SetupWizard() {

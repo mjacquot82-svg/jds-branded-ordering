@@ -178,7 +178,9 @@ def onboarding(tenant: TenantContext = Depends(authenticated_owner_tenant), sess
 def readiness(request: Request, tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     result = evaluate_storefront_readiness(session, tenant.organization_id)
     review_mode = "staging" if getattr(request.app.state,"staging_review_enabled",False) else "local" if getattr(request.app.state,"local_review_enabled",False) else None
-    return {"publicReady": result.public_ready, "checks": result.checks, "reviewMode":review_mode}
+    from app.platform.readiness import clover_available, pay_at_pickup_enabled
+    return {"publicReady": result.public_ready, "checks": result.checks, "reviewMode":review_mode,
+            "paymentOptions": {"cloverAvailable": clover_available(), "payAtPickupEnabled": pay_at_pickup_enabled(session, tenant.organization_id)}}
 
 @router.post("/owner/readiness/recheck")
 def recheck_readiness(principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:

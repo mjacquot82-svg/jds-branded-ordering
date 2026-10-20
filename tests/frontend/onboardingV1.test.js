@@ -74,8 +74,10 @@ test("guided Design Studio starts with visual app layouts and keeps a live phone
 test("later stages compose existing menu, ordering, payment, preview, and launch systems", () => {
   assert.match(products, /Start by creating a category, then add the first item customers can order/);
   assert.match(scheduling, /Manage when customers can order and when pickups are available/);
-  assert.match(wizard, /Connect your payment provider so customer payments flow securely/);
-  assert.match(wizard, /Clover is available now/);
+  assert.match(wizard, /let customers pay at the counter when they pick up, connect the card payment system you already use, or both/);
+  assert.match(wizard, /OrderSettingsPanel/);
+  // Connect Clover only appears when the platform has Clover configured.
+  assert.match(wizard, /cloverAvailable&&!ready\?<a className="secondary-button" href=\{getCloverConnectUrl\(\)\}>Connect Clover<\/a>/);
   assert.match(wizard, /Payment connection is simulated in this review environment/);
   assert.match(preview, /Preview only — customers can’t order here/);
   assert.match(preview, /Add at least one menu item/);

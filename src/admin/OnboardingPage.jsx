@@ -10,7 +10,7 @@ export const merchantJourney = [
   { key:"business", title:"Business details", note:"Add the information customers need.", to:"/admin/setup#business" },
   { key:"catalog", title:"Build your menu", note:"Add what customers can order.", to:"/admin/products" },
   { key:"ordering", title:"Set up ordering", note:"Choose order times, pickup times, and preparation time.", to:"/admin/scheduling" },
-  { key:"payments", title:"Connect payments", note:"Connect Clover when you are ready to accept payment.", to:"/admin/setup#payments" },
+  { key:"payments", title:"Choose payments", note:"Choose pay at pickup or connect the card payments you already use.", to:"/admin/setup#payments" },
   { key:"preview", title:"Preview", note:"See exactly what your customers will see.", to:"/admin/design/preview" },
   { key:"launch", title:"Launch", note:"Share your app, QR code, and printable sign.", to:"/admin/launch" },
 ];

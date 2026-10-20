@@ -32,6 +32,12 @@ from app.payments.service import (
 )
 from app.tenancy.context import TenantContext
 from app.platform.commercial import enforce_live_commerce
+from app.communications.order_alerts import send_new_order_alert_safely
+from app.payments.pay_at_pickup import (
+    PayAtPickupError,
+    accept_pay_at_pickup,
+    check_eligibility,
+)
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 logger = logging.getLogger(__name__)
@@ -174,4 +180,101 @@ def create_order_checkout(
         checkout_url=checkout.redirect_url,
         checkout_session_id=checkout.provider_ref,
         expires_at=checkout.expires_at,
+    )
+
+
+class PayAtPickupEligibilityResponse(BaseModel):
+    available: bool
+    reason: str | None = None
+    max_total_cents: int
+    min_completed_orders: int
+    completed_orders: int
+
+
+class PayAtPickupResponse(BaseModel):
+    payment_method: str
+    payment_status: str
+    order_status: str
+
+
+PAY_AT_PICKUP_ERROR_STATUS = {
+    "order_not_pending": status.HTTP_409_CONFLICT,
+    "order_expired": status.HTTP_410_GONE,
+}
+
+
+@router.get("/pay-at-pickup/eligibility", response_model=PayAtPickupEligibilityResponse)
+def pay_at_pickup_eligibility(
+    response: Response,
+    total_cents: int | None = None,
+    customer: AuthPrincipal = Depends(current_ordering_customer),
+    session: Session = Depends(get_db_session),
+    tenant: TenantContext = Depends(ladels_compatibility_tenant),
+) -> PayAtPickupEligibilityResponse:
+    """Tells the cart whether to show the pay-at-pickup option. Advisory only;
+    the POST below re-checks everything on the server."""
+    response.headers["Cache-Control"] = "no-store"
+    if customer.organization_id != tenant.organization_id:
+        raise HTTPException(status_code=404, detail={"code": "tenant_not_found"})
+    try:
+        result = check_eligibility(session, tenant.organization_id, customer.user_id, total_cents=total_cents)
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=503, detail={"code": "pay_at_pickup_unavailable"}) from error
+    return PayAtPickupEligibilityResponse(
+        available=result.available,
+        reason=result.reason,
+        max_total_cents=result.max_total_cents,
+        min_completed_orders=result.min_completed_orders,
+        completed_orders=result.completed_orders,
+    )
+
+
+@router.post("/orders/{public_token}/pay-at-pickup", response_model=PayAtPickupResponse)
+def choose_pay_at_pickup(
+    public_token: str,
+    response: Response,
+    customer: AuthPrincipal = Depends(current_ordering_customer),
+    session: Session = Depends(get_db_session),
+    tenant: TenantContext = Depends(ladels_compatibility_tenant),
+) -> PayAtPickupResponse:
+    """Confirm a saved order as pay at pickup. No payment provider is called."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        order = session.scalar(
+            select(Order)
+            .options(selectinload(Order.items).selectinload(OrderItem.modifiers))
+            .where(
+                Order.public_access_token == public_token,
+                Order.customer_user_id == customer.user_id,
+                Order.organization_id == tenant.organization_id,
+            )
+            .with_for_update()
+        )
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=503, detail={"code": "pay_at_pickup_unavailable"}) from error
+    if order is None:
+        raise HTTPException(status_code=404, detail={"code": "order_not_found"})
+    already = order.payment_status == "manual_unpaid"
+    try:
+        enforce_live_commerce(session, order.organization_id, action="pay_at_pickup")
+        accept_pay_at_pickup(session, order, customer_user_id=customer.user_id)
+        session.commit()
+    except PayAtPickupError as error:
+        session.rollback()
+        raise HTTPException(
+            status_code=PAY_AT_PICKUP_ERROR_STATUS.get(error.code, status.HTTP_403_FORBIDDEN),
+            detail={"code": error.code, "message": str(error)},
+        ) from error
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "pay_at_pickup_unavailable", "message": "Your order was saved, but pay at pickup is temporarily unavailable."},
+        ) from error
+    if not already:
+        send_new_order_alert_safely(session, order)
+    return PayAtPickupResponse(
+        payment_method="pay_at_pickup",
+        payment_status=order.payment_status or "manual_unpaid",
+        order_status=str(order.status.value if hasattr(order.status, "value") else order.status),
     )
