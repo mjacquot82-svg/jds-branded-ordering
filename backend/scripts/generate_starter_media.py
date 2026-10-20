@@ -1203,7 +1203,12 @@ def main() -> None:
     keys = [k for k in args.only.split(",") if k] or list(ARTWORK)
     out = Path(args.out) / "cafe-restaurant"
     out.mkdir(parents=True, exist_ok=True)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from app.platform.starter_media import STARTER_MEDIA_PHOTO_KEYS
     for key in keys:
+        if key in STARTER_MEDIA_PHOTO_KEYS:
+            print("skip (ships an AI-generated photo)", key)
+            continue
         image = render(key)
         image.save(out / f"{key}-v{args.version}.webp", "WEBP", quality=84, method=6)
         print("wrote", out / f"{key}-v{args.version}.webp")

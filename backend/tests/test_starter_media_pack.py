@@ -40,7 +40,7 @@ def test_every_shipped_category_group_has_art_and_list_marks_placeholders() -> N
     shipped = [a for a in payload["assets"] if a["available"]]
     assert len(shipped) == len(SHIPPED_KEYS)
     assert {a["category"] for a in shipped} >= {"coffee", "tea-specialty-drinks", "cold-drinks", "breakfast", "bakery", "sandwiches-wraps", "soup-salad", "lunch-savoury", "desserts", "packaged-retail"}
-    assert all(a["artStyle"] == starter_media.STARTER_MEDIA_ART_STYLE and a["thumbnailUrl"].startswith("/api/v1/storefront/starter-media/cafe-restaurant/") for a in shipped)
+    assert all(a["artStyle"] == starter_media.starter_asset_art_style(a["key"]) and a["thumbnailUrl"].startswith("/api/v1/storefront/starter-media/cafe-restaurant/") for a in shipped)
     assert all(a["artStyle"] is None and a["thumbnailUrl"] is None for a in payload["assets"] if not a["available"])
 
 
@@ -82,3 +82,11 @@ def test_harbor_and_hearth_design_uses_canonical_values_so_it_loads_as_saved() -
     from app.platform.design import HERO_CONTENT
 
     assert STARTER_DESIGN["heroContent"] == "cta" and "cta" in HERO_CONTENT
+
+
+def test_photo_keys_are_real_shipped_assets_marked_as_ai_photos() -> None:
+    keys = {a.key for a in starter_media.STARTER_MEDIA_ASSETS}
+    assert starter_media.STARTER_MEDIA_PHOTO_KEYS <= keys
+    assert len(starter_media.STARTER_MEDIA_PHOTO_KEYS) == 50
+    assert starter_media.starter_asset_art_style("latte") == "ai-generated-photo"
+    assert starter_media.starter_asset_art_style("chili") == "illustrated-placeholder"
