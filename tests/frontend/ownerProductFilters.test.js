@@ -28,8 +28,8 @@ test("Product configuration exposes clear controls for existing catalog states",
   assert.match(page, /Turn off to hide this product without archiving it/);
   assert.match(page, /<strong>Featured<\/strong>/);
   assert.match(page, /<strong>Lunch special<\/strong>/);
-  assert.match(page, /id="product-modifiers-heading">Modifiers<\/h3>/);
-  assert.match(page, /Choose which modifier categories are available on this product/);
+  assert.match(page, /id="product-modifiers-heading">Modifiers \(optional\)<\/h3>/);
+  assert.match(page, /Customer choices or add-ons/);
   assert.match(page, /Hidden from menu/);
   assert.doesNotMatch(page, /Available on today’s menu|Unavailable today|Featured placement and options/);
 });

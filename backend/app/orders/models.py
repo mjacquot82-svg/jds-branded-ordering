@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     CheckConstraint,
     DateTime,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db.base import Base
@@ -146,6 +148,11 @@ class Order(OrderModelValidation, Base):
         CheckConstraint("version >= 1", name="version_positive"),
         CheckConstraint("expires_at > created_at", name="expiry_after_creation"),
         CheckConstraint(
+            "payment_status IS NULL OR payment_status IN "
+            "('unpaid', 'pending', 'paid', 'failed', 'cancelled', 'refunded', 'manual_unpaid')",
+            name="payment_status_valid",
+        ),
+        CheckConstraint(
             "(clover_installation_id IS NULL AND "
             "clover_environment IS NULL AND "
             "clover_merchant_id IS NULL AND "
@@ -172,6 +179,7 @@ class Order(OrderModelValidation, Base):
             name="fk_orders_tenant_clover_installation", ondelete="RESTRICT",
         ),
         Index("ix_orders_organization_clover_checkout", "organization_id", "clover_checkout_session_id"),
+        Index("ix_orders_organization_payment_checkout", "organization_id", "payment_checkout_ref"),
         UniqueConstraint(
             "organization_id", "clover_checkout_session_id",
             name="uq_orders_organization_clover_checkout_session",
@@ -228,6 +236,17 @@ class Order(OrderModelValidation, Base):
     clover_checkout_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # Provider-neutral payment fields (M1). Clover-specific columns retained for
+    # dual-write / webhook identity during the transition window.
+    payment_provider: Mapped[str | None] = mapped_column(String(40))
+    payment_status: Mapped[str | None] = mapped_column(String(30))
+    payment_checkout_ref: Mapped[str | None] = mapped_column(String(200))
+    payment_redirect_url: Mapped[str | None] = mapped_column(Text)
+    payment_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    payment_provider_txn_id: Mapped[str | None] = mapped_column(String(200))
+    payment_failure_code: Mapped[str | None] = mapped_column(String(80))
+    payment_paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    payment_provider_metadata: Mapped[dict | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     fulfillment_updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)

@@ -15,6 +15,7 @@ import {
 } from "../services/menuCatalog.js";
 import { useCustomerCatalog } from "../stores/customerCatalogStore.js";
 import { readTenantLocalStorage, writeTenantLocalStorage } from "../services/tenantBrowserState.js";
+import ProductImage from "../components/ProductImage.jsx";
 
 function formatPrice(price) {
   return new Intl.NumberFormat("en-CA", {
@@ -415,7 +416,7 @@ export default function MenuPage() {
                       key={item.id}
                       tabIndex={-1}
                     >
-                      {productImageUrl ? <div className="product-thumb" style={{ backgroundImage: `url(${productImageUrl})` }} aria-hidden="true" /> : null}
+                      <ProductImage className="product-thumb" src={productImageUrl} alt={`${item.name} product photo`} />
                       <div className="product-card-main">
                         <div className="drink-card-title">
                           <div>

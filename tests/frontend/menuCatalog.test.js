@@ -199,16 +199,15 @@ test("Menu derives direct, simple, and complex card presentations from choices",
   );
 });
 
-test("individual products only expose genuine image URLs", () => {
+test("individual products only expose platform-controlled media URLs", () => {
   for (const genericImage of ["coffee", "pastry", "water", "drinks", "stock-cup"]) {
     assert.equal(getProductSpecificImageUrl({ image: genericImage }), "");
   }
   assert.equal(getProductSpecificImageUrl({ image: "" }), "");
-  assert.equal(
-    getProductSpecificImageUrl({ image: "https://cdn.example.com/products/drip-coffee.jpg" }),
-    "https://cdn.example.com/products/drip-coffee.jpg"
-  );
-  assert.equal(getProductSpecificImageUrl({ image: "/product-images/croissant.jpg" }), "/product-images/croissant.jpg");
+  assert.equal(getProductSpecificImageUrl({ image: "https://cdn.example.com/products/drip-coffee.jpg" }), "");
+  assert.equal(getProductSpecificImageUrl({ image: "/product-images/croissant.jpg" }), "");
+  const mediaUrl = "/api/v1/storefront/media/123e4567-e89b-12d3-a456-426614174000";
+  assert.equal(getProductSpecificImageUrl({ image: mediaUrl }), mediaUrl);
 });
 
 test("Menu preserves variant and modifier pricing behavior", () => {

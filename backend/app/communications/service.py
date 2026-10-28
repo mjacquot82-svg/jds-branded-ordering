@@ -190,7 +190,7 @@ class CommunicationCenterService:
             "name": product.name,
             "description": product.description or "",
             "price_cents": product.base_price_cents,
-            "image": product.image_reference or "",
+            "image": f"/api/v1/storefront/media/{product.media_asset_id}" if product.media_asset_id else product.image_reference or "",
             "customer_visible": customer_visible,
             "orderable": orderable,
             "warnings": warnings,

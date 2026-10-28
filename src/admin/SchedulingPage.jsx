@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, CalendarDays, CheckCircle2, Clock3, RefreshCw } from "lucide-react";
 import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
+import OrderSettingsPanel from "./OrderSettingsPanel.jsx";
 import {
   createOwnerClosure,
   deleteOwnerClosure,
@@ -95,7 +96,7 @@ function ClosureForm({ initialValue = EMPTY_CLOSURE, onCancel, onSave, saving })
   );
 }
 
-export default function SchedulingPage() {
+export default function SchedulingPage({ setupMode = false }) {
   const { session } = useOwnerAuth();
   const [data, setData] = useState(null);
   const [hours, setHours] = useState([]);
@@ -186,8 +187,8 @@ export default function SchedulingPage() {
   const overrideActive = data.ordering_mode !== "schedule";
 
   return (
-    <section className="page-section owner-scheduling-page">
-      <div className="page-heading"><p className="eyebrow">Owner workspace</p><h1>Scheduling</h1><p>Manage when customers can order and when pickups are available.</p></div>
+    <section className={`page-section owner-scheduling-page ${setupMode?"embedded-ordering-step":""}`}>
+      <div className="page-heading"><p className="eyebrow">{setupMode?"Step 5":"Owner workspace"}</p><h1>{setupMode?"When can customers order?":"Scheduling"}</h1><p>{setupMode?"Choose your usual hours, pickup timing, and how much preparation time you need.":"Manage when customers can order and when pickups are available."}</p></div>
 
       {overrideActive ? <div className={`owner-override-notice ${data.ordering_mode === "force_closed" ? "paused" : "open"}`} role="status"><AlertTriangle aria-hidden="true" size={22} /><div><strong>{data.ordering_mode === "force_closed" ? "Online orders are temporarily paused." : "Online orders are temporarily being accepted."}</strong><p>Regular business hours are being overridden until you change it.</p></div><button className="secondary-button" disabled={busy === "ordering"} type="button" onClick={() => chooseOrdering("schedule")}>Return to Business Hours</button></div> : null}
 
@@ -226,6 +227,8 @@ export default function SchedulingPage() {
         <summary><span><strong>Scheduling Preferences</strong><small>Minimum notice: {data.minimum_lead_time_minutes} minutes · Pickup times: every {data.pickup_interval_minutes} minutes · Advance orders: up to {data.maximum_advance_days} days</small></span><Clock3 aria-hidden="true" size={20} /></summary>
         <form onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); await perform("preferences", () => updateOwnerPreferences({ minimum_lead_time_minutes: Number(form.get("notice")), pickup_interval_minutes: Number(form.get("spacing")), maximum_advance_days: Number(form.get("advance")) }, session.csrf_token), "Scheduling preferences saved."); }}><p>These settings control the pickup times offered to customers.</p><div className="preference-fields"><label><span>Minimum Notice Before Pickup</span><select defaultValue={data.minimum_lead_time_minutes} name="notice">{includeCurrent([0, 5, 10, 15, 20, 30, 45, 60, 90, 120], data.minimum_lead_time_minutes).map((value) => <option key={value} value={value}>{value === 0 ? "No minimum notice" : value < 60 ? `${value} minutes` : value === 60 ? "1 hour" : Number.isInteger(value / 60) ? `${value / 60} hours` : `${value} minutes`}</option>)}</select><small>The shortest amount of notice you need before an order can be picked up.</small></label><label><span>Pickup Time Spacing</span><select defaultValue={data.pickup_interval_minutes} name="spacing">{includeCurrent([5, 10, 15, 20, 30, 60], data.pickup_interval_minutes).map((value) => <option key={value} value={value}>Every {value} minutes</option>)}</select><small>How often customers can choose a pickup time.</small></label><label><span>How Far Ahead Customers Can Order</span><select defaultValue={data.maximum_advance_days} name="advance">{includeCurrent([1, 2, 3, 7, 14, 30, 60, 90], data.maximum_advance_days).map((value) => <option key={value} value={value}>Up to {value} {value === 1 ? "day" : "days"} ahead</option>)}</select><small>The furthest date customers can choose for pickup.</small></label></div><button className="primary-button" disabled={busy === "preferences"} type="submit">{busy === "preferences" ? "Saving…" : "Save Scheduling Preferences"}</button></form>
       </details>
+
+      {!setupMode ? <OrderSettingsPanel /> : null}
 
       {status ? <p className="owner-page-message success" role="status">{status}</p> : null}{error ? <p className="owner-page-message error" role="alert">{error}</p> : null}
     </section>

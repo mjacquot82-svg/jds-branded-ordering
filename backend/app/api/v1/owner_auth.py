@@ -31,11 +31,15 @@ from app.jds_auth.schemas import (
     AuthorizedOrganizationResponse, InvitationAcceptRequest,
     InvitationCreateRequest,
     LoginRequest,
+    MerchantActivationDetails,
+    MerchantActivationInspectRequest,
+    MerchantActivationRequest,
     MessageResponse,
     PasswordCompletionRequest,
     PasswordResetRequest,
     SessionResponse,
 )
+from app.platform.commercial import enforce_live_commerce
 from app.jds_auth.service import (
     AuthPrincipal,
     AuthenticationError,
@@ -46,7 +50,9 @@ from app.jds_auth.service import (
     SessionInvalid,
     utc_now,
 )
-from app.platform.models import StorefrontHostname
+from app.jds_auth.models import Organization
+from app.platform.models import OnboardingState, StorefrontHostname
+from app.platform.acquisition import ActivationInvalid, MerchantAcquisitionService
 
 router = APIRouter(prefix="/owner/auth", tags=["owner-auth"])
 _TENANT_HEADERS = ("x-tenant-id", "x-organization-id", "x-tenant-slug", "x-organization-slug")
@@ -174,8 +180,19 @@ def require_read_permission(permission: str) -> Callable[..., AuthPrincipal]:
     return dependency
 
 
-def session_response(principal: AuthPrincipal, csrf_token: str) -> SessionResponse:
-    return SessionResponse(user_id=str(principal.user_id), email=principal.email, display_name=principal.display_name, organization_id=str(principal.organization_id), role=principal.role, permissions=sorted(principal.permissions), csrf_token=csrf_token)
+def session_response(principal: AuthPrincipal, csrf_token: str, session: Session | None = None) -> SessionResponse:
+    onboarding = session.get(OnboardingState, principal.organization_id) if session is not None else None
+    organization = session.get(Organization, principal.organization_id) if session is not None else None
+    return SessionResponse(
+        user_id=str(principal.user_id), email=principal.email,
+        display_name=principal.display_name, organization_id=str(principal.organization_id),
+        role=principal.role, permissions=sorted(principal.permissions), csrf_token=csrf_token,
+        # Initial setup completion is durable. A later operational-readiness
+        # problem must never turn an established merchant back into a new one.
+        app_launched=bool(onboarding and onboarding.initial_setup_completed_at is not None),
+        onboarding_current_step=onboarding.current_step if onboarding else "welcome",
+        commercial_mode=getattr(organization, "commercial_mode", "live") if organization else "live",
+    )
 
 
 @router.post("/login", response_model=SessionResponse)
@@ -192,7 +209,32 @@ def login(payload: LoginRequest, response: Response, request: Request, _: None =
         auth_error(503, "authentication_unavailable", "Owner authentication is unavailable.")
     response.set_cookie(settings.session_cookie_name, issued.token, max_age=settings.session_absolute_hours * 3600, secure=settings.secure_cookies, httponly=True, samesite="lax", path="/")
     response.headers["Cache-Control"] = "no-store"
-    return session_response(issued.principal, issued.csrf_token)
+    return session_response(issued.principal, issued.csrf_token, service._session)
+
+
+@router.post("/activation/inspect", response_model=MerchantActivationDetails)
+def inspect_merchant_activation(payload: MerchantActivationInspectRequest, request: Request, _: None = Depends(require_trusted_origin), service: AuthenticationService = Depends(get_auth_service), now: datetime = Depends(utc_now)) -> MerchantActivationDetails:
+    reject_client_tenant_context(request)
+    try:
+        activation, organization = MerchantAcquisitionService(service._session, service._settings).inspect_activation(payload.activation_secret, now=now)
+    except ActivationInvalid:
+        auth_error(400, "activation_invalid", "Activation is invalid or expired.")
+    return MerchantActivationDetails(business_name=organization.name, intended_email=activation.intended_email, expires_at=activation.expires_at)
+
+
+@router.post("/activation/complete", response_model=SessionResponse)
+def complete_merchant_activation(payload: MerchantActivationRequest, response: Response, request: Request, _: None = Depends(require_trusted_origin), service: AuthenticationService = Depends(get_auth_service), settings: AuthSettings = Depends(get_auth_settings), now: datetime = Depends(utc_now)) -> SessionResponse:
+    reject_client_tenant_context(request)
+    enforce_limit(service, LOGIN_IP, client_identifier(request), now)
+    enforce_limit(service, LOGIN_ACCOUNT, payload.email, now)
+    try:
+        issued = MerchantAcquisitionService(service._session, settings).activate_with_password(payload.activation_secret, payload.email, payload.password, request.app.state.auth_provider, now=now, user_agent=request.headers.get("user-agent"))
+    except (ActivationInvalid, InvalidCredentialsError, IdentityProviderError, SQLAlchemyError):
+        auth_error(400, "activation_invalid", "Activation is invalid or expired.")
+    service._session.commit()
+    response.set_cookie(settings.session_cookie_name, issued.token, max_age=settings.session_absolute_hours * 3600, secure=settings.secure_cookies, httponly=True, samesite="lax", path="/")
+    response.headers["Cache-Control"] = "no-store"
+    return session_response(issued.principal, issued.csrf_token, service._session)
 
 
 @router.get("/session", response_model=SessionResponse)
@@ -202,8 +244,8 @@ def read_session(request: Request, service: AuthenticationService = Depends(get_
     if not token:
         auth_error(401, "unauthenticated", "Authentication is required.")
     try:
-        principal, csrf = service.rotate_csrf(token, now=now)
-        return session_response(principal, csrf)
+        principal, csrf = service.session_csrf(token, now=now)
+        return session_response(principal, csrf, service._session)
     except SessionInvalid:
         auth_error(401, "session_expired", "The owner session is invalid or expired.")
 
@@ -220,6 +262,12 @@ def authorized_organizations(
             organization_slug=organization.slug,
             organization_name=organization.name,
             role=role.key,
+            app_launched=bool(
+                (onboarding := service._session.get(OnboardingState, organization.id))
+                and onboarding.initial_setup_completed_at is not None
+            ),
+            onboarding_current_step=onboarding.current_step if onboarding else "welcome",
+            commercial_mode=getattr(organization, "commercial_mode", "live"),
         )
         for membership, organization, role in service.workforce_organizations(principal)
     ]
@@ -244,7 +292,7 @@ def select_organization(
         auth_error(403, "membership_inactive", "The selected organization is not authorized.")
     response.set_cookie(settings.session_cookie_name, issued.token, max_age=settings.session_absolute_hours * 3600, secure=settings.secure_cookies, httponly=True, samesite="lax", path="/")
     response.headers["Cache-Control"] = "no-store"
-    return session_response(issued.principal, issued.csrf_token)
+    return session_response(issued.principal, issued.csrf_token, service._session)
 
 
 @router.post("/logout", response_model=MessageResponse)
@@ -293,6 +341,7 @@ def accept_invitation(payload: InvitationAcceptRequest, request: Request, _: Non
 def create_invitation(payload: InvitationCreateRequest, principal: AuthPrincipal = Depends(require_permission("members.invite")), service: AuthenticationService = Depends(get_auth_service), now: datetime = Depends(utc_now)) -> MessageResponse:
     enforce_limit(service, INVITE_CREATE_ACTOR, str(principal.user_id), now)
     enforce_limit(service, INVITE_CREATE_ORGANIZATION, str(principal.organization_id), now)
+    enforce_live_commerce(service._session, principal.organization_id, action="invite_staff")
     try:
         service.create_invitation(payload.email, payload.role, now=now, invited_by=principal)
     except (IdentityProviderError, SQLAlchemyError, ValueError):

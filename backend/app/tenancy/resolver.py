@@ -103,7 +103,7 @@ def resolve_local_review_context(session: Session, slug: str, *, staging: bool =
     )
     if not enabled:
         raise TenantResolutionError("Review storefronts are disabled.")
-    allowed = frozenset({"the-guest-house", "second-street-cafe"})
+    allowed = frozenset({"the-guest-house", "second-street-cafe", "new-merchant-demo"})
     normalized = slug.strip().lower()
     if normalized not in allowed:
         raise TenantResolutionError("Unknown local review storefront.")

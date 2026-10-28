@@ -13,6 +13,7 @@ from app.catalog.models import (
     ProductVariant,
 )
 from app.availability.models import ProductAvailability
+from app.platform.models import MediaAsset
 from app.tenancy.context import TenantContext
 
 
@@ -89,6 +90,26 @@ class CatalogRepository:
                 Category.id == category_id,
             )
         )
+
+    def category_has_products(self, category_id: int) -> bool:
+        return bool(self._session.scalar(
+            select(Product.id).where(
+                Product.organization_id == self._tenant.organization_id,
+                Product.category_id == category_id,
+            ).limit(1)
+        ))
+
+    def media_asset_is_active(self, media_id: object) -> bool:
+        return bool(self._session.scalar(
+            select(MediaAsset.id).where(
+                MediaAsset.id == media_id,
+                MediaAsset.organization_id == self._tenant.organization_id,
+                MediaAsset.status == "active",
+            ).limit(1)
+        ))
+
+    def delete(self, entity: object) -> None:
+        self._session.delete(entity)
 
     def list_products(self) -> Sequence[Product]:
         return self._session.scalars(

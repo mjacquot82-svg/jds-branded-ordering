@@ -41,6 +41,8 @@ async function renderManager({ groups = [], onSaveCustomization = async () => {}
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
   dom.window.HTMLDialogElement.prototype.showModal = function showModal() { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function close() { this.open = false; };
+  dom.window.HTMLElement.prototype.attachEvent = function attachEvent() {};
+  dom.window.HTMLElement.prototype.detachEvent = function detachEvent() {};
   const root = createRoot(document.getElementById("root"));
   await act(async () => root.render(React.createElement(
     MemoryRouter,

@@ -29,6 +29,33 @@ from app.db.migrate import (
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 
+
+def reset_public_schema(database_url: str) -> None:
+    """Give migration tests an empty schema so shared TEST_DATABASE_URL dirt cannot
+    trip intentional data-loss downgrade guards from earlier application tests.
+
+    The V1 platform downgrade guard must keep refusing non-baseline tenant data.
+    Migration tests therefore cannot start from `alembic downgrade base` when the
+    shared integration database still holds fixture tenants/hostnames/media.
+    """
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP SCHEMA public CASCADE"))
+            connection.execute(text("CREATE SCHEMA public"))
+            connection.execute(text("GRANT ALL ON SCHEMA public TO CURRENT_USER"))
+            connection.execute(text("GRANT ALL ON SCHEMA public TO public"))
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def postgresql_url(postgresql_url: str) -> str:
+    reset_public_schema(postgresql_url)
+    return postgresql_url
+
+
 def make_alembic_config(database_url: str) -> Config:
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
@@ -49,7 +76,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     config = make_alembic_config(postgresql_url)
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260820_29"]
+    assert script.get_heads() == ["20261020_34"]
 
     command.downgrade(config, "base")
     command.upgrade(config, "head")
@@ -58,7 +85,7 @@ def test_catalog_migration_upgrades_and_downgrades(postgresql_url: str) -> None:
     try:
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260820_29"
+            assert context.get_current_revision() == "20261020_34"
 
         assert set(inspect(engine).get_table_names()) >= {
             "alembic_version",
@@ -597,7 +624,7 @@ def test_tenant_availability_migration_backfills_and_enforces_ownership(
         command.upgrade(config, "head")
         inspector = inspect(engine)
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "20260820_29"
+            assert MigrationContext.configure(connection).get_current_revision() == "20261020_34"
             for table_name in (
                 "business_hours",
                 "business_closures",
@@ -708,7 +735,7 @@ def test_tenant_order_migration_backfills_constraints_and_refuses_unsafe_downgra
                 text("SELECT organization_id FROM orders WHERE id = :id"),
                 {"id": order_id},
             ) == organization_id
-            assert MigrationContext.configure(connection).get_current_revision() == "20260820_29"
+            assert MigrationContext.configure(connection).get_current_revision() == "20261020_34"
         assert {c["name"] for c in inspector.get_unique_constraints("orders")} >= {
             "uq_orders_organization_idempotency_key",
             "uq_orders_organization_public_access_token",
@@ -833,7 +860,7 @@ def test_clover_tenant_migration_backfills_tokens_and_refuses_unsafe_downgrade(
         assert row["id"] is not None
         assert row["access_token_encrypted"] == encrypted_access
         assert row["refresh_token_encrypted"] == encrypted_refresh
-        assert MigrationContext.configure(connection).get_current_revision() == "20260820_29"
+        assert MigrationContext.configure(connection).get_current_revision() == "20261020_34"
 
     with engine.begin() as connection:
         tenant_b = uuid4()
@@ -896,7 +923,7 @@ def test_migration_bootstrap_adopts_existing_catalog_without_data_loss(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260820_29"
+            assert context.get_current_revision() == "20261020_34"
             assert connection.scalar(
                 text(
                     "SELECT name FROM categories "
@@ -953,7 +980,7 @@ def test_migration_bootstrap_reconciles_catalog_and_orders_without_data_loss(
         inspector = inspect(engine)
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260820_29"
+            assert context.get_current_revision() == "20261020_34"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "
@@ -1033,7 +1060,7 @@ def test_migration_bootstrap_resumes_interrupted_order_reconciliation(
 
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
-            assert context.get_current_revision() == "20260820_29"
+            assert context.get_current_revision() == "20261020_34"
             assert connection.scalar(
                 text(
                     "SELECT guest_name FROM orders "

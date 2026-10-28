@@ -162,7 +162,7 @@ test("signed-in Account to Home navigation survives account cleanup and legacy P
     const home = [...app.container.querySelectorAll("a")].find((link) => link.textContent.trim() === "Home");
     assert.ok(home);
     await act(async () => home.dispatchEvent(new app.dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
-    assert.equal(app.container.querySelector('.ladels-hero-logo')?.getAttribute('src'), "/cafe.png");
+    assert.ok(app.container.querySelector('.app-welcome-panel'));
     await waitForText(app.container, "Based on what you order most");
     assert.ok(app.container.querySelector(".home-page"), "Home rendered a nonblank page");
   } finally {
@@ -180,7 +180,7 @@ for (const [name, session, quickOrder] of [
     const app = await renderApp({ initialPath: "/", session, quickOrder });
     try {
       await waitForText(app.container, "Quick Order");
-      assert.equal(app.container.querySelector('.ladels-hero-logo')?.getAttribute('alt'), "Ladel's Wellness Café");
+      assert.ok(app.container.querySelector('.app-welcome-panel'));
       assert.ok(app.container.querySelector(".home-page"));
       const genericCard = app.container.querySelector("a.quick-product-card");
       assert.ok(genericCard);

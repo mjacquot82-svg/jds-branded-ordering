@@ -9,7 +9,10 @@ export function getProductSpecificImageUrl(product) {
     return "";
   }
 
-  return /^(https?:\/\/|data:image\/|blob:|\.?\.?\/)/i.test(image) ? image : "";
+  return /^\/api\/v1\/storefront\/media\/[0-9a-f-]{36}$/i.test(image)
+    || /^\/api\/v1\/storefront\/starter-media\/[a-z0-9-]+\/[a-z0-9-]+(?:\?version=\d+)?$/i.test(image)
+    ? image
+    : "";
 }
 
 export function getProductChoicePresentation(product) {

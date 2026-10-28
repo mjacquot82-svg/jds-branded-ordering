@@ -38,6 +38,7 @@ from app.api.v1.customer_auth import get_customer_auth_service
 from app.availability.models import BusinessHour, BusinessSettings
 from app.catalog.models import Category, Product
 from app.clover.models import CloverInstallation
+from app.payments.models import OrganizationPaymentSettings
 from app.platform.design import DesignService
 from app.platform.models import BusinessProfile, StorefrontHostname
 from app.tenancy.context import TenantContext, TenantResolutionSource
@@ -183,6 +184,7 @@ def seed_ready_public_ladels(engine: Engine) -> None:
             BusinessProfile(organization_id=organization.id, display_name="The Guest House", pickup_instructions="Pick up at the counter."),
             StorefrontHostname(organization_id=organization.id, hostname="test", status="verified", is_canonical=True),
             CloverInstallation(organization_id=organization.id, merchant_id=f"auth-ready-{uuid4().hex}", environment="readiness", app_id="auth-test", access_token_encrypted="fixture-access", refresh_token_encrypted="fixture-refresh", access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1), connection_state="connected"),
+            OrganizationPaymentSettings(organization_id=organization.id, provider_key="clover"),
         ])
         session.flush()
         tenant = TenantContext(organization_id=organization.id, organization_slug=organization.slug, source=TenantResolutionSource.AUTHENTICATED_MEMBERSHIP)

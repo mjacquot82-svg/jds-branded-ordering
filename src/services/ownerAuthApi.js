@@ -70,6 +70,14 @@ export function loginOwner(email, password, options = {}) {
   return ownerAuthRequest("/login", { ...options, body: { email, password }, method: "POST" });
 }
 
+export function inspectMerchantActivation(activationSecret, options = {}) {
+  return ownerAuthRequest("/activation/inspect", { ...options, body: { activation_secret: activationSecret }, method: "POST" });
+}
+
+export function completeMerchantActivation(activationSecret, email, password, options = {}) {
+  return ownerAuthRequest("/activation/complete", { ...options, body: { activation_secret: activationSecret, email, password }, method: "POST" });
+}
+
 export function fetchStaffAccessOptions(options = {}) {
   return staffAccessRequest("/accounts", options);
 }

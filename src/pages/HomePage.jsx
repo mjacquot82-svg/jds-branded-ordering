@@ -23,6 +23,10 @@ import { formatConfigurationDescription } from "../services/configurationDescrip
 import LoyaltyCard from "../components/LoyaltyCard.jsx";
 import { readTenantLocalStorage, writeTenantLocalStorage } from "../services/tenantBrowserState.js";
 import { useTenant } from "../tenant/TenantContext.jsx";
+import { getLayoutDefinition, layoutShowsHero, layoutShowsHomeQuickOrder } from "../design/layoutDefinitions.js";
+import PositionedSlotImage from "../design/PositionedSlotImage.jsx";
+import { heroContentVisibility } from "../design/imageSlotRendering.js";
+import ProductImage from "../components/ProductImage.jsx";
 
 function formatPrice(price) {
   return new Intl.NumberFormat("en-CA", {
@@ -48,6 +52,12 @@ function storeCart(cart) {
 
 export default function HomePage() {
   const { value: tenant } = useTenant();
+  const layout = getLayoutDefinition(tenant.design?.template);
+  const configuredSections = tenant.design?.sections || ["hero","announcement","categories","quickOrder"];
+  const showHero = layoutShowsHero(layout.id, configuredSections, tenant.design?.branding);
+  const showHomeQuickOrder = layoutShowsHomeQuickOrder(layout.id, configuredSections);
+  const heroPosition=tenant.design?.imagePositions?.hero||{x:50,y:50,zoom:1};const heroMediaId=tenant.design?.hero?.mediaId;
+  const heroContent=heroContentVisibility(tenant.design?.heroContent);
   const { session } = useCustomerAuth();
   const [quickOrderPersonalization, setQuickOrderPersonalization] = useState({
     productIds: [],
@@ -166,10 +176,10 @@ export default function HomePage() {
   }
 
   return (
-    <section className="home-page ordering-page">
-      <div className="welcome-panel app-welcome-panel">
-        {tenant.tenant.slug === "the-guest-house" ? <img className="ladels-hero-logo" src="/cafe.png" alt="Ladel's Wellness Café" /> : <div className="tenant-hero-wordmark"><strong>{tenant.design.displayName}</strong><span>{tenant.design.tagline}</span></div>}
-      </div>
+    <section className={`home-page ordering-page customer-home-layout customer-home-${layout.id}`}>
+      {showHero ? <section className={`customer-hero-composition customer-hero-${layout.id}`}><div className={`welcome-panel app-welcome-panel hero-${layout.hero}${heroContent.cta&&layout.id==="modern"?" has-hero-content":""}`} style={{aspectRatio:layout.heroSlot.aspectRatio}}>{heroMediaId?<PositionedSlotImage className="layout-hero-image" src={`/api/v1/storefront/media/${heroMediaId}`} position={heroPosition}/>:null}
+        {heroContent.cta&&layout.id==="modern"?<Link className="layout-hero-order-action" to="/menu">Start an order</Link>:null}
+      </div>{heroContent.cta&&layout.id==="cozy"?<Link className="layout-hero-order-action cozy-hero-order-action" to="/menu">Explore our menu</Link>:null}</section> : <header className="minimal-home-intro"><h1>Order simply.</h1><Link to="/menu">Browse menu →</Link></header>}
 
       <div className="home-order-status" aria-live="polite">
         <div>
@@ -185,13 +195,7 @@ export default function HomePage() {
         className={`content-block app-content-block lunch-special-block${recommendationImageUrl ? " has-product-image" : " is-image-free"}`}
         aria-labelledby="lunch-special-heading"
       >
-        {recommendationImageUrl ? (
-          <div
-            className="lunch-special-image"
-            style={{ backgroundImage: `url(${recommendationImageUrl})` }}
-            aria-hidden="true"
-          />
-        ) : null}
+        <ProductImage className="lunch-special-image" src={recommendationImageUrl} alt={`${recommendation?.name || "Featured product"} product photo`} />
         <div className="lunch-special-copy">
           <p className="eyebrow">{lunchSpecial ? "Today’s lunch special" : "From the café"}</p>
           <h2 id="lunch-special-heading" className="visually-hidden">{lunchSpecial ? "Today’s Lunch Special" : "Today’s Picks"}</h2>
@@ -278,7 +282,7 @@ export default function HomePage() {
         ) : null}
       </section>
 
-      {status === "ready" ? (
+      {status === "ready" && showHomeQuickOrder ? (
       <section className="content-block app-content-block quick-add-block" aria-labelledby="quick-order-heading-home">
         <div className="section-heading">
           <div>
@@ -298,9 +302,7 @@ export default function HomePage() {
 
             return (
               <QuickOrderCard {...quickOrderCardProps} className={`quick-product-card${item.quickConfiguration ? " is-exact" : ""}${productImageUrl ? " has-product-image" : " is-image-free"}`} key={item.quickKey}>
-                {productImageUrl ? (
-                  <div className="quick-product-image" style={{ backgroundImage: `url(${productImageUrl})` }} aria-hidden="true" />
-                ) : null}
+                <ProductImage className="quick-product-image" src={productImageUrl} alt={`${item.name} product photo`} />
                 <div className="quick-product-copy">
                   {item.quickConfiguration ? <span className="quick-usual-label">Your usual</span> : null}
                   <h3>{item.name}</h3>

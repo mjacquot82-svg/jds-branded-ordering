@@ -81,7 +81,7 @@ async function runContinuation(mode) {
   localStorage.setItem("cafe-cart", JSON.stringify(configuredCart));
   let authenticated = false;
   let orderCalls = 0;
-  let cloverCalls = 0;
+  let cloverCalls = 0; // payment port (+ legacy clover) checkout calls
   globalThis.fetch = async (url, options = {}) => {
     const path = new URL(String(url), "https://cafe.test").pathname;
     if (path === "/api/v1/customer/auth/session") return response(authenticated ? 200 : 401, authenticated ? { user_id: "customer-1", role: "customer", csrf_token: "csrf" } : { detail: { code: "unauthenticated" } });
@@ -102,7 +102,7 @@ async function runContinuation(mode) {
         notes: "", subtotal_cents: 1350, tax_cents: 176, total_cents: 1526,
       });
     }
-    if (path.includes("/api/v1/clover/orders/")) {
+    if (path.includes("/api/v1/payments/orders/") || path.includes("/api/v1/clover/orders/")) {
       cloverCalls += 1;
       assert.equal(authenticated, true);
       assert.equal(options.credentials, "include");

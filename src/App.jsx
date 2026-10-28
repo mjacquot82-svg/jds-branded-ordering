@@ -26,6 +26,15 @@ import PlatformAdminPage from "./admin/PlatformAdminPage.jsx";
 import DesignPreviewPage from "./admin/DesignPreviewPage.jsx";
 import CustomersPage from "./admin/CustomersPage.jsx";
 import LaunchPage from "./admin/LaunchPage.jsx";
+import RequireSetup from "./auth/RequireSetup.jsx";
+import SetupWizard from "./setup/SetupWizard.jsx";
+import MerchantActivationPage from "./admin/MerchantActivationPage.jsx";
+import BuildStoreLandingPage from "./pages/BuildStoreLandingPage.jsx";
+import GoLiveActivationPage from "./admin/GoLiveActivationPage.jsx";
+
+function OwnerHome() {
+  return <AdminDashboard />;
+}
 
 export default function App() {
   return (
@@ -44,10 +53,16 @@ export default function App() {
         <Route path="account/reset-password" element={<CustomerResetPage />} />
         <Route path="confirmation" element={<ConfirmationPage />} />
         <Route element={<OwnerAuthBoundary />}>
+          <Route path="activate" element={<MerchantActivationPage />} />
+          <Route path="build" element={<BuildStoreLandingPage />} />
+          <Route path="build/verify" element={<BuildStoreLandingPage />} />
           <Route path="owner/login" element={<OwnerLoginPage />} />
           <Route path="staff" element={<StaffLoginPage />} />
+          <Route element={<RequireSetup />}>
+            <Route path="setup/:step?" element={<SetupWizard />} />
+          </Route>
           <Route path="admin" element={<RequireOwner />}>
-            <Route index element={<AdminDashboard />} />
+            <Route index element={<OwnerHome />} />
             <Route path="orders" element={<OrdersPage />} />
             <Route path="customers" element={<CustomersPage />} />
             <Route path="products" element={<ProductsPage />} />
@@ -58,6 +73,7 @@ export default function App() {
             <Route path="design/preview" element={<DesignPreviewPage />} />
             <Route path="setup" element={<OnboardingPage />} />
             <Route path="launch" element={<LaunchPage />} />
+            <Route path="go-live" element={<GoLiveActivationPage />} />
             <Route path="platform" element={<PlatformAdminPage />} />
             <Route path="staff" element={<StaffPage />} />
             <Route path="*" element={<Navigate replace to="/admin" />} />

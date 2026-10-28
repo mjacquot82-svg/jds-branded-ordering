@@ -1,3 +1,5 @@
+from app.platform.demo_service import enforce_demo_catalog_limits, enforce_demo_category_limits, record_funnel_event
+from app.platform.commercial import is_prospect
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -5,7 +7,7 @@ from app.api.v1.catalog import get_catalog_session
 from app.api.v1.owner_auth import csrf_principal, current_principal, require_permission
 from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.catalog.repository import CatalogRepository
-from app.catalog.schemas import LunchSpecialSelectionWrite, OwnerCatalogResponse, OwnerModifierGroupResponse, OwnerModifierGroupWrite, OwnerModifierOptionResponse, OwnerModifierOptionWrite, OwnerProductAvailabilityWrite, OwnerProductResponse, OwnerProductWrite
+from app.catalog.schemas import LunchSpecialSelectionWrite, OwnerCatalogResponse, OwnerCategoryOrderWrite, OwnerCategoryResponse, OwnerCategoryWrite, OwnerModifierGroupResponse, OwnerModifierGroupWrite, OwnerModifierOptionResponse, OwnerModifierOptionWrite, OwnerProductAvailabilityWrite, OwnerProductOrderWrite, OwnerProductResponse, OwnerProductWrite
 from app.catalog.service import CatalogService
 from app.jds_auth.service import AuthPrincipal
 from sqlalchemy.orm import Session
@@ -89,6 +91,44 @@ def read_owner_catalog(
         mutation_error(error)
 
 
+@router.post("/categories", response_model=OwnerCategoryResponse, status_code=201)
+def create_category(payload: OwnerCategoryWrite, principal: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service), session: Session = Depends(get_catalog_session), tenant: TenantContext = Depends(authenticated_owner_tenant)) -> OwnerCategoryResponse:
+    try:
+        enforce_demo_category_limits(session, tenant.organization_id)
+        result = service.create_category(payload)
+        if is_prospect(session, tenant.organization_id):
+            record_funnel_event(session, event_name="menu_edited", organization_id=tenant.organization_id, actor_user_id=principal.user_id)
+            session.commit()
+        return result
+    except (SQLAlchemyError, ValueError) as error:
+        mutation_error(error)
+
+
+@router.put("/categories/order", response_model=list[OwnerCategoryResponse])
+def reorder_categories(payload: OwnerCategoryOrderWrite, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> list[OwnerCategoryResponse]:
+    try:
+        return service.reorder_categories(payload)
+    except (SQLAlchemyError, ValueError) as error:
+        mutation_error(error)
+
+
+@router.put("/categories/{category_id}", response_model=OwnerCategoryResponse)
+def update_category(category_id: int, payload: OwnerCategoryWrite, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> OwnerCategoryResponse:
+    try:
+        return service.update_category(category_id, payload)
+    except (SQLAlchemyError, ValueError, LookupError) as error:
+        mutation_error(error)
+
+
+@router.delete("/categories/{category_id}", status_code=204)
+def delete_category(category_id: int, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> Response:
+    try:
+        service.delete_category(category_id)
+        return Response(status_code=204)
+    except (SQLAlchemyError, ValueError, LookupError) as error:
+        mutation_error(error)
+
+
 @router.post("/modifier-groups", response_model=OwnerModifierGroupResponse, status_code=201)
 def create_modifier_group(
     payload: OwnerModifierGroupWrite,
@@ -144,11 +184,18 @@ def update_modifier_option(
 @router.post("/products", response_model=OwnerProductResponse, status_code=201)
 def create_product(
     payload: OwnerProductWrite,
-    _: AuthPrincipal = Depends(require_catalog_editor),
+    principal: AuthPrincipal = Depends(require_catalog_editor),
     service: CatalogService = Depends(catalog_service),
+    session: Session = Depends(get_catalog_session),
+    tenant: TenantContext = Depends(authenticated_owner_tenant),
 ) -> OwnerProductResponse:
     try:
-        return service.create_product(payload)
+        enforce_demo_catalog_limits(session, tenant.organization_id)
+        result = service.create_product(payload)
+        if is_prospect(session, tenant.organization_id):
+            record_funnel_event(session, event_name="menu_edited", organization_id=tenant.organization_id, actor_user_id=principal.user_id)
+            session.commit()
+        return result
     except (SQLAlchemyError, ValueError) as error:
         mutation_error(error)
 
@@ -176,6 +223,14 @@ def archive_product(
         service.archive_product(product_id)
         return Response(status_code=204)
     except (SQLAlchemyError, LookupError) as error:
+        mutation_error(error)
+
+
+@router.put("/product-order", response_model=list[OwnerProductResponse])
+def reorder_products(payload: OwnerProductOrderWrite, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> list[OwnerProductResponse]:
+    try:
+        return service.reorder_products(payload)
+    except (SQLAlchemyError, ValueError) as error:
         mutation_error(error)
 
 

@@ -38,6 +38,13 @@ export default function RequireOwner() {
       </div>
     </section>
   );
+  if (["owner", "manager"].includes(session?.role) && session?.app_launched === false) {
+    // A new shop's go-live request lives inside setup (last step), so links to
+    // /admin/go-live or /admin/launch land there instead of bouncing to step 1.
+    if (/^\/admin\/(go-live|launch)(\/|$)/.test(location.pathname)) return <Navigate replace to="/setup/launch" />;
+    const step = session.onboarding_current_step || "welcome";
+    return <Navigate replace to={`/setup/${step}`} />;
+  }
   if (session && canAccessOwnerPath(session, location.pathname)) return <>
     <nav className="admin-links operations-nav" aria-label="Operations Portal navigation">
       {businessStatus==="loading"?<span className="current-business">Loading businesses…</span>:businesses.length > 1 ? <label className="business-switcher"><span>Current business</span><select aria-label="Current business" disabled={businessStatus==="switching"} value={businesses.find((item) => item.organization_id === session.organization_id)?.membership_id || ""} onChange={(event) => selectBusiness(event.target.value).catch(()=>{})}>{businesses.map((item) => <option value={item.membership_id} key={item.membership_id}>{item.organization_name}</option>)}</select></label> : businesses.length === 1 ? <span className="current-business">{businesses[0].organization_name}</span> : null}
@@ -47,6 +54,14 @@ export default function RequireOwner() {
     </nav>
     <Outlet />
   </>;
+  if (session && session.platform_capabilities_loaded === false && location.pathname.startsWith("/admin/platform")) return (
+    <section className="page-section compact-section" aria-live="polite">
+      <div className="operations-panel">
+        <h1>Platform</h1>
+        <p>Checking your platform access…</p>
+      </div>
+    </section>
+  );
   if (session) return <Navigate replace to={operationsLinks(session)[0]?.to || "/owner/login?denied=1"} />;
   if (status === "anonymous") {
     const returnTo = ownerLoginDestination(location);

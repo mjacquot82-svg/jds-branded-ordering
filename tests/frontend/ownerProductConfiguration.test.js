@@ -6,14 +6,14 @@ const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("create and edit product center the Owner workflow on variants then modifiers", async () => {
   const products = await source("../../src/admin/ProductsPage.jsx");
-  assert.match(products, /"Create product"/);
+  assert.match(products, /"Add product"/);
   assert.match(products, />Basic information</);
-  assert.match(products, />Variants</);
-  assert.match(products, /Which version of this product is being purchased\?/);
-  assert.match(products, />Modifiers</);
-  assert.match(products, /What can the customer add or change\?/);
-  const variantsPosition = products.indexOf(">Variants<");
-  assert.ok(variantsPosition < products.indexOf(">Modifiers<", variantsPosition));
+  assert.match(products, />Variants \(optional\)</);
+  assert.match(products, /Different versions or prices of the same item/);
+  assert.match(products, />Modifiers \(optional\)</);
+  assert.match(products, /Customer choices or add-ons/);
+  const variantsPosition = products.indexOf(">Variants (optional)<");
+  assert.ok(variantsPosition < products.indexOf(">Modifiers (optional)<", variantsPosition));
 });
 
 test("variant rows expose labels, dollar prices, availability, and safe new-row removal", async () => {
@@ -32,7 +32,7 @@ test("products without variants clearly use their base price", async () => {
   const products = await source("../../src/admin/ProductsPage.jsx");
   assert.match(products, /No variants added\./);
   assert.match(products, /Customers will order this product at its base price\./);
-  assert.match(products, /Used when this product has no available variants\./);
+  assert.match(products, /Used when this product has no variants\./);
 });
 
 test("one product save includes current variants and whole modifier categories", async () => {
@@ -50,7 +50,7 @@ test("one product save includes current variants and whole modifier categories",
 
 test("modifier assignment is category-level with previews and an empty state", async () => {
   const products = await source("../../src/admin/ProductsPage.jsx");
-  assert.match(products, /Choose which modifier categories are available on this product\./);
+  assert.match(products, /Customer choices or add-ons, such as Oat milk or an Extra shot\./);
   assert.match(products, /group\.options\.filter\(\(item\) => item\.active\)/);
   assert.match(products, /Available on this product/);
   assert.match(products, /Not available on this product/);

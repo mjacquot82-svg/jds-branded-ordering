@@ -7,9 +7,28 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.availability.models import BusinessHour, BusinessSettings
-from app.catalog.models import Product
-from app.clover.models import CloverInstallation
+from app.catalog.models import Category, Product
+from app.availability.models import ProductAvailability
 from app.jds_auth.models import Organization
+from app.payments.service import is_payment_connected
+
+
+def pay_at_pickup_enabled(session: Session, organization_id: UUID) -> bool:
+    from app.payments.models import OrganizationOrderSettings
+
+    row = session.get(OrganizationOrderSettings, organization_id)
+    return bool(row and row.pay_at_pickup_enabled)
+
+
+def clover_available() -> bool:
+    """True only when the platform has Clover app credentials configured."""
+    from app.clover.config import CloverConfigurationError, CloverSettings
+
+    try:
+        CloverSettings.from_env().validate()
+    except (CloverConfigurationError, ValueError):
+        return False
+    return True
 from app.platform.models import BusinessProfile, DesignWorkspace, StorefrontHostname
 
 
@@ -19,18 +38,26 @@ class ReadinessResult:
 
     @property
     def public_ready(self) -> bool:
-        return all(self.checks.values())
+        # Ignore deprecated alias keys when computing readiness.
+        return all(
+            value
+            for key, value in self.checks.items()
+            if key != "clover"  # alias of payment_connected
+        )
 
 
 def evaluate_storefront_readiness(session: Session, organization_id: UUID) -> ReadinessResult:
     organization = session.get(Organization, organization_id)
     profile = session.get(BusinessProfile, organization_id)
     settings = session.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == organization_id))
+    # A shop can take orders with an electronic provider OR with pay at pickup
+    # turned on. Payment stays pluggable: Clover is one provider, not a must.
+    payment_ok = is_payment_connected(session, organization_id) or pay_at_pickup_enabled(session, organization_id)
     checks = {
-        "organization": bool(organization and organization.is_active and organization.lifecycle_status == "active"),
+        "organization": bool(organization and organization.is_active and organization.lifecycle_status == "active" and getattr(organization, "commercial_mode", "live") == "live"),
         "business_profile": bool(
-            profile and profile.display_name.strip() and profile.pickup_instructions.strip()
-            and profile.timezone.strip() and profile.currency.strip()
+            profile and profile.display_name.strip() and profile.timezone.strip()
+            and profile.currency.strip() and profile.fulfillment_wording.strip()
         ),
         "verified_hostname": session.scalar(select(func.count()).select_from(StorefrontHostname).where(
             StorefrontHostname.organization_id == organization_id,
@@ -42,19 +69,28 @@ def evaluate_storefront_readiness(session: Session, organization_id: UUID) -> Re
             BusinessHour.organization_id == organization_id,
             BusinessHour.business_settings_id == settings.id,
         )) == 7),
-        "catalog": bool(session.scalar(select(Product.id).where(
+        "catalog": bool(session.scalar(select(Product.id).join(
+            Category,
+            (Category.id == Product.category_id) &
+            (Category.organization_id == Product.organization_id),
+        ).outerjoin(
+            ProductAvailability,
+            (ProductAvailability.product_id == Product.id) &
+            (ProductAvailability.organization_id == Product.organization_id),
+        ).where(
             Product.organization_id == organization_id,
             Product.is_published.is_(True),
             Product.archived_at.is_(None),
+            Category.is_published.is_(True),
+            func.coalesce(ProductAvailability.default_available, True).is_(True),
         ).limit(1))),
         "published_design": bool(
             (workspace := session.get(DesignWorkspace, organization_id))
             and workspace.published_version_id
         ),
-        "clover": bool(session.scalar(select(CloverInstallation.id).where(
-            CloverInstallation.organization_id == organization_id,
-            CloverInstallation.connection_state == "connected",
-        ).limit(1))),
+        # Canonical readiness key (M1). "clover" retained as deprecated alias.
+        "payment_connected": payment_ok,
+        "clover": payment_ok,
     }
     return ReadinessResult(checks=checks)
 
@@ -78,7 +114,7 @@ def evaluate_publish_readiness(session: Session, organization_id: UUID) -> Readi
     launch = evaluate_storefront_readiness(session, organization_id)
     return ReadinessResult(checks={
         key: value for key, value in launch.checks.items()
-        if key in {"business_profile", "fulfillment", "hours", "catalog", "clover"}
+        if key in {"business_profile", "fulfillment", "hours", "catalog", "payment_connected"}
     })
 
 
@@ -86,6 +122,9 @@ def onboarding_completed_steps(result: ReadinessResult) -> list[str]:
     mapping = {
         "business": "business_profile", "storefront": "verified_hostname",
         "hours": "hours", "fulfillment": "fulfillment",
-        "design": "published_design", "catalog": "catalog", "clover": "clover",
+        "design": "published_design", "catalog": "catalog",
+        # Prefer payments; keep clover as accepted alias in completed_steps lists.
+        "payments": "payment_connected",
+        "clover": "payment_connected",
     }
     return [step for step, check in mapping.items() if result.checks.get(check, False)]

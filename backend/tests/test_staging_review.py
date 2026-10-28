@@ -16,6 +16,7 @@ from app.jds_auth.provider import InvalidCredentialsError, StagingReviewIdentity
 from app.main import create_app
 from app.platform.models import DesignVersion
 from app.platform.media import LocalMediaStorage
+from app.platform.assets import tenant_icon_png
 from app.staging import STAGING_OWNER_EMAIL, assert_staging_seed_safe, validate_staging_media_root
 from app.staging_review_seed import seed_staging_review
 from tests.test_migrations import make_alembic_config
@@ -103,8 +104,9 @@ def test_staging_seed_and_media_guards_fail_closed(monkeypatch, tmp_path) -> Non
         storage = LocalMediaStorage(validated)
         organization_id = uuid4()
         media_id = uuid4()
-        storage_key, _ = storage.put(organization_id, media_id, b"\x89PNG\r\n\x1a\nsynthetic", "image/png")
-        assert LocalMediaStorage(validated).local_path(storage_key).read_bytes().endswith(b"synthetic")
+        image=tenant_icon_png(192,"#112233","#abcdef")
+        storage_key, _ = storage.put(organization_id, media_id, image, "image/png")
+        assert LocalMediaStorage(validated).local_path(storage_key).read_bytes()==image
     finally:
         shutil.rmtree(safe_root, ignore_errors=True)
 
@@ -173,7 +175,11 @@ async def test_staging_seed_auth_tenants_fixture_payments_and_noindex(staging_da
         )
         assert login.status_code == 200
         organizations = await client.get("/api/v1/owner/auth/organizations")
-        assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe"}
+        assert {item["organization_slug"] for item in organizations.json()} == {"the-guest-house", "second-street-cafe", "new-merchant-demo"}
+        assert login.json()["app_launched"] is True
+        new_merchant = next(item for item in organizations.json() if item["organization_slug"] == "new-merchant-demo")
+        assert new_merchant["app_launched"] is False
+        assert new_merchant["onboarding_current_step"] == "welcome"
         selected_before = login.json()["organization_id"]
         owner_hint = await client.get("/api/v1/owner/business-profile?review_tenant=second-street-cafe")
         assert owner_hint.status_code == 200
@@ -187,6 +193,18 @@ async def test_staging_seed_auth_tenants_fixture_payments_and_noindex(staging_da
             headers={"Origin": STAGING_ORIGIN, "X-CSRF-Token": refreshed_session.json()["csrf_token"]},
         )
         assert switched.status_code == 200
+        switched_new = await client.post(
+            f'/api/v1/owner/auth/organizations/{new_merchant["membership_id"]}/select',
+            headers={"Origin": STAGING_ORIGIN, "X-CSRF-Token": switched.json()["csrf_token"]},
+        )
+        assert switched_new.status_code == 200
+        assert switched_new.json()["app_launched"] is False
+        assert switched_new.json()["onboarding_current_step"] == "welcome"
+        switched = await client.post(
+            f'/api/v1/owner/auth/organizations/{target["membership_id"]}/select',
+            headers={"Origin": STAGING_ORIGIN, "X-CSRF-Token": switched_new.json()["csrf_token"]},
+        )
+        assert switched.json()["app_launched"] is True
         launch = await client.get("/api/v1/owner/storefront/launch-kit")
         assert launch.status_code == 200
         assert launch.json()["url"] == f"{STAGING_ORIGIN}?review_tenant=second-street-cafe"
@@ -210,6 +228,10 @@ async def test_noindex_and_staging_banner_metadata_are_staging_only(monkeypatch)
     monkeypatch.setenv("JDS_ENVIRONMENT", "production")
     monkeypatch.setenv("JDS_ENABLE_STAGING_REVIEW", "false")
     monkeypatch.setenv("JDS_AUTH_PROVIDER", "supabase")
+    monkeypatch.setenv("JDS_MEDIA_STORAGE", "supabase")
+    monkeypatch.setenv("JDS_SUPABASE_STORAGE_URL", "https://storage.example.test")
+    monkeypatch.setenv("JDS_SUPABASE_STORAGE_SERVICE_ROLE_KEY", "test-service-role")
+    monkeypatch.setenv("JDS_SUPABASE_STORAGE_BUCKET", "tenant-media")
     application = create_app()
     async with AsyncClient(transport=ASGITransport(app=application), base_url="https://production.example.test") as client:
         live = await client.get("/health/live")

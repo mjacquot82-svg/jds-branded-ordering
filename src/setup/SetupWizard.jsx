@@ -1,0 +1,66 @@
+import { useEffect, useState } from "react";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
+import DesignStudioPage from "../admin/DesignStudioPage.jsx";
+import DesignPreviewPage from "../admin/DesignPreviewPage.jsx";
+import LaunchPage from "../admin/LaunchPage.jsx";
+import OnboardingPage from "../admin/OnboardingPage.jsx";
+import ProductsPage from "../admin/ProductsPage.jsx";
+import SchedulingPage from "../admin/SchedulingPage.jsx";
+import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
+import { fetchOnboarding, fetchReadiness, saveOnboarding } from "../services/designStudioApi.js";
+import { getCloverConnectUrl } from "../services/cloverService.js";
+import { fetchDemoStatus } from "../services/demoFunnelApi.js";
+import GoLiveActivationPage from "../admin/GoLiveActivationPage.jsx";
+import OrderSettingsPanel from "../admin/OrderSettingsPanel.jsx";
+
+export const setupSteps = ["welcome","look","brand","business","catalog","ordering","payments","preview","launch"];
+const labels = { welcome:"Welcome", look:"Choose your app layout", brand:"Make it yours", business:"Business details", catalog:"Build your menu", ordering:"Set up ordering", payments:"Connect payments", preview:"Preview", launch:"Launch" };
+// Free-demo prospects cannot connect payments or launch themselves; those steps become
+// "payments after activation" and "request activation" (server enforcement is unchanged).
+const prospectLabels = { ...labels, payments:"Payments", launch:"Request activation" };
+
+function ProspectPaymentStep() {
+  return <section className="wizard-focus-card payment-wizard-step prospect-payment-step"><p className="eyebrow">Step 6</p><h1>Payments are set up after activation.</h1><p>Your free demo never takes real orders or payments, so there’s nothing to connect yet. When you request activation, JDS connects the payment processor you already use (Clover today) to this same store.</p><ul className="prospect-step-list"><li>Customers can browse your menu in the preview.</li><li>Checkout stays turned off until your store is activated.</li><li>Your design, menu, and photos carry over unchanged.</li></ul></section>;
+}
+
+function PaymentSetupStep() {
+  const [readiness,setReadiness]=useState(null);
+  const load=()=>fetchReadiness().then(setReadiness).catch(()=>setReadiness({checks:{},paymentOptions:{}}));
+  useEffect(()=>{load();},[]);
+  if(!readiness)return <section className="wizard-focus-card"><h1>Choose how customers pay</h1><p>Checking payment readiness…</p></section>;
+  const simulated=readiness.reviewMode === "local" || readiness.reviewMode === "staging";
+  const cloverAvailable=readiness.paymentOptions?.cloverAvailable===true;
+  const ready=Boolean(readiness.checks?.payment_connected ?? readiness.checks?.clover);
+  return <section className="wizard-focus-card payment-wizard-step"><p className="eyebrow">Step 6</p><h1>Choose how customers pay.</h1><p>You can let customers pay at the counter when they pick up, connect the card payment system you already use, or both. Card payment providers are connected for you once you tell us which one you use.</p>{ready?<div className="wizard-success-note"><strong>Customers can pay for orders.</strong><p>{readiness.paymentOptions?.payAtPickupEnabled?"Pay at pickup is on.":"Your payment connection is ready for launch."}</p></div>:null}<OrderSettingsPanel onSaved={load}/>{simulated&&cloverAvailable?<div className="wizard-simulation-note"><strong>Payment connection is simulated in this review environment.</strong><p>No real Clover request or transaction can be made here.</p></div>:cloverAvailable&&!ready?<a className="secondary-button" href={getCloverConnectUrl()}>Connect Clover</a>:null}</section>;
+}
+
+export default function SetupWizard() {
+  const { step = "welcome" } = useParams();
+  const navigate=useNavigate();
+  const { businesses,businessStatus,logout,selectBusiness,session }=useOwnerAuth();
+  const [progress,setProgress]=useState(null); const [message,setMessage]=useState(""); const [busy,setBusy]=useState(false);
+  const [readiness,setReadiness]=useState(null);
+  const [catalogDirty,setCatalogDirty]=useState(false);
+  const [demo,setDemo]=useState(null);
+  useEffect(()=>{fetchDemoStatus().then(setDemo).catch(()=>setDemo(null));},[]);
+  const isProspect=demo?.isProspect===true;
+  const stepLabels=isProspect?prospectLabels:labels;
+  useEffect(()=>{fetchOnboarding().then(setProgress).catch((error)=>setMessage(error.message));},[step]);
+  useEffect(()=>{if(step==="catalog")fetchReadiness().then(setReadiness).catch((error)=>setMessage(error.message));},[step]);
+  if(!setupSteps.includes(step))return <Navigate replace to="/setup/welcome"/>;
+  const index=setupSteps.indexOf(step);
+  const visualStep=["look","brand","preview"].includes(step);
+  async function checkpoint(next){if(!progress)return;setBusy(true);setMessage("");try{const saved=await saveOnboarding({revision:progress.revision,current_step:next,completed_steps:progress.completedSteps},session.csrf_token);setProgress(saved);navigate(`/setup/${next}`);}catch(error){setMessage(error.message);}finally{setBusy(false);}}
+  async function saveAndExit(){if(!progress)return;setBusy(true);try{await saveOnboarding({revision:progress.revision,current_step:step,completed_steps:progress.completedSteps},session.csrf_token);await logout();navigate("/owner/login",{replace:true});}catch(error){setMessage(error.message);setBusy(false);}}
+  if(step==="welcome")return <main className="setup-wizard welcome-wizard"><header className="wizard-brand">JDS <span>Branded Ordering</span></header><section className="wizard-welcome-card"><p className="eyebrow">Welcome</p><h1>Let’s build your ordering app.</h1><p>We’ll help you choose a design, add your business information, set up your menu and ordering, connect payments, and get ready to launch.</p><button className="primary-button" disabled={!progress||busy} type="button" onClick={()=>checkpoint("look")}>Get started</button></section>{message?<p role="alert">{message}</p>:null}</main>;
+  return <main className={`setup-wizard wizard-step-${step} ${visualStep?"visual-setup-step":"focused-setup-step"}`}><header className="wizard-topbar"><div className="wizard-brand">JDS <span>Branded Ordering</span></div><div className="wizard-business">{businessStatus==="loading"?<span>Loading business…</span>:businesses.length>1?<label><span className="sr-only">Current business</span><select value={businesses.find((item)=>item.organization_id===session.organization_id)?.membership_id||""} onChange={(event)=>selectBusiness(event.target.value)}>{businesses.map((item)=><option key={item.membership_id} value={item.membership_id}>{item.organization_name}</option>)}</select></label>:null}<button className="text-button" disabled={busy} type="button" onClick={saveAndExit}>Save &amp; exit</button></div></header><section className="wizard-progress-shell"><div><span>Step {index} of 8</span><strong>{stepLabels[step]}</strong></div><ol>{setupSteps.slice(1).map((item,itemIndex)=><li className={itemIndex+1<index?"complete":item===step?"current":""} key={item}><span>{itemIndex+1}</span><small>{stepLabels[item]}</small></li>)}</ol></section><div className={`wizard-content ${visualStep?"visual-designer-content":"focused-setup-content"}`}>
+    {step==="look"?<DesignStudioPage guided wizardStep="look" onContinue={()=>checkpoint("brand")}/>:null}
+    {step==="brand"?<DesignStudioPage guided wizardStep="brand" onContinue={()=>checkpoint("business")}/>:null}
+    {step==="business"?<OnboardingPage wizard onComplete={()=>checkpoint("catalog")}/>:null}
+    {step==="catalog"?<ProductsPage setupMode onCatalogChange={()=>fetchReadiness().then(setReadiness).catch((error)=>setMessage(error.message))} onDirtyChange={setCatalogDirty}/>:null}
+    {step==="ordering"?<SchedulingPage setupMode/>:null}
+    {step==="payments"?(isProspect?<ProspectPaymentStep/>:<PaymentSetupStep/>):null}
+    {step==="preview"?<DesignPreviewPage setupMode/>:null}
+    {step==="launch"?(isProspect?<GoLiveActivationPage embedded/>:<LaunchPage setupMode/>):null}
+  </div>{step==="launch"&&isProspect?<footer className="wizard-actions"><button className="secondary-button" disabled={busy} type="button" onClick={()=>checkpoint("preview")}>Back to preview</button></footer>:null}{step!=="launch"?<footer className="wizard-actions"><button className="secondary-button" disabled={busy||(step==="catalog"&&catalogDirty)} type="button" onClick={()=>checkpoint(setupSteps[index-1])}>Back</button>{!["look","brand","business"].includes(step)?<div className="wizard-continue-action">{step==="catalog"&&catalogDirty?<small>Save or cancel your product changes before leaving this step.</small>:step==="catalog"&&!readiness?.checks?.catalog?<small>Create a visible category and add at least one available product customers can order.</small>:null}<button className="primary-button" disabled={busy||(step==="catalog"&&(catalogDirty||!readiness?.checks?.catalog))} type="button" onClick={()=>checkpoint(setupSteps[index+1])}>{step==="preview"?(isProspect?"Continue to activation":"Continue to launch"):"Continue"}</button></div>:null}</footer>:null}{message?<p className="wizard-message" role="alert">{message}</p>:null}</main>;
+}

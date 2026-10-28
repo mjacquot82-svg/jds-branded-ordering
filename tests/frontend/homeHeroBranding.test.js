@@ -5,10 +5,10 @@ import test from "node:test";
 const home = await readFile(new URL("../../src/pages/HomePage.jsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../../src/style.css", import.meta.url), "utf8");
 
-test("Home hero uses the single approved Ladel's asset and removes legacy content", async () => {
+test("Home hero uses tenant media and removes legacy hard-coded content", async () => {
   await access(new URL("../../public/cafe.png", import.meta.url));
-  assert.equal((home.match(/className="ladels-hero-logo"/g) || []).length, 1);
-  assert.match(home, /src="\/cafe\.png" alt="Ladel's Wellness Café"/);
+  assert.equal((home.match(/className="ladels-hero-logo"/g) || []).length, 0);
+  assert.match(home, /PositionedSlotImage className="layout-hero-image"/);
   assert.doesNotMatch(home, /src="\/ladels3\.png"/);
   assert.doesNotMatch(home, /src="\/ladels\.png"/);
   assert.doesNotMatch(home, /Fresh café rituals, made easy/);
@@ -19,13 +19,10 @@ test("Home hero uses the single approved Ladel's asset and removes legacy conten
   assert.doesNotMatch(home, /<div className="welcome-actions">/);
 });
 
-test("Home hero fills and crops the artwork responsively without distortion", () => {
+test("Home hero uses canonical layout slot geometry", () => {
   assert.match(styles, /\.home-page \.app-welcome-panel \{[\s\S]*?align-items:\s*center;[\s\S]*?justify-content:\s*center;/);
-  assert.match(styles, /Ladel's customer hero and navigation branding[\s\S]*?\.home-page \.app-welcome-panel \{[\s\S]*?aspect-ratio:\s*3 \/ 1;[\s\S]*?padding:\s*0;/);
-  assert.match(styles, /Ladel's customer hero and navigation branding[\s\S]*?\.home-page \.ladels-hero-logo \{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*50% 53%;[\s\S]*?transform:\s*scale\(1\.04\)/);
-  assert.doesNotMatch(styles.slice(styles.indexOf("Ladel's customer hero and navigation branding")), /object-fit:\s*contain/);
-  assert.match(styles, /@media \(min-width: 761px\) \{[\s\S]*?\.home-page \.app-welcome-panel \{[\s\S]*?padding:\s*0;[\s\S]*?\.home-page \.ladels-hero-logo \{[\s\S]*?object-position:\s*50% 53%;[\s\S]*?transform:\s*scale\(1\.04\)/);
-  assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.site-header \{[\s\S]*?display:\s*none;[\s\S]*?\.home-page,[\s\S]*?\.page-section \{[\s\S]*?padding-top:\s*max\(14px, env\(safe-area-inset-top\)\);[\s\S]*?\.home-page \.app-welcome-panel \{[\s\S]*?aspect-ratio:\s*2\.55 \/ 1;[\s\S]*?padding:\s*0;[\s\S]*?\.home-page \.ladels-hero-logo \{[\s\S]*?object-position:\s*48% 54%;[\s\S]*?transform:\s*scale\(1\.1\)/);
+  assert.match(styles, /\.customer-home-modern \.app-welcome-panel\{min-height:0;aspect-ratio:16\/9\}/);
+  assert.match(styles, /\.customer-home-cozy \.app-welcome-panel\{min-height:0;aspect-ratio:2\/1\}/);
 });
 
 test("customer header removes legacy branding and preserves navigation", async () => {

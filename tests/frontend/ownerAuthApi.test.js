@@ -8,6 +8,8 @@ import {
   logoutOwner,
   fetchStaffAccessOptions,
   loginStaff,
+  inspectMerchantActivation,
+  completeMerchantActivation,
 } from "../../src/services/ownerAuthApi.js";
 
 function jsonResponse(status, payload) {
@@ -63,6 +65,17 @@ test("owner login sends credentials to the BFF without browser token storage", a
     email: "owner@example.com",
     password: "correct horse battery staple",
   });
+});
+
+test("merchant activation posts its secret in the body and never in the URL", async () => {
+  const calls = [];
+  const fetchImpl = async (...args) => { calls.push(args); return jsonResponse(200, args[0].endsWith("inspect") ? { business_name:"New Merchant" } : { role:"owner", app_launched:false }); };
+  await inspectMerchantActivation("a".repeat(48), { fetchImpl });
+  await completeMerchantActivation("a".repeat(48), "owner@example.com", "password-value", { fetchImpl });
+  assert.equal(calls[0][0], "/api/v1/owner/auth/activation/inspect");
+  assert.equal(calls[1][0], "/api/v1/owner/auth/activation/complete");
+  assert.equal(calls[0][0].includes("a".repeat(48)), false);
+  assert.deepEqual(JSON.parse(calls[1][1].body), { activation_secret:"a".repeat(48), email:"owner@example.com", password:"password-value" });
 });
 
 test("owner logout supplies the session CSRF token and normalizes 401 errors", async () => {

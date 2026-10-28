@@ -75,6 +75,21 @@ class InvitationCreateRequest(AuthSchema):
     role: str = Field(pattern="^(owner|manager|staff)$")
 
 
+class MerchantActivationInspectRequest(AuthSchema):
+    activation_secret: str = Field(min_length=32, max_length=1024)
+
+
+class MerchantActivationRequest(MerchantActivationInspectRequest):
+    email: str = Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(min_length=8, max_length=1024)
+
+
+class MerchantActivationDetails(AuthSchema):
+    business_name: str
+    intended_email: str
+    expires_at: datetime
+
+
 class SessionResponse(AuthSchema):
     authenticated: bool = True
     user_id: str
@@ -84,6 +99,9 @@ class SessionResponse(AuthSchema):
     role: str
     permissions: list[str]
     csrf_token: str
+    app_launched: bool = False
+    onboarding_current_step: str = "welcome"
+    commercial_mode: str = "live"
 
 
 class AuthorizedOrganizationResponse(AuthSchema):
@@ -92,6 +110,9 @@ class AuthorizedOrganizationResponse(AuthSchema):
     organization_slug: str
     organization_name: str
     role: str
+    app_launched: bool = False
+    onboarding_current_step: str = "welcome"
+    commercial_mode: str = "live"
 
 
 class MessageResponse(AuthSchema):

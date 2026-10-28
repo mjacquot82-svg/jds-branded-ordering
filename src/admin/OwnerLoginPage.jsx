@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
-import { safeAdminReturnTo } from "../auth/ownerAuthRouting.js";
+import { ownerEntryPath, safeAdminReturnTo } from "../auth/ownerAuthRouting.js";
 
 export default function OwnerLoginPage() {
   const navigate = useNavigate();
@@ -13,7 +13,7 @@ export default function OwnerLoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const returnTo = safeAdminReturnTo(searchParams.get("returnTo"));
 
-  if (session && ["owner", "manager"].includes(session.role)) return <Navigate replace to={returnTo} />;
+  if (session && ["owner", "manager"].includes(session.role)) return <Navigate replace to={ownerEntryPath(session, returnTo)} />;
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -25,7 +25,7 @@ export default function OwnerLoginPage() {
         setError("This account does not have owner portal access.");
         return;
       }
-      navigate(returnTo, { replace: true });
+      navigate(ownerEntryPath(nextSession, returnTo), { replace: true });
     } catch (loginError) {
       setError(loginError.message || "Unable to sign in.");
     } finally {

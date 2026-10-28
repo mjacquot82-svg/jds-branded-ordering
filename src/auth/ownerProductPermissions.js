@@ -62,8 +62,8 @@ export function operationsLinks(session) {
   }
   if (isOperationsAdministrator(session)) {
     links.push({ label: "Scheduling", to: "/admin/scheduling" });
-    links.push({ label: "Design", to: "/admin/design" });
-    links.push({ label: "Setup", to: "/admin/setup" });
+    links.push({ label: session?.app_launched === false ? "Build your app" : "Design Studio", to: session?.app_launched === false ? "/setup/welcome" : "/admin/design" });
+    links.push({ label: "Setup & readiness", to: "/admin/setup" });
     links.push({ label: "Launch", to: "/admin/launch" });
   }
   if (isOperationsAdministrator(session) || hasPermission(session, "communications.announce")) {

@@ -7,7 +7,8 @@ const permissions = readFileSync(new URL("../../src/auth/ownerProductPermissions
 
 test("merchant launch area is readiness-gated and provides practical assets", () => {
   assert.match(launch, /fetchReadiness/);
-  assert.match(launch, /if\(readiness\.publicReady\)/);
+  assert.match(launch, /if\(onboarding\.initialSetupCompletedAt\)/);
+  assert.match(launch, /launchMerchant/);
   assert.match(launch, /Download QR code/);
   assert.match(launch, /Open printable sign/);
   assert.match(launch, /subscriptionMessages/);

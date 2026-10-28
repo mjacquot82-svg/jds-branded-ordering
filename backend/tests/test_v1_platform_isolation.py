@@ -3,37 +3,49 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time, timedelta, timezone
 from threading import Barrier
 from uuid import UUID, uuid4
+from io import BytesIO
 
 import pytest
+from PIL import Image, ImageDraw
 from alembic import command
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.jds_auth.models import JdsApplication, JdsUser, Organization, Role
+from app.jds_auth.models import JdsApplication, JdsUser, Membership, MerchantAcquisition, MerchantActivation, Organization, Role
 from app.availability.models import BusinessHour, BusinessSettings
 from app.catalog.models import Category, Product
 from app.clover.models import CloverInstallation
+from app.payments.models import OrganizationPaymentSettings
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
 from app.api.v1.platform import (
+    BusinessInput,
     OnboardingInput,
     ProvisionOrganizationInput,
+    StorefrontSlugInput,
+    business_payload,
+    choose_storefront,
     disable_storefront,
     entitlements,
     launch_kit,
+    owner_business_profile,
+    owner_storefront,
+    initial_launch,
     platform_organization_detail,
     platform_organizations,
     provision_organization,
     retry_storefront,
+    save_business_profile,
     save_onboarding,
 )
 from app.jds_auth.service import AuthPrincipal
 from app.loyalty.models import CustomerLoyaltyEvent, LoyaltyProgram
 from app.platform.models import BillingPlan, BusinessProfile, CustomerRelationship, DesignMediaReference, DesignVersion, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
 from app.platform.media import local_media_path, persist_local_image
+from app.platform.config import hosted_storefront_hostname, standard_storefront_hostname
 from app.platform.entitlements import enforce_entitlement
 from app.platform.readiness import synchronize_public_readiness
-from app.platform.assets import launch_qr_svg, tenant_icon_png
+from app.platform.assets import launch_qr_svg, tenant_icon_png, tenant_media_icon_png
 from app.push.models import CustomerNotificationPreference, WebPushSubscription
 from app.tenancy.context import TenantContext, TenantResolutionSource
 from app.tenancy.resolver import (
@@ -75,6 +87,12 @@ def platform_db(postgresql_url):
 
 def context(organization_id, slug):
     return TenantContext(organization_id=organization_id, organization_slug=slug, source=TenantResolutionSource.AUTHENTICATED_MEMBERSHIP)
+
+
+def test_standard_merchant_address_is_separate_from_runtime_routing(monkeypatch):
+    monkeypatch.setenv("JDS_STOREFRONT_BASE_DOMAIN","localhost")
+    assert hosted_storefront_hostname("marcs-drip") == "marcs-drip.localhost"
+    assert standard_storefront_hostname("marcs-drip") == "marcs-drip.order.jdsstudio.ca"
 
 
 def make_storefront_operationally_ready(session: Session, organization_id, actor) -> None:
@@ -130,6 +148,7 @@ def make_storefront_operationally_ready(session: Session, organization_id, actor
             access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             connection_state="connected",
         ),
+        OrganizationPaymentSettings(organization_id=organization_id, provider_key="clover"),
     ])
     session.flush()
     DesignService(session, context(organization_id, "ready")).publish(actor)
@@ -158,11 +177,15 @@ def test_public_resolution_rechecks_readiness_and_isolates_tenants(platform_db):
         assert resolve_storefront_context(session, host=alpha_host).organization_id == a
         assert resolve_storefront_context(session, host=beta_host).organization_id == b
 
-        alpha_product = session.scalar(
-            select(Product).where(Product.organization_id == a)
-        )
+        alpha_product = session.scalar(select(Product).where(Product.organization_id == a))
         alpha_product.is_published = False
         session.commit()
+        result = synchronize_public_readiness(session, a)
+        session.commit()
+        onboarding = session.get(OnboardingState, a)
+        assert result.public_ready is False
+        assert onboarding.public_ready is False
+        assert onboarding.state == "complete"
         with pytest.raises(TenantResolutionError, match="not ready"):
             resolve_storefront_context(session, host=alpha_host)
         assert resolve_storefront_context(session, host=beta_host).organization_id == b
@@ -170,6 +193,32 @@ def test_public_resolution_rechecks_readiness_and_isolates_tenants(platform_db):
         alpha_product.is_published = True
         session.commit()
         assert resolve_storefront_context(session, host=alpha_host).organization_id == a
+
+
+@pytest.mark.postgresql
+def test_initial_launch_is_durable_when_later_readiness_fails(platform_db):
+    engine, (a, _, actor, _, _) = platform_db
+    with Session(engine) as session:
+        onboarding = session.get(OnboardingState, a)
+        onboarding.state = "in_progress"
+        onboarding.current_step = "launch"
+        onboarding.initial_setup_completed_at = None
+        onboarding.initial_launch_source = None
+        make_storefront_operationally_ready(session, a, actor)
+        principal = AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="owner@example.com",display_name="Owner",role="owner",permissions=frozenset(),assurance_level="password")
+        launched = initial_launch(principal, context(a, "alpha"), session)
+        assert launched["launched"] is True
+        durable = session.get(OnboardingState, a)
+        completed_at = durable.initial_setup_completed_at
+        assert completed_at is not None and durable.state == "complete"
+
+        hostname = session.scalar(select(StorefrontHostname).where(StorefrontHostname.organization_id == a))
+        hostname.status = "disabled"; hostname.is_canonical = False
+        result = synchronize_public_readiness(session, a); session.commit()
+        assert result.public_ready is False
+        durable = session.get(OnboardingState, a)
+        assert durable.state == "complete"
+        assert durable.initial_setup_completed_at == completed_at
 
 
 @pytest.mark.postgresql
@@ -253,21 +302,66 @@ def test_customer_relationship_and_media_identifiers_are_tenant_scoped(platform_
 
 
 @pytest.mark.postgresql
+def test_media_list_and_content_reads_do_not_cross_tenants(platform_db, tmp_path):
+    from types import SimpleNamespace
+    from starlette.requests import Request
+    from app.api.v1.platform import list_media, owner_media, storefront_media
+    from app.platform.assets import tenant_icon_png
+    from app.platform.media import LocalMediaStorage
+
+    engine, (a, b, _, _, _) = platform_db
+    storage = LocalMediaStorage(tmp_path / "media")
+    left_id, right_id = uuid4(), uuid4()
+    left_data = tenant_icon_png(192, "#112233", "#abcdef")
+    right_data = tenant_icon_png(192, "#445566", "#fedcba")
+    left_key, left_checksum = storage.put(a, left_id, left_data, "image/png")
+    right_key, right_checksum = storage.put(b, right_id, right_data, "image/png")
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "app": SimpleNamespace(state=SimpleNamespace(media_storage=storage))})
+    with Session(engine) as session:
+        session.add_all([
+            MediaAsset(id=left_id, organization_id=a, storage_key=left_key, media_type="image/png", byte_size=len(left_data), checksum=left_checksum),
+            MediaAsset(id=right_id, organization_id=b, storage_key=right_key, media_type="image/png", byte_size=len(right_data), checksum=right_checksum),
+        ]); session.commit()
+        assert [item["id"] for item in list_media(request, context(a, "alpha"), session)] == [str(left_id)]
+        assert owner_media(left_id, request, context(a, "alpha"), session).body == left_data
+        with pytest.raises(HTTPException) as owner_foreign:
+            owner_media(right_id, request, context(a, "alpha"), session)
+        assert owner_foreign.value.status_code == 404
+        with pytest.raises(HTTPException) as storefront_foreign:
+            storefront_media(right_id, request, context(a, "alpha"), session)
+        assert storefront_foreign.value.status_code == 404
+
+
+@pytest.mark.postgresql
 def test_draft_publish_and_revert_are_isolated_and_append_only(platform_db):
     engine, (a, b, actor, _, _) = platform_db
     with Session(engine) as session:
         # Actor is optional at the model layer for migration/system actions.
         service_a = DesignService(session, context(a, "alpha")); workspace_a = service_a.workspace(); session.commit()
-        first = deepcopy(DEFAULT_CONFIG); first["displayName"] = "Alpha Café"
+        commerce_before = (
+            tuple(session.scalars(select(Category.id).where(Category.organization_id == a))),
+            tuple(session.scalars(select(Product.id).where(Product.organization_id == a))),
+        )
+        first = deepcopy(DEFAULT_CONFIG); first["displayName"] = "Alpha Café"; first["template"] = "modern"; first["announcement"] = {"enabled": True, "text": "Alpha weekend special"}
         workspace_a = service_a.save(first, workspace_a.revision, actor)
         published = service_a.publish(actor)
-        second = deepcopy(first); second["displayName"] = "Alpha Draft Only"
+        second = deepcopy(first); second["displayName"] = "Alpha Draft Only"; second["template"] = "minimal"; second["announcement"] = {"enabled": False, "text": "Alpha draft only"}
         service_a.save(second, workspace_a.revision, actor)
         assert session.get(DesignVersion, published.id).config["displayName"] == "Alpha Café"
+        assert session.get(DesignVersion, published.id).config["template"] == "modern"
+        assert session.get(DesignVersion, published.id).config["announcement"] == {"enabled": True, "text": "Alpha weekend special"}
+        assert service_a.workspace().draft_config["template"] == "minimal"
+        assert service_a.workspace().draft_config["announcement"] == {"enabled": False, "text": "Alpha draft only"}
+        assert commerce_before == (
+            tuple(session.scalars(select(Category.id).where(Category.organization_id == a))),
+            tuple(session.scalars(select(Product.id).where(Product.organization_id == a))),
+        )
         service_b = DesignService(session, context(b, "beta")); workspace_b = service_b.workspace(); session.commit()
+        assert service_b.workspace().draft_config["announcement"] == {"enabled": False, "text": ""}
         with pytest.raises(DesignValidationError): service_b.revert(published.id, actor)
         reverted = service_a.revert(published.id, actor)
         assert reverted.id != published.id and reverted.source_version_id == published.id
+        assert reverted.config["template"] == "modern"
         assert workspace_b.published_version_id is None
 
 
@@ -332,6 +426,12 @@ def test_platform_provisioning_is_explicit_idempotent_and_not_public(platform_db
         assert created["publicReady"] is False and created["status"] == "onboarding"
         onboarding=session.get(OnboardingState,UUID(created["id"]))
         assert onboarding.public_ready is False
+        membership=session.scalar(select(Membership).where(Membership.organization_id==UUID(created["id"])))
+        acquisition=session.scalar(select(MerchantAcquisition).where(MerchantAcquisition.organization_id==UUID(created["id"])))
+        activation=session.scalar(select(MerchantActivation).where(MerchantActivation.organization_id==UUID(created["id"])))
+        assert membership.status == "invited"
+        assert acquisition.source == "platform" and acquisition.status == "activation_pending"
+        assert activation.membership_id == membership.id and activation.status == "pending"
         with pytest.raises(HTTPException) as duplicate:
             provision_organization(ProvisionOrganizationInput(slug=created["slug"],display_name="Duplicate",owner_email=owner.primary_email),principal,session)
         assert duplicate.value.status_code == 409
@@ -370,10 +470,104 @@ def test_onboarding_checklist_cannot_override_server_readiness(platform_db):
         assert session.get(OnboardingState,a).public_ready is False
 
 
+@pytest.mark.postgresql
+def test_step2_creates_missing_authoritative_business_profile(platform_db):
+    engine,(a,_,actor,_,_)=platform_db
+    with Session(engine) as session:
+        assert session.get(BusinessProfile,a) is None
+        service=DesignService(session,context(a,"alpha"));workspace=service.workspace();config=deepcopy(workspace.draft_config);config["displayName"]="Marc's Drip"
+        service.save(config,workspace.revision,actor)
+        assert session.get(BusinessProfile,a).display_name == "Marc's Drip"
+
+
+@pytest.mark.postgresql
+def test_step2_name_is_step3_authority_without_changing_internal_or_installed_app_names(platform_db):
+    engine,(a,_,actor,_,_)=platform_db
+    principal=AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="owner@example.com",display_name="Owner",role="owner",permissions=frozenset(),assurance_level="password")
+    with Session(engine) as session:
+        organization=session.get(Organization,a);internal_name=organization.name
+        profile=BusinessProfile(organization_id=a,display_name="Synthetic Admin Name",contact_email="new-merchant@review.jds.invalid",timezone="America/Toronto",currency="CAD",fulfillment_wording="Pickup")
+        session.add(profile);session.commit()
+        service=DesignService(session,context(a,"alpha"));workspace=service.workspace();config=deepcopy(workspace.draft_config)
+        config["displayName"]="Marc's Drip";config["pwa"]["shortName"]="Marc's Home Screen"
+        service.save(config,workspace.revision,actor)
+        assert session.get(BusinessProfile,a).display_name == "Marc's Drip"
+        assert owner_business_profile(context(a,"alpha"),session)["display_name"] == "Marc's Drip"
+        assert owner_business_profile(context(a,"alpha"),session)["contact_email"] is None
+        corrected=save_business_profile(BusinessInput(display_name="Marc's Coffee",contact_email=None,phone=None,address={"street":"12 King St","city":"Guelph","region":"ON","postal_code":"","country":"CA"},socials={"instagram":"https://instagram.com/marcscoffee","facebook":"","website":""},timezone="America/Toronto",currency="CAD",pickup_instructions="",fulfillment_wording="Collection"),principal,context(a,"alpha"),session)
+        refreshed=DesignService(session,context(a,"alpha")).workspace().draft_config
+        assert corrected["display_name"] == refreshed["displayName"] == "Marc's Coffee"
+        assert refreshed["pwa"]["shortName"] == "Marc's Home Screen"
+        assert session.get(Organization,a).name == internal_name
+        assert corrected["address"]["city"] == "Guelph" and corrected["socials"]["instagram"].endswith("marcscoffee")
+
+
+def test_synthetic_customer_profile_values_are_never_presented_as_merchant_data():
+    profile=BusinessProfile(organization_id=uuid4(),display_name="Review",contact_email="new-merchant@review.jds.invalid",address={},socials={"instagram":"https://social.review.invalid/demo","facebook":"https://facebook.com/yourbusiness"},timezone="America/Toronto",currency="CAD",pickup_instructions="",fulfillment_wording="Pickup")
+    result=business_payload(profile)
+    assert result["contact_email"] is None
+    assert result["socials"] == {"instagram":"","facebook":""}
+
+
+@pytest.mark.postgresql
+def test_storefront_uniqueness_and_tenant_scope_remain_authoritative(platform_db,monkeypatch):
+    engine,(a,b,actor,_,_)=platform_db
+    principal=AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="owner@example.com",display_name="Owner",role="owner",permissions=frozenset(),assurance_level="password")
+    monkeypatch.setenv("JDS_STOREFRONT_BASE_DOMAIN","orders.example.test")
+    with Session(engine) as session:
+        storefront=owner_storefront(context(a,"alpha"),session)
+        assert storefront["merchantAddressSuffix"] == ".order.jdsstudio.ca"
+        assert storefront["configuredHostname"].endswith(".orders.example.test")
+        beta=session.get(Organization,b)
+        with pytest.raises(HTTPException) as unavailable:
+            choose_storefront(StorefrontSlugInput(slug=beta.slug),principal,context(a,"alpha"),session)
+        assert unavailable.value.status_code == 409
+        assert session.get(Organization,b).slug == beta.slug
+
+
+
+@pytest.mark.postgresql
+def test_hosted_storefront_choice_auto_verifies_under_configured_base_domain(platform_db, monkeypatch):
+    """JDS-owned subdomains must not require a platform-admin verify round-trip."""
+    engine, (a, _b, actor, _, _) = platform_db
+    principal = AuthPrincipal(
+        user_id=actor,
+        membership_id=uuid4(),
+        organization_id=a,
+        application_id=uuid4(),
+        session_id=uuid4(),
+        email="owner@example.com",
+        display_name="Owner",
+        role="owner",
+        permissions=frozenset(),
+        assurance_level="password",
+    )
+    monkeypatch.setenv("JDS_STOREFRONT_BASE_DOMAIN", "orders.example.test")
+    with Session(engine) as session:
+        organization = session.get(Organization, a)
+        chosen = choose_storefront(
+            StorefrontSlugInput(slug=organization.slug),
+            principal,
+            context(a, organization.slug),
+            session,
+        )
+        assert chosen["hostname"] == f"{organization.slug}.orders.example.test"
+        assert chosen["status"] == "verified"
+        assert chosen["canonical"] is True
+        row = session.scalar(
+            select(StorefrontHostname).where(
+                StorefrontHostname.organization_id == a,
+                StorefrontHostname.hostname == chosen["hostname"],
+            )
+        )
+        assert row is not None and row.status == "verified" and row.is_canonical is True
+        assert row.verified_at is not None
+
+
 def test_local_media_storage_keys_are_tenant_and_asset_scoped(tmp_path, monkeypatch):
     monkeypatch.setenv("JDS_LOCAL_MEDIA_ROOT", str(tmp_path))
     tenant_a, tenant_b, asset = uuid4(), uuid4(), uuid4()
-    image = b"\x89PNG\r\n\x1a\nlocal-test-image"
+    image = tenant_icon_png(192,"#112233","#abcdef")
     key_a, checksum_a = persist_local_image(tenant_a, asset, image, "image/png")
     key_b, checksum_b = persist_local_image(tenant_b, asset, image, "image/png")
     assert key_a != key_b and key_a.startswith(f"{tenant_a}/") and key_b.startswith(f"{tenant_b}/")
@@ -391,6 +585,59 @@ def test_tenant_pwa_icons_and_launch_qr_are_tenant_specific():
     assert launch_qr_svg("https://alpha.example") != launch_qr_svg(
         "https://beta.example"
     )
+
+
+def test_uploaded_app_icon_is_resized_without_mutating_original(tmp_path):
+    original=tenant_icon_png(192,"#112233","#abcdef");path=tmp_path/"icon.png";path.write_bytes(original)
+    centered=tenant_media_icon_png(path,512,"#ffffff",{"x":50,"y":50,"zoom":1})
+    shifted=tenant_media_icon_png(path,512,"#ffffff",{"x":15,"y":80,"zoom":1.4})
+    assert centered.startswith(b"\x89PNG") and shifted.startswith(b"\x89PNG") and centered!=shifted
+    assert path.read_bytes()==original
+
+
+@pytest.mark.postgresql
+def test_image_position_contracts_save_and_reload_per_slot(platform_db):
+    engine,(organization_id,_,actor,_,_)=platform_db
+    with Session(engine) as session:
+        service=DesignService(session,context(organization_id,"alpha"));workspace=service.workspace();session.commit()
+        config=deepcopy(DEFAULT_CONFIG)
+        config["imagePositions"]={"logo":{"x":0,"y":100,"zoom":1},"hero":{"x":75,"y":20,"zoom":1.25},"appIcon":{"x":50,"y":50,"zoom":.4}}
+        service.save(config,workspace.revision,actor);session.commit()
+        assert service.workspace().draft_config["imagePositions"]==config["imagePositions"]
+        for app_icon in ({"x":12,"y":88,"zoom":.75},{"x":100,"y":0,"zoom":1},{"x":50,"y":50,"zoom":3}):
+            workspace=service.workspace();next_config=deepcopy(workspace.draft_config);next_config["imagePositions"]["appIcon"]=app_icon
+            service.save(next_config,workspace.revision,actor);session.commit()
+            assert service.workspace().draft_config["imagePositions"]["appIcon"]==app_icon
+
+
+@pytest.mark.postgresql
+def test_design_save_keeps_authoritative_contrast_requirement(platform_db):
+    engine,(organization_id,_,actor,_,_)=platform_db
+    with Session(engine) as session:
+        service=DesignService(session,context(organization_id,"alpha"));workspace=service.workspace();config=deepcopy(workspace.draft_config)
+        config["colors"]["text"]="#ffffff";config["colors"]["background"]="#ffffff";config["colors"]["surface"]="#ffffff"
+        with pytest.raises(DesignValidationError,match="stronger contrast"):
+            service.save(config,workspace.revision,actor)
+
+
+@pytest.mark.postgresql
+@pytest.mark.parametrize(("slot","position","label"),[("logo",{"x":50,"y":50,"zoom":.95},"Header Logo"),("hero",{"x":50,"y":50,"zoom":3.05},"Hero Image"),("appIcon",{"x":50,"y":50,"zoom":.35},"App Icon"),("appIcon",{"x":101,"y":50,"zoom":1},"App Icon")])
+def test_invalid_image_positions_remain_slot_specific(platform_db,slot,position,label):
+    engine,(organization_id,_,actor,_,_)=platform_db
+    with Session(engine) as session:
+        service=DesignService(session,context(organization_id,"alpha"));workspace=service.workspace();session.commit();config=deepcopy(workspace.draft_config);config["imagePositions"][slot]=position
+        with pytest.raises(DesignValidationError,match=label): service.save(config,workspace.revision,actor)
+
+
+def test_media_app_icon_uses_literal_center_crop_at_192_and_512(tmp_path):
+    source=Image.new("RGB",(1000,1000),"white");draw=ImageDraw.Draw(source);draw.ellipse((50,50,950,950),fill="red",outline="black",width=20)
+    path=tmp_path/"circle.png";source.save(path)
+    badly_cropped=[Image.open(BytesIO(tenant_media_icon_png(path,size,"#ffffff",{"x":50,"y":50,"zoom":1}))) for size in (192,512)]
+    fitted=[Image.open(BytesIO(tenant_media_icon_png(path,size,"#ffffff",{"x":50,"y":50,"zoom":.7}))) for size in (192,512)]
+    for image in badly_cropped: assert image.getpixel((0,image.height//2))[0] > 200 and image.getpixel((0,image.height//2))[1] < 80
+    for image in fitted: assert all(channel > 235 for channel in image.getpixel((0,image.height//2)))
+    for x,y in ((.1,.5),(.5,.5),(.9,.5)):
+        assert all(abs(a-b)<=4 for a,b in zip(badly_cropped[0].getpixel((round(191*x),round(191*y))),badly_cropped[1].getpixel((round(511*x),round(511*y)))))
 
 
 @pytest.mark.postgresql
@@ -590,9 +837,14 @@ def test_active_draft_media_reference_prevents_archive_and_is_tenant_bound(platf
         media=MediaAsset(organization_id=a,storage_key="brand/draft.webp",media_type="image/webp",byte_size=100,checksum="d"*64)
         session.add(media);session.commit()
         service=DesignService(session,context(a,"alpha")); workspace=service.workspace();session.commit()
-        config=deepcopy(DEFAULT_CONFIG);config["logoMediaId"]=str(media.id)
+        config=deepcopy(DEFAULT_CONFIG);config["logoMediaId"]=str(media.id);config["hero"]={"mode":"image","mediaId":str(media.id)};config["appIconMediaId"]=str(media.id);config["branding"]={"showLogo":False,"showHero":False,"headerMode":"tagline"};config["heroContent"]="cta";config["imagePositions"]={"logo":{"x":20,"y":50,"zoom":1},"hero":{"x":70,"y":30,"zoom":1.5},"appIcon":{"x":50,"y":60,"zoom":1.2}}
         service.save(config,workspace.revision,actor)
-        assert session.scalar(select(DesignMediaReference.id).where(DesignMediaReference.organization_id==a,DesignMediaReference.media_asset_id==media.id))
+        references=session.scalars(select(DesignMediaReference).where(DesignMediaReference.organization_id==a,DesignMediaReference.media_asset_id==media.id)).all()
+        assert {item.slot for item in references}=={"logo","hero","appIcon"}
+        assert service.workspace().draft_config["imagePositions"]["logo"]!=service.workspace().draft_config["imagePositions"]["hero"]
+        assert service.workspace().draft_config["branding"]=={"showLogo":False,"showHero":False,"headerMode":"tagline"}
+        assert service.workspace().draft_config["heroContent"]=="cta"
+        assert service.workspace().draft_config["appIconMediaId"]==str(media.id)
         with pytest.raises(HTTPException) as used: archive_media(media.id,AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="a@example.com",display_name="A",role="owner",permissions=frozenset(),assurance_level="password"),context(a,"alpha"),session)
         assert used.value.status_code == 409
         with pytest.raises(HTTPException) as foreign: archive_media(media.id,AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=b,application_id=uuid4(),session_id=uuid4(),email="b@example.com",display_name="B",role="owner",permissions=frozenset(),assurance_level="password"),context(b,"beta"),session)
