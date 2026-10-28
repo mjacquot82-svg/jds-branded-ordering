@@ -1,6 +1,6 @@
 # Starter media asset manifest — Café & Restaurant collection (M3)
 
-Manifest: `backend/app/platform/starter_media.py` (manifest version 1). Art style: `illustrated-placeholder`. Provenance: Original JDS illustration generated in-repo (no third-party or stock imagery).
+Manifest: `backend/app/platform/starter_media.py` (manifest version 1). Art style: **50 AI-generated product photos** (`ai-generated-photo`; provenance: AI-generated product photo created for JDS, no third-party or stock imagery) plus **20 remaining illustrated placeholders** (`illustrated-placeholder`; provenance: original JDS illustration generated in-repo). The photo keys are listed in `STARTER_MEDIA_PHOTO_KEYS` in `backend/app/platform/starter_media.py`; the illustration generator skips them.
 
 - **26 shipped** illustrated placeholders (1200 × 1200 WebP, ~463 KB total), packaged via `pyproject.toml` package-data `app.platform = ["starter-media/*/*.webp"]`.
 - **44 planned archetypes without art.** They are hidden from the owner picker (`available: false`) and never render as broken images.

@@ -90,7 +90,7 @@ def test_starter_select_replace_upload_remove_round_trip_and_sources(catalog_api
 
 
 @pytest.mark.postgresql
-def test_malformed_unavailable_and_external_references_are_rejected(catalog_api_engine: Engine) -> None:
+def test_malformed_unavailable_and_external_references_are_rejected(catalog_api_engine: Engine, monkeypatch, tmp_path) -> None:
     with Session(catalog_api_engine) as session:
         org = _org(session, "Validation Café")
         category = Category(organization_id=org.id, slug="coffee", name="Coffee", is_published=True)
@@ -108,7 +108,8 @@ def test_malformed_unavailable_and_external_references_are_rejected(catalog_api_
         ):
             with pytest.raises(ValueError):
                 service.create_product(OwnerProductWrite(**base, image=bad))
-        # A manifest archetype without shipped art cannot be newly selected.
+        # A manifest archetype without shipped art cannot be newly selected (empty media root).
+        monkeypatch.setenv("JDS_STARTER_MEDIA_ROOT", str(tmp_path))
         with pytest.raises(ValueError, match="no longer available|not available|valid JDS starter"):
             service.create_product(OwnerProductWrite(**base, image="starter:cafe-restaurant/americano@1"))
         assert session.scalar(select(func.count()).select_from(Product).where(Product.organization_id == org.id)) == 0

@@ -36,6 +36,7 @@ from app.jds_auth.models import Organization
 from app.jds_auth.service import AuthPrincipal
 from app.orders.pricing import calculate_tax_cents
 from app.tenancy.context import TenantContext
+from app.communications.order_alerts import send_new_order_alert_safely
 from app.payments.order_payment import (
     mark_electronically_paid,
     mark_electronic_payment_failed,
@@ -1322,6 +1323,8 @@ async def hosted_checkout_webhook(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "webhook_persistence_failed"},
         ) from error
+    if order.status == OrderStatus.PAID and previous_status != OrderStatus.PAID:
+        send_new_order_alert_safely(session, order)
     logger.warning(
         "Clover Hosted Checkout webhook transition applied: %s",
         json.dumps(
@@ -1436,10 +1439,13 @@ def reconcile_hosted_checkout_payment(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "clover_payment_already_reconciled"},
         )
-    if order.status != OrderStatus.PAID:
+    newly_paid = order.status != OrderStatus.PAID
+    if newly_paid:
         mark_electronically_paid(order, provider_txn_ref=payment_id)
         order.version += 1
     else:
         event.outcome = "duplicate_or_ignored"
     session.commit()
+    if newly_paid:
+        send_new_order_alert_safely(session, order)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

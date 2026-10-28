@@ -17,10 +17,11 @@ export function TenantProvider({ children }) {
       .then(async (response) => { if (!response.ok) throw new Error("Storefront unavailable"); return response.json(); })
       .then((value) => {
         if (!active) return;
+        if (value?.tenant?.slug) document.documentElement.dataset.tenantSlug = value.tenant.slug;
         setState({ status: "ready", value });
       })
       .catch(() => { if (active) setState(operationsRoute ? { status: "operations", value: { tenant: { id: "membership-scoped", slug: "operations" }, business: { displayName: "JDS Operations" }, design: {} } } : { status: "error", value: null }); });
-    return () => { active = false; delete document.documentElement.dataset.tenantTemplate; delete document.documentElement.dataset.tenantTypography; delete document.documentElement.dataset.tenantButtons; };
+    return () => { active = false; delete document.documentElement.dataset.tenantTemplate; delete document.documentElement.dataset.tenantTypography; delete document.documentElement.dataset.tenantButtons; delete document.documentElement.dataset.tenantSlug; };
   }, []);
   const location = useLocation();
   // Operations routes get neutral JDS branding; storefront routes get tenant branding.

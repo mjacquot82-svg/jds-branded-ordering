@@ -22,7 +22,7 @@ test("picker offers only starter images with shipped artwork, with friendly cate
 
 test("starter selections are clearly marked as illustrated placeholders and show a live card preview", async () => {
   const page = await source("../../src/admin/ProductsPage.jsx");
-  assert.match(page, /Illustrated placeholder — replace it with your own photo anytime\./);
+  assert.match(page, /JDS starter image — replace it with your own photo anytime\./);
   assert.match(page, /className="product-card-mini-preview"/);
   assert.match(page, /aria-pressed=\{isSelected\}/);
   assert.match(page, /productImageSourceLabel\(formProduct\.image\)/);

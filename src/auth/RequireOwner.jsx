@@ -39,6 +39,9 @@ export default function RequireOwner() {
     </section>
   );
   if (["owner", "manager"].includes(session?.role) && session?.app_launched === false) {
+    // A new shop's go-live request lives inside setup (last step), so links to
+    // /admin/go-live or /admin/launch land there instead of bouncing to step 1.
+    if (/^\/admin\/(go-live|launch)(\/|$)/.test(location.pathname)) return <Navigate replace to="/setup/launch" />;
     const step = session.onboarding_current_step || "welcome";
     return <Navigate replace to={`/setup/${step}`} />;
   }
