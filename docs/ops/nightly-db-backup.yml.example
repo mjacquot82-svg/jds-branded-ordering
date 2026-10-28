@@ -1,0 +1,33 @@
+# Nightly encrypted DB backup. DISABLED until Marc sets repo variable BACKUPS_ENABLED=true
+# and secrets BACKUP_DATABASE_URL + BACKUP_PASSPHRASE. Not a deploy; it only reads the DB.
+name: nightly-db-backup
+on:
+  schedule:
+    - cron: "15 7 * * *" # 03:15 Toronto (EDT)
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  backup:
+    if: vars.BACKUPS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pg_dump 17
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - name: Dump and encrypt
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          BACKUP_DIR: backups
+        run: scripts/ops/backup_db.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jds-db-backup-${{ github.run_id }}
+          path: backups/*.dump.gpg
+          retention-days: 14

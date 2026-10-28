@@ -8,6 +8,7 @@ import { fetchOwnerOrderSummary } from "../services/ownerOrdersApi.js";
 import { fetchOwnerSchedulingPreview } from "../services/ownerSchedulingApi.js";
 import { CloverConnectionError, fetchCloverConnection, getCloverConnectUrl } from "../services/cloverService.js";
 import { useCatalogProducts } from "../stores/catalogStore.js";
+import ReportProblemLink from "../components/ReportProblemLink.jsx";
 
 const money = (cents, currency) => new Intl.NumberFormat("en-CA", { currency, style: "currency" }).format(cents / 100);
 
@@ -74,7 +75,7 @@ export default function AdminDashboard() {
   }
 
   return <section className="page-section operations-dashboard">
-    <div className="page-heading operations-dashboard-heading"><div><p className="eyebrow">Operations Portal</p><h1>{administrator ? "Admin" : "Shift overview"}</h1><p>{administrator ? "Keep cafe orders, menu items, and availability easy to scan." : "See what needs attention before the next customer arrives."}</p></div></div>
+    <div className="page-heading operations-dashboard-heading"><div><p className="eyebrow">Operations Portal</p><h1>{administrator ? "Admin" : "Shift overview"}</h1><p>{administrator ? "Keep cafe orders, menu items, and availability easy to scan." : "See what needs attention before the next customer arrives."}</p><ReportProblemLink context="shop admin" /></div></div>
 
     <div className="dashboard-grid">
       {canReadOrders ? <>

@@ -4,6 +4,7 @@ import { useCustomerAuth } from "../auth/CustomerAuthContext.jsx";
 import { useTenant } from "../tenant/TenantContext.jsx";
 import { getLayoutDefinition } from "../design/layoutDefinitions.js";
 import HeaderBrandingIdentity from "../design/HeaderBrandingIdentity.jsx";
+import ReportProblemLink from "../components/ReportProblemLink.jsx";
 
 function customerLinks(layout) { return [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -76,6 +77,7 @@ export default function AppLayout() {
           <a href="https://jdsstudio.ca" rel="noopener noreferrer" target="_blank">
             jdsstudio.ca
           </a>
+          {" "}<ReportProblemLink context="customer" />
         </footer>
       ) : null}
 
