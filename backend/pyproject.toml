@@ -7,7 +7,7 @@ name = "guesthouse-backend"
 version = "0.1.0"
 description = "Backend API for The Guest House Café & Pantry preorder application."
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.11,<3.13"
 dependencies = [
   "alembic>=1.14,<1.19",
   "cryptography>=48.0.1,<49",
