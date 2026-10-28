@@ -1,5 +1,7 @@
 # Controlled demo pilot deployment (M2.5)
 
+> Hosting on Canner instead of Render/Netlify? See [`CANNER_PILOT_DEPLOYMENT.md`](CANNER_PILOT_DEPLOYMENT.md).
+
 **Purpose:** Private end-to-end browser test for Marc + ~5–10 invitees of the
 self-service “Build Your Store Free” funnel.
 
