@@ -296,6 +296,18 @@ class CatalogService:
         product.is_published = False
         self._repository.commit()
 
+    def archive_sample_products(self, sample_slugs: set[str]) -> int:
+        """Archive the template items seeded into a new demo; owner-added items are kept."""
+        now = datetime.now(timezone.utc)
+        count = 0
+        for product in self._repository.list_products():
+            if product.slug in sample_slugs and product.archived_at is None:
+                product.archived_at = now
+                product.is_published = False
+                count += 1
+        self._repository.commit()
+        return count
+
     def reorder_products(self, payload: OwnerProductOrderWrite) -> list[OwnerProductResponse]:
         products = list(self._repository.list_products())
         product_ids = payload.product_ids

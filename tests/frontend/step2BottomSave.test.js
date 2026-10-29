@@ -29,3 +29,8 @@ test("save success and failure retain one shared dirty baseline",()=>{
   assert.match(studio,/catch\(error\)\{setMessage\(error\.message\);setSaveError\(error\.message\);setStatus\("ready"\);\}/);
   assert.doesNotMatch(studio,/onClick=\{[^}]*saveDesignDraft/);
 });
+
+test("successful design save shows a visible confirmation next to the button",()=>{
+  assert.match(studio,/setJustSaved\(true\)/);
+  assert.equal((studio.match(/role="status">✓ Design saved<\/span>/g)||[]).length,2);
+});

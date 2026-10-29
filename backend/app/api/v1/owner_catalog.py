@@ -226,6 +226,18 @@ def archive_product(
         mutation_error(error)
 
 
+@router.post("/clear-sample-products")
+def clear_sample_products(
+    _: AuthPrincipal = Depends(require_permission("catalog.publish")),
+    service: CatalogService = Depends(catalog_service),
+) -> dict:
+    from app.platform.demo_starter import STARTER_PRODUCTS
+    try:
+        return {"archived": service.archive_sample_products({row[1] for row in STARTER_PRODUCTS})}
+    except SQLAlchemyError as error:
+        mutation_error(error)
+
+
 @router.put("/product-order", response_model=list[OwnerProductResponse])
 def reorder_products(payload: OwnerProductOrderWrite, _: AuthPrincipal = Depends(require_catalog_editor), service: CatalogService = Depends(catalog_service)) -> list[OwnerProductResponse]:
     try:

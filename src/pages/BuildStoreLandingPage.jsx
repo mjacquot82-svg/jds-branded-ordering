@@ -35,12 +35,13 @@ export default function BuildStoreLandingPage() {
     contact_name: "",
     invite_code: inviteFromLink,
   });
+  const verifyHash = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+  const verifyError = onVerifyRoute ? verifyHash.get("error_description") || searchParams.get("error_description") : null;
   const [status, setStatus] = useState(
-    onVerifyRoute
+    onVerifyRoute && verifyError
       ? {
           kind: "verify",
-          message:
-            "If you just opened your verification link, your email should now be confirmed. Sign in below with the same email and password to open your demo.",
+          message: `We couldn’t confirm your email (${verifyError.replaceAll("+", " ")}). The link may have expired — send a new one below.`,
         }
       : { kind: "idle" },
   );
@@ -138,7 +139,14 @@ export default function BuildStoreLandingPage() {
 
   return (
     <main className="page-section build-store-landing">
-      <header className="build-store-hero">
+      {onVerifyRoute && !verifyError ? (
+        <section className="operations-panel build-store-verified" role="status">
+          <p className="eyebrow">Step complete</p>
+          <h1>✓ Email verified — continue</h1>
+          <p>Thanks! Your email is confirmed. Sign in below with the same email and password you used to sign up, then click <strong>Open my demo</strong> to keep building your store.</p>
+        </section>
+      ) : null}
+      <header className="build-store-hero" hidden={onVerifyRoute && !verifyError}>
         <p className="eyebrow">JDS Branded Ordering</p>
         <h1>Build Your Store Free</h1>
         <p>

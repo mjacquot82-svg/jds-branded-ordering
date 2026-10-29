@@ -157,6 +157,10 @@ export function archiveOwnerProduct(productId, csrfToken, options = {}) {
   });
 }
 
+export function clearOwnerSampleProducts(csrfToken, options = {}) {
+  return request("/clear-sample-products", { ...options, csrfToken, method: "POST" });
+}
+
 export function updateOwnerProductAvailability(productId, available, csrfToken, options = {}) {
   return request(`/products/${encodeURIComponent(productId)}/availability`, {
     ...options, body: { available }, csrfToken, method: "PATCH",

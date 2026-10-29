@@ -197,7 +197,7 @@ def owner_storefront(tenant: TenantContext = Depends(authenticated_owner_tenant)
     configured=hosted_storefront_hostname(tenant.organization_slug)
     current_hostname=next((row.hostname for row in rows if row.is_canonical),None) or (rows[0].hostname if rows else None)
     suffix=current_hostname[len(tenant.organization_slug):] if current_hostname and current_hostname.startswith(tenant.organization_slug) else ""
-    return {"slug":tenant.organization_slug,"slugIsSuggestion":slug_is_suggestion,"merchantAddressSuffix":f".{STANDARD_STOREFRONT_BASE_DOMAIN}","addressSuffix":suffix,"configuredHostname":configured,"hostnames":[{"id":str(row.id),"hostname":row.hostname,"status":row.status,"canonical":row.is_canonical} for row in rows]}
+    return {"slug":tenant.organization_slug,"demoAddressLocked":is_prospect(session, tenant.organization_id),"slugIsSuggestion":slug_is_suggestion,"merchantAddressSuffix":f".{STANDARD_STOREFRONT_BASE_DOMAIN}","addressSuffix":suffix,"configuredHostname":configured,"hostnames":[{"id":str(row.id),"hostname":row.hostname,"status":row.status,"canonical":row.is_canonical} for row in rows]}
 
 @router.get("/owner/storefront/launch-kit")
 def launch_kit(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -227,6 +227,10 @@ def launch_print(tenant: TenantContext = Depends(authenticated_owner_tenant), se
 @router.put("/owner/storefront")
 def choose_storefront(payload: StorefrontSlugInput, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     if is_prospect(session, tenant.organization_id):
+        # Free demos keep their current address. Re-saving the same slug is a harmless
+        # no-op so the setup wizard never fails on "Save and continue".
+        if payload.slug == tenant.organization_slug:
+            return {"id":None,"slug":tenant.organization_slug,"hostname":None,"status":"demo","canonical":False,"demoAddressLocked":True}
         raise HTTPException(403, detail={"code":"demo_hostname_locked","message":"Production storefront addresses unlock after JDS activation. Use Design Studio preview while building your free demo."})
     hostname=hosted_storefront_hostname(payload.slug)
     if not hostname: raise HTTPException(503,detail="Hosted storefront domains are not configured in this environment.")

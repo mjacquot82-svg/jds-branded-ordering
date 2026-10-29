@@ -3,6 +3,7 @@ import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
 import { toOwnerCustomizationWrite } from "../services/modifierMoney.js";
 import {
   archiveOwnerProduct,
+  clearOwnerSampleProducts,
   createOwnerCategory,
   clearOwnerCatalogCache,
   createOwnerProduct,
@@ -186,6 +187,13 @@ export function useCatalogProducts({ enabled = true } = {}) {
     await reload({ force: true });
   }
 
+  async function clearSampleProducts() {
+    const result = await clearOwnerSampleProducts(session.csrf_token);
+    clearOwnerCatalogCache();
+    await reload({ force: true });
+    return result;
+  }
+
   async function saveCustomization(customization) {
     let saveError = null;
     try {
@@ -203,5 +211,5 @@ export function useCatalogProducts({ enabled = true } = {}) {
     }
   }
 
-  return { ...catalog, addCategory, updateCategory, removeCategory, reorderCategories, addProduct, updateProduct, reorderProducts, setProductAvailability, setLunchSpecial, removeProduct, saveCustomization, loading, error, reload };
+  return { ...catalog, addCategory, updateCategory, removeCategory, reorderCategories, addProduct, updateProduct, reorderProducts, setProductAvailability, setLunchSpecial, removeProduct, clearSampleProducts, saveCustomization, loading, error, reload };
 }
