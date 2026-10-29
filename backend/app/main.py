@@ -1,4 +1,5 @@
 import os
+from app.tenancy.pilot_shop import PILOT_SHOP_COOKIE, PILOT_SHOP_QUERY_KEY, current_pilot_shop, pilot_shop_links_enabled, valid_pilot_slug
 import asyncio
 import re
 import uuid
@@ -198,7 +199,20 @@ def create_app(
             else str(uuid.uuid4())
         )
         request.state.request_id = request_id
-        response = await call_next(request)
+        pilot_query_slug = None
+        pilot_token = None
+        if pilot_shop_links_enabled():
+            pilot_query_slug = valid_pilot_slug(request.query_params.get(PILOT_SHOP_QUERY_KEY))
+            pilot_slug = pilot_query_slug or valid_pilot_slug(request.cookies.get(PILOT_SHOP_COOKIE))
+            if pilot_slug:
+                pilot_token = current_pilot_shop.set(pilot_slug)
+        try:
+            response = await call_next(request)
+        finally:
+            if pilot_token is not None:
+                current_pilot_shop.reset(pilot_token)
+        if pilot_query_slug:
+            response.set_cookie(PILOT_SHOP_COOKIE, pilot_query_slug, httponly=True, secure=True, samesite="lax", path="/")
         local_review_tenant = request.query_params.get("review_tenant")
         if application.state.local_review_enabled and local_review_tenant in {
             "the-guest-house", "second-street-cafe", "new-merchant-demo",
