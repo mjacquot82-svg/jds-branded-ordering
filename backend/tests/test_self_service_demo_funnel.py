@@ -545,7 +545,7 @@ def test_26_clear_sample_items_keeps_owner_items(demo_ctx):
         assert [item.slug for item in active] == ["my-own-bagel"]
 
 
-def test_27_test_bean_pay_at_pickup_script_is_scoped_and_idempotent(demo_ctx):
+def test_27_test_bean_pay_at_pickup_script_is_scoped_and_idempotent(demo_ctx, monkeypatch):
     import importlib.util
     from pathlib import Path
     from app.payments.pay_at_pickup import get_order_settings
@@ -553,17 +553,17 @@ def test_27_test_bean_pay_at_pickup_script_is_scoped_and_idempotent(demo_ctx):
     script = importlib.util.module_from_spec(spec); spec.loader.exec_module(script)
     engine, settings, provider = demo_ctx
     with Session(engine) as session:
-        issued = _signup(session, settings, provider, f"tb-{uuid4().hex[:8]}@example.com", "Test Bean Café (TEST)")
+        email = f"tb-{uuid4().hex[:8]}@example.com"
+        issued = _signup(session, settings, provider, email, "Test Bean Café (TEST)")
         org = session.get(Organization, issued.principal.organization_id)
         other = _signup(session, settings, provider, f"tb2-{uuid4().hex[:8]}@example.com", "Other Café")
-        if org.slug != script.TARGET_SLUG:
-            existing = session.scalar(select(Organization).where(Organization.slug == script.TARGET_SLUG))
-            if existing is not None:
-                org = existing
-            else:
-                org.slug = script.TARGET_SLUG; session.commit()
+        monkeypatch.setattr(script, "TARGET_OWNER_EMAIL", email)
+        monkeypatch.setattr(script, "TARGET_SLUG", org.slug)
+        monkeypatch.setattr(script, "TARGET_ORGANIZATION_ID", "00000000-0000-0000-0000-000000000000")
         with pytest.raises(SystemExit):
-            script.run(session, settings, provider, slug="other-cafe")
+            script.run(session, settings, provider)
+        assert is_prospect(session, org.id)
+        monkeypatch.setattr(script, "TARGET_ORGANIZATION_ID", str(org.id))
         for _ in range(2):
             assert script.run(session, settings, provider).startswith("ok ")
         session.refresh(org)
