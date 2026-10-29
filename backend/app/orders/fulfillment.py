@@ -27,10 +27,10 @@ class FulfillmentError(ValueError):
 
 TRANSITIONS = {
     FulfillmentStatus.NEW: frozenset(
-        {FulfillmentStatus.COMPLETED, FulfillmentStatus.CANCELLED}
+        {FulfillmentStatus.PREPARING, FulfillmentStatus.READY, FulfillmentStatus.COMPLETED, FulfillmentStatus.CANCELLED}
     ),
     FulfillmentStatus.PREPARING: frozenset(
-        {FulfillmentStatus.COMPLETED, FulfillmentStatus.CANCELLED}
+        {FulfillmentStatus.READY, FulfillmentStatus.COMPLETED, FulfillmentStatus.CANCELLED}
     ),
     FulfillmentStatus.READY: frozenset(
         {FulfillmentStatus.COMPLETED, FulfillmentStatus.CANCELLED}
@@ -38,6 +38,11 @@ TRANSITIONS = {
     FulfillmentStatus.COMPLETED: frozenset({FulfillmentStatus.NEW}),
     FulfillmentStatus.CANCELLED: frozenset(),
 }
+
+# Pay-at-pickup orders are prepared before the customer pays at the counter, so they
+# may move through these kitchen stages while still unpaid. Completing still requires
+# "Mark as paid" first; card orders still require payment for every stage.
+UNPAID_PAY_AT_PICKUP_STAGES = frozenset({FulfillmentStatus.PREPARING, FulfillmentStatus.READY})
 
 
 class OwnerOrderService:
@@ -71,10 +76,19 @@ class OwnerOrderService:
         order = self.order(order_id)
         if order.fulfillment_status == target:
             return order
-        if order.status != OrderStatus.PAID:
+        from app.payments.pay_at_pickup import is_pay_at_pickup
+
+        unpaid_pay_at_pickup = (
+            order.status != OrderStatus.PAID
+            and is_pay_at_pickup(order)
+            and target in UNPAID_PAY_AT_PICKUP_STAGES
+        )
+        if order.status != OrderStatus.PAID and not unpaid_pay_at_pickup:
             raise FulfillmentError(
                 FulfillmentErrorCode.PAYMENT_REQUIRED,
-                "Only paid orders can be updated.",
+                "Mark this pay-at-pickup order as paid before completing it."
+                if is_pay_at_pickup(order)
+                else "Only paid orders can be updated.",
             )
         if target not in TRANSITIONS[order.fulfillment_status]:
             raise FulfillmentError(
@@ -92,6 +106,7 @@ class OwnerOrderService:
             current_status=order.fulfillment_status,
             target_status=target,
             now=now,
+            allow_unpaid=unpaid_pay_at_pickup,
         ):
             self._session.rollback()
             raise FulfillmentError(

@@ -121,8 +121,15 @@ class OrderCreationService:
             tax_cents = calculate_tax_cents(
                 subtotal_cents, settings.tax_rate_millionths
             )
+            from app.jds_auth.models import Organization
+            from app.orders.reference import order_reference_prefix
+
+            organization = self._session.get(Organization, self._tenant.organization_id)
             order = Order(
                 organization_id=self._tenant.organization_id,
+                reference_prefix=order_reference_prefix(
+                    organization.name if organization else None, self._tenant.organization_slug
+                ),
                 customer_user_id=customer_user_id,
                 idempotency_key=request.idempotency_key,
                 request_fingerprint=fingerprint,

@@ -13,6 +13,7 @@ import {
   isCheckoutContactComplete,
 } from "../services/checkoutOrder.js";
 import { createPendingOrder } from "../services/orderApi.js";
+import { asapIsLater, describePickupTime, pickupSummaryText } from "../services/pickupWording.js";
 import { choosePayAtPickup, createCheckout, fetchPayAtPickupEligibility, payAtPickupUnavailableMessage } from "../services/paymentService.js";
 import { useCustomerCatalog } from "../stores/customerCatalogStore.js";
 import { isOrderingCustomerSession, useCustomerAuth } from "../auth/CustomerAuthContext.jsx";
@@ -73,14 +74,6 @@ function getStoredCustomPickupTime() {
 
 function storeCustomPickupTime(value) {
   writeTenantLocalStorage("custom-pickup-time", value);
-}
-
-function formatReadyTime(date, timeZone) {
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone,
-  }).format(date);
 }
 
 export default function CartPage() {
@@ -194,7 +187,7 @@ export default function CartPage() {
   const payAtPickupNote = payAtPickupUnavailableMessage(payAtPickup);
   const selectedPickup = resolveSchedulingSelection(schedule, pickupIntent);
   const pickupSummary = selectedPickup?.requested_pickup_at
-    ? `Ready around ${formatReadyTime(new Date(selectedPickup.requested_pickup_at), schedule.business_timezone)}`
+    ? pickupSummaryText(selectedPickup.requested_pickup_at, schedule.business_timezone)
     : scheduleStatus === "loading" ? "Checking pickup times…" : "Pickup time unavailable";
   const resolvedPickupTime = formatPickupTimeInput(
     selectedPickup?.requested_pickup_at,
@@ -398,7 +391,7 @@ export default function CartPage() {
             </div>
           </div>
           <div className="saved-order-milestones" aria-label="Order status">
-            <div className="saved-order-complete"><span>✓ Pickup confirmed</span><strong>{formatReadyTime(new Date(savedOrder.requested_pickup_at), savedOrder.business_timezone)}</strong></div>
+            <div className="saved-order-complete"><span>✓ Pickup confirmed</span><strong>{pickupSummaryText(savedOrder.requested_pickup_at, savedOrder.business_timezone)}</strong></div>
             <div className="saved-order-payment-pending"><span>Pay at pickup</span><strong>{formatPrice(savedOrder.total_cents / 100)}</strong></div>
           </div>
           <p>Please come by at your pickup time. If you can’t make it, contact the café so your order isn’t wasted. Missed pay-at-pickup orders turn this option off for your account.</p>
@@ -426,7 +419,7 @@ export default function CartPage() {
             </div>
           </div>
           <div className="saved-order-milestones" aria-label="Order status">
-            <div className="saved-order-complete"><span>✓ Pickup confirmed</span><strong>{formatReadyTime(new Date(savedOrder.requested_pickup_at), savedOrder.business_timezone)}</strong></div>
+            <div className="saved-order-complete"><span>✓ Pickup confirmed</span><strong>{pickupSummaryText(savedOrder.requested_pickup_at, savedOrder.business_timezone)}</strong></div>
             <div className="saved-order-payment-pending"><span>Payment needed</span><strong>Complete now</strong></div>
           </div>
           {checkoutError ? (
@@ -554,6 +547,9 @@ export default function CartPage() {
             </div>
             <strong>{pickupSummary}</strong>
           </div>
+          {selectedPickup?.key === "asap" && asapIsLater(selectedPickup.requested_pickup_at) ? (
+            <p className="pickup-later-note" role="status">The café isn’t taking pickups right now, so ASAP means the next opening: <strong>ready {describePickupTime(selectedPickup.requested_pickup_at, schedule.business_timezone)}</strong>.</p>
+          ) : null}
           <div className="pickup-time-options" role="radiogroup" aria-label="Quick pickup timing">
             {(schedule?.quick_pickup_options || []).map((option) => {
               const optionIntent = option.preference_minutes == null
@@ -570,7 +566,7 @@ export default function CartPage() {
                   value={option.key}
                   onChange={() => updatePickupIntent(optionIntent)}
                 />
-                <span>{option.label}</span>
+                <span>{option.key === "asap" && asapIsLater(option.requested_pickup_at) ? `${option.label} · ${describePickupTime(option.requested_pickup_at, schedule.business_timezone)}` : option.label}</span>
               </label>
               );
             })}

@@ -10,6 +10,7 @@ Recipient: the shop's "new order alert email" in Order settings.
 """
 
 from __future__ import annotations
+from app.orders.reference import order_reference
 
 import logging
 import os
@@ -64,7 +65,7 @@ def build_new_order_alert(order: Order, *, to: str) -> AlertEmail:
         else "Paid online."
     )
     lines = [
-        f"New order GH-{order.id:06d}",
+        f"New order {order_reference(order)}",
         payment_line,
         f"Customer: {order.guest_name} ({order.guest_phone})",
         f"Pickup: {order.requested_pickup_at.isoformat()} ({order.business_timezone})",
@@ -78,7 +79,7 @@ def build_new_order_alert(order: Order, *, to: str) -> AlertEmail:
     if order.notes:
         lines += ["", f"Notes: {order.notes}"]
     lines += ["", f"Total: {_money(order.total_cents, order.currency)}"]
-    subject = f"New order GH-{order.id:06d}" + (" - pay at pickup" if pay_at_pickup else "")
+    subject = f"New order {order_reference(order)}" + (" - pay at pickup" if pay_at_pickup else "")
     return AlertEmail(to=to, subject=subject, text="\n".join(lines))
 
 
