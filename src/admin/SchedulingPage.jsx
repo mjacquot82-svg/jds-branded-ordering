@@ -96,7 +96,7 @@ function ClosureForm({ initialValue = EMPTY_CLOSURE, onCancel, onSave, saving })
   );
 }
 
-export default function SchedulingPage({ setupMode = false }) {
+export default function SchedulingPage({ setupMode = false, onDirtyChange }) {
   const { session } = useOwnerAuth();
   const [data, setData] = useState(null);
   const [hours, setHours] = useState([]);
@@ -177,6 +177,16 @@ export default function SchedulingPage({ setupMode = false }) {
     await perform(`delete-${closure.id}`, () => deleteOwnerClosure(closure.id, session.csrf_token), "Closure removed.");
   }
 
+  const hoursDirty = Boolean(data) && JSON.stringify(hours) !== JSON.stringify(normalizeHours(data.hours));
+  useEffect(() => { onDirtyChange?.(hoursDirty); }, [hoursDirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  useEffect(() => {
+    if (!hoursDirty) return undefined;
+    const warn = (event) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hoursDirty]);
+
   if (!data) return <section className="page-section"><div className="operations-panel"><h1>Scheduling</h1><p>{error || "Loading your café schedule…"}</p></div></section>;
 
   const preview = data.preview;
@@ -213,7 +223,7 @@ export default function SchedulingPage({ setupMode = false }) {
 
       <section className="owner-settings-card" aria-labelledby="business-hours-heading">
         <div className="owner-card-heading"><div><h2 id="business-hours-heading">Business Hours</h2><p>Set the café’s regular opening and closing times.</p></div><button className="secondary-button compact-button" type="button" onClick={() => { const monday = hours[0]; setHours((current) => current.map((entry) => entry.weekday <= 4 ? { ...entry, is_closed: monday.is_closed, opens_at: monday.opens_at, closes_at: monday.closes_at } : entry)); }}>Copy Monday’s Hours to Weekdays</button></div>
-        <form onSubmit={saveHours}><div className="business-hours-list">{hours.map((entry) => <div className={`business-hour-row ${entry.is_closed ? "closed" : ""}`} key={entry.weekday}><strong>{DAYS[entry.weekday]}</strong><label className="day-status-control"><input checked={!entry.is_closed} type="checkbox" onChange={(event) => updateHour(entry.weekday, { is_closed: !event.target.checked })} /><span>{entry.is_closed ? "Closed" : "Open"}</span></label>{!entry.is_closed ? <div className="business-time-fields"><label><span>Opens</span><input required type="time" value={entry.opens_at} onChange={(event) => updateHour(entry.weekday, { opens_at: event.target.value })} /></label><span aria-hidden="true">to</span><label><span>Closes</span><input required type="time" value={entry.closes_at} onChange={(event) => updateHour(entry.weekday, { closes_at: event.target.value })} /></label></div> : <span className="closed-day-note">No pickups</span>}</div>)}</div><button className="primary-button" disabled={busy === "hours"} type="submit">{busy === "hours" ? "Saving…" : "Save Business Hours"}</button></form>
+        <form onSubmit={saveHours}><div className="business-hours-list">{hours.map((entry) => <div className={`business-hour-row ${entry.is_closed ? "closed" : ""}`} key={entry.weekday}><strong>{DAYS[entry.weekday]}</strong><label className="day-status-control"><input checked={!entry.is_closed} type="checkbox" onChange={(event) => updateHour(entry.weekday, { is_closed: !event.target.checked })} /><span>{entry.is_closed ? "Closed" : "Open"}</span></label>{!entry.is_closed ? <div className="business-time-fields"><label><span>Opens</span><input required type="time" value={entry.opens_at} onChange={(event) => updateHour(entry.weekday, { opens_at: event.target.value })} /></label><span aria-hidden="true">to</span><label><span>Closes</span><input required type="time" value={entry.closes_at} onChange={(event) => updateHour(entry.weekday, { closes_at: event.target.value })} /></label></div> : <span className="closed-day-note">No pickups</span>}</div>)}</div><button className="primary-button" disabled={busy === "hours"} type="submit">{busy === "hours" ? "Saving…" : "Save Business Hours"}</button>{hoursDirty ? <p className="owner-page-message error" role="alert">You have unsaved business hours. Click “Save Business Hours” or they will be lost.</p> : null}</form>
       </section>
 
       <section className="owner-settings-card" aria-labelledby="closures-heading">

@@ -112,7 +112,10 @@ def apply_demo_starter(session: Session, organization_id: UUID, *, business_name
         settings = BusinessSettings(
             organization_id=organization_id,
             timezone="America/Toronto",
-            ordering_enabled=False,  # commerce locked for prospects
+            # Follow business hours by default. Real orders stay locked for prospects by
+            # enforce_live_commerce (orders, checkout, Clover), not by pausing ordering.
+            ordering_enabled=True,
+            ordering_mode="schedule",
         )
         session.add(settings)
         session.flush()

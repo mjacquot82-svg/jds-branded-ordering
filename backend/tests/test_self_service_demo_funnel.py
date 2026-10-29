@@ -494,3 +494,52 @@ def test_23_platform_admin_seeds_keep_promote_ability():
     for seed in ("local_review_seed.py", "staging_review_seed.py"):
         source = (Path(__file__).resolve().parents[1] / "app" / seed).read_text()
         assert '"platform.organizations.read", "platform.organizations.write"' in source
+
+
+def _demo_tenant(org):
+    from app.tenancy.context import TenantContext, TenantResolutionSource
+    return TenantContext(organization_id=org.id, organization_slug=org.slug, source=TenantResolutionSource.AUTHENTICATED_MEMBERSHIP)
+
+
+def test_24_demo_setup_step3_resave_same_address_is_not_403(demo_ctx):
+    from app.api.v1.platform import StorefrontSlugInput, choose_storefront, owner_storefront
+    engine, settings, provider = demo_ctx
+    with Session(engine) as session:
+        issued = _signup(session, settings, provider, f"step3-{uuid4().hex[:8]}@example.com", "Test Bean Café")
+        org = session.get(Organization, issued.principal.organization_id)
+        tenant = _demo_tenant(org)
+        shop = owner_storefront(tenant, session)
+        assert shop["demoAddressLocked"] is True
+        result = choose_storefront(StorefrontSlugInput(slug=org.slug), issued.principal, tenant, session)
+        assert result["demoAddressLocked"] is True and result["slug"] == org.slug
+        with pytest.raises(HTTPException) as raised:
+            choose_storefront(StorefrontSlugInput(slug=f"other-{uuid4().hex[:6]}"), issued.principal, tenant, session)
+        assert raised.value.status_code == 403
+        assert raised.value.detail["code"] == "demo_hostname_locked"
+
+
+def test_25_new_demo_follows_business_hours_not_paused(demo_ctx):
+    from app.availability.models import BusinessSettings
+    engine, settings, provider = demo_ctx
+    with Session(engine) as session:
+        issued = _signup(session, settings, provider, f"hours-{uuid4().hex[:8]}@example.com")
+        row = session.scalar(select(BusinessSettings).where(BusinessSettings.organization_id == issued.principal.organization_id))
+        assert row.ordering_enabled is True and row.ordering_mode == "schedule"
+        with pytest.raises(HTTPException):
+            enforce_live_commerce(session, issued.principal.organization_id, action="create_order")
+
+
+def test_26_clear_sample_items_keeps_owner_items(demo_ctx):
+    from app.catalog.repository import CatalogRepository
+    from app.catalog.service import CatalogService
+    engine, settings, provider = demo_ctx
+    with Session(engine) as session:
+        issued = _signup(session, settings, provider, f"clear-{uuid4().hex[:8]}@example.com")
+        org = session.get(Organization, issued.principal.organization_id)
+        category = session.scalar(select(Category).where(Category.organization_id == org.id))
+        session.add(Product(organization_id=org.id, category_id=category.id, slug="my-own-bagel", name="My Bagel", description="", base_price_cents=300, sort_order=99, is_published=True))
+        session.commit()
+        service = CatalogService(CatalogRepository(session, _demo_tenant(org)))
+        assert service.archive_sample_products({row[1] for row in STARTER_PRODUCTS}) == len(STARTER_PRODUCTS)
+        active = session.scalars(select(Product).where(Product.organization_id == org.id, Product.archived_at.is_(None))).all()
+        assert [item.slug for item in active] == ["my-own-bagel"]

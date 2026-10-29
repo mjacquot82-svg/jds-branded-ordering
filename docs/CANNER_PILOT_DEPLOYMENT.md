@@ -126,6 +126,32 @@ Do not put secrets in `VITE_*` variables.
    through the proxy and `curl -I https://<web>.canner.app/` shows `X-Robots-Tag`.
 3. Set the Supabase redirect URL to the real web host.
 
+### 4b. One-time foundation setup (new pilot database only)
+
+Migrations only create empty tables. Until the JDS application record and its
+owner/manager/staff roles exist, every demo shows **"JDS application is
+unavailable."** right after sign-in. Run this once against the pilot database,
+as a one-off command on `jds-pilot-api` (where `DATABASE_URL` is already
+injected), from the `backend` directory. It only adds what is missing, so
+running it again is harmless:
+
+```bash
+.venv/bin/python -c "
+import os
+from sqlalchemy.orm import Session
+from app.db.engine import create_database_engine
+from app.jds_auth.foundation import ensure_foundation
+engine = create_database_engine(os.environ['DATABASE_URL'])
+with Session(engine) as session, session.begin():
+    ensure_foundation(session, application_key=os.getenv('JDS_APPLICATION_KEY', 'jds-commerce'), application_name='JDS Commerce', organization_slug='jds-platform', organization_name='JDS Platform (internal)')
+print('ok')"
+```
+
+It also creates one internal organization (`jds-platform`) that customers never
+see. Because it is idempotent it can also be appended to the release command:
+`python -m app.db.migrate && .venv/bin/python -c "..."` (use `python` if the
+image has no `.venv`). Expect `ok`, then retry **Open my demo**.
+
 ## 5. Platform admin grant for Marc
 
 Sign up once at `https://<web>.canner.app/build?invite=<code>` and verify the
