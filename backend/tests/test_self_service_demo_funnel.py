@@ -543,3 +543,31 @@ def test_26_clear_sample_items_keeps_owner_items(demo_ctx):
         assert service.archive_sample_products({row[1] for row in STARTER_PRODUCTS}) == len(STARTER_PRODUCTS)
         active = session.scalars(select(Product).where(Product.organization_id == org.id, Product.archived_at.is_(None))).all()
         assert [item.slug for item in active] == ["my-own-bagel"]
+
+
+def test_27_test_bean_pay_at_pickup_script_is_scoped_and_idempotent(demo_ctx):
+    import importlib.util
+    from pathlib import Path
+    from app.payments.pay_at_pickup import get_order_settings
+    spec = importlib.util.spec_from_file_location("tb_script", Path(__file__).resolve().parents[1] / "scripts" / "enable_test_bean_pay_at_pickup.py")
+    script = importlib.util.module_from_spec(spec); spec.loader.exec_module(script)
+    engine, settings, provider = demo_ctx
+    with Session(engine) as session:
+        issued = _signup(session, settings, provider, f"tb-{uuid4().hex[:8]}@example.com", "Test Bean Café (TEST)")
+        org = session.get(Organization, issued.principal.organization_id)
+        other = _signup(session, settings, provider, f"tb2-{uuid4().hex[:8]}@example.com", "Other Café")
+        if org.slug != script.TARGET_SLUG:
+            existing = session.scalar(select(Organization).where(Organization.slug == script.TARGET_SLUG))
+            if existing is not None:
+                org = existing
+            else:
+                org.slug = script.TARGET_SLUG; session.commit()
+        with pytest.raises(SystemExit):
+            script.run(session, settings, provider, slug="other-cafe")
+        for _ in range(2):
+            assert script.run(session, settings, provider).startswith("ok ")
+        session.refresh(org)
+        assert org.commercial_mode == "live"
+        assert get_order_settings(session, org.id).pay_at_pickup_enabled is True
+        assert is_prospect(session, other.principal.organization_id)
+        assert get_order_settings(session, other.principal.organization_id).pay_at_pickup_enabled is False
