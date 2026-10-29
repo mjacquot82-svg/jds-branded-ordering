@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AppLayout from "./layouts/AppLayout.jsx";
 import AdminDashboard from "./admin/AdminDashboard.jsx";
 import OrdersPage from "./admin/OrdersPage.jsx";
@@ -32,6 +32,13 @@ import MerchantActivationPage from "./admin/MerchantActivationPage.jsx";
 import BuildStoreLandingPage from "./pages/BuildStoreLandingPage.jsx";
 import GoLiveActivationPage from "./admin/GoLiveActivationPage.jsx";
 
+// Old/guessable /owner/... links: send them to the real owner area (/admin/...).
+function OwnerPathRedirect() {
+  const location = useLocation();
+  const rest = location.pathname.replace(/^\/owner\/?/, "");
+  return <Navigate replace to={`/admin${rest ? `/${rest}` : ""}${location.search}`} />;
+}
+
 function OwnerHome() {
   return <AdminDashboard />;
 }
@@ -57,6 +64,8 @@ export default function App() {
           <Route path="build" element={<BuildStoreLandingPage />} />
           <Route path="build/verify" element={<BuildStoreLandingPage />} />
           <Route path="owner/login" element={<OwnerLoginPage />} />
+          <Route path="owner" element={<Navigate replace to="/admin" />} />
+          <Route path="owner/*" element={<OwnerPathRedirect />} />
           <Route path="staff" element={<StaffLoginPage />} />
           <Route element={<RequireSetup />}>
             <Route path="setup/:step?" element={<SetupWizard />} />
@@ -79,6 +88,7 @@ export default function App() {
             <Route path="*" element={<Navigate replace to="/admin" />} />
           </Route>
         </Route>
+        <Route path="*" element={<Navigate replace to="/" />} />
       </Route>
     </Routes>
   );

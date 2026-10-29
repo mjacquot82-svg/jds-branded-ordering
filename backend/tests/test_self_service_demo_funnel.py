@@ -571,3 +571,39 @@ def test_27_test_bean_pay_at_pickup_script_is_scoped_and_idempotent(demo_ctx, mo
         assert get_order_settings(session, org.id).pay_at_pickup_enabled is True
         assert is_prospect(session, other.principal.organization_id)
         assert get_order_settings(session, other.principal.organization_id).pay_at_pickup_enabled is False
+
+
+def test_28_slugify_keeps_accented_letters():
+    from app.platform.demo_service import slugify_business
+    assert slugify_business("Test Bean Café (TEST)") == "test-bean-cafe-test"
+    assert slugify_business("Jo’s Crème Brûlée") == "jos-creme-brulee"
+
+
+def test_29_pilot_shop_links_only_open_live_ready_shops(demo_ctx, monkeypatch):
+    from app.tenancy import resolver
+    from app.tenancy.pilot_shop import current_pilot_shop, pilot_shop_url
+    from app.tenancy.resolver import TenantResolutionError, resolve_storefront_context
+    engine, settings, provider = demo_ctx
+    with Session(engine) as session:
+        issued = _signup(session, settings, provider, f"pilot-{uuid4().hex[:8]}@example.com", "Pilot Café")
+        org = session.get(Organization, issued.principal.organization_id)
+        monkeypatch.setenv("JDS_ENVIRONMENT", "staging")
+        monkeypatch.setenv("FRONTEND_URL", "https://web.example.test")
+        monkeypatch.setenv("JDS_PILOT_SHOP_LINKS", "false")
+        assert pilot_shop_url(org.slug) is None
+        monkeypatch.setenv("JDS_PILOT_SHOP_LINKS", "true")
+        assert pilot_shop_url(org.slug) == f"https://web.example.test/?shop={org.slug}"
+        token = current_pilot_shop.set(org.slug)
+        try:
+            with pytest.raises(TenantResolutionError):  # demo (prospect) shops never open
+                resolve_storefront_context(session, host="api.example.test")
+            monkeypatch.setattr(resolver, "evaluate_storefront_readiness", lambda *_: type("R", (), {"public_ready": True})())
+            org.commercial_mode = "live"; session.flush()
+            context = resolve_storefront_context(session, host="api.example.test")
+            assert context.organization_id == org.id
+            monkeypatch.setenv("JDS_ENVIRONMENT", "production")
+            with pytest.raises(TenantResolutionError):
+                resolve_storefront_context(session, host="api.example.test")
+        finally:
+            current_pilot_shop.reset(token)
+            session.rollback()

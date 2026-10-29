@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
@@ -161,7 +162,10 @@ def invite_code_matches(provided: str | None) -> bool:
 
 
 def slugify_business(name: str) -> str:
-    base = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    # "Café" -> "cafe" (not "caf"): strip accents first, same as the web app's businessNameSlug.
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    ascii_name = re.sub(r"[\u2019']", "", ascii_name)
+    base = re.sub(r"[^a-z0-9]+", "-", ascii_name.strip().lower()).strip("-")
     base = re.sub(r"-{2,}", "-", base)
     if len(base) < 3:
         base = f"cafe-{uuid4().hex[:8]}"

@@ -11,8 +11,11 @@ export function TenantProvider({ children }) {
   const operationsRoute = /^\/(admin|owner|staff|build|activate|setup|go-live)(\/|$)/.test(globalThis.location?.pathname || "");
   useEffect(() => {
     let active = true;
-    const reviewTenant = new URLSearchParams(globalThis.location?.search || "").get("review_tenant");
-    const bootstrapUrl = `/api/v1/storefront/bootstrap${reviewTenant ? `?review_tenant=${encodeURIComponent(reviewTenant)}` : ""}`;
+    const params = new URLSearchParams(globalThis.location?.search || "");
+    const reviewTenant = params.get("review_tenant");
+    // Beta "shop links" (?shop=<slug>): the API remembers the shop in a cookie when enabled.
+    const pilotShop = params.get("shop");
+    const bootstrapUrl = `/api/v1/storefront/bootstrap${reviewTenant ? `?review_tenant=${encodeURIComponent(reviewTenant)}` : pilotShop ? `?shop=${encodeURIComponent(pilotShop)}` : ""}`;
     fetch(bootstrapUrl, { cache: "no-store", credentials: "same-origin" })
       .then(async (response) => { if (!response.ok) throw new Error("Storefront unavailable"); return response.json(); })
       .then((value) => {

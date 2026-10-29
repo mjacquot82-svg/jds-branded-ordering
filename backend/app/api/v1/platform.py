@@ -1,4 +1,5 @@
 import json
+from app.tenancy.pilot_shop import pilot_shop_url
 from datetime import datetime, timezone
 from html import escape
 import hashlib
@@ -203,14 +204,14 @@ def owner_storefront(tenant: TenantContext = Depends(authenticated_owner_tenant)
 def launch_kit(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     hostname=session.scalar(select(StorefrontHostname.hostname).where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.status=="verified",StorefrontHostname.is_canonical.is_(True)))
     if not hostname: raise HTTPException(409,detail="Verify a canonical storefront before generating launch assets.")
-    url=(f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true" else storefront_url(hostname))
+    url=pilot_shop_url(tenant.organization_slug) or (f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true" else storefront_url(hostname))
     return {"url":url,"qrUrl":"/api/v1/owner/storefront/launch-kit/qr.svg","printUrl":"/api/v1/owner/storefront/launch-kit/print"}
 
 @router.get("/owner/storefront/launch-kit/qr.svg")
 def launch_qr(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> Response:
     hostname=session.scalar(select(StorefrontHostname.hostname).where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.status=="verified",StorefrontHostname.is_canonical.is_(True)))
     if not hostname: raise HTTPException(409,detail="Verify a canonical storefront first.")
-    url=(f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true" else storefront_url(hostname))
+    url=pilot_shop_url(tenant.organization_slug) or (f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true" else storefront_url(hostname))
     return Response(content=launch_qr_svg(url),media_type="image/svg+xml",headers={"Cache-Control":"private, no-store"})
 
 @router.get("/owner/storefront/launch-kit/print", response_class=HTMLResponse)
@@ -220,7 +221,7 @@ def launch_print(tenant: TenantContext = Depends(authenticated_owner_tenant), se
     if not hostname or profile is None: raise HTTPException(409,detail="Complete storefront launch setup first.")
     staging=os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true"
     staging_url=f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if staging else ""
-    name=escape(profile.display_name);url=escape(staging_url if staging else storefront_url(hostname))
+    name=escape(profile.display_name);url=escape(pilot_shop_url(tenant.organization_slug) or (staging_url if staging else storefront_url(hostname)))
     body=f"""<!doctype html><html><head><title>{name} launch sign</title><style>body{{font-family:system-ui;text-align:center;padding:8vh;color:#222}}h1{{font-size:3rem}}img{{width:min(60vw,420px)}}p{{font-size:1.4rem}}@media print{{button{{display:none}}}}</style></head><body><h1>Order ahead from {name}</h1><img src='/api/v1/owner/storefront/launch-kit/qr.svg' alt='QR code for {name}'><p>{url}</p><button onclick='print()'>Print sign</button></body></html>"""
     return HTMLResponse(body,headers={"Cache-Control":"private, no-store"})
 

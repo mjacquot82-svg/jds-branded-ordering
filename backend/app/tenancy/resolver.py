@@ -1,4 +1,5 @@
 import os
+from app.tenancy.pilot_shop import current_pilot_shop, pilot_shop_links_enabled
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -126,6 +127,20 @@ def resolve_storefront_context(
         raise TenantResolutionError("Client-supplied tenant context is not allowed.")
     if query_params is not None and any(key in query_params for key in _UNTRUSTED_TENANT_QUERY_KEYS):
         raise TenantResolutionError("Client-supplied tenant context is not allowed.")
+    pilot_slug = current_pilot_shop.get() if pilot_shop_links_enabled() else None
+    if pilot_slug:
+        organization = session.scalar(select(Organization).where(Organization.slug == pilot_slug))
+        if (
+            organization is None
+            or getattr(organization, "commercial_mode", "live") != "live"
+            or not evaluate_storefront_readiness(session, organization.id).public_ready
+        ):
+            raise TenantResolutionError("Storefront is not ready.")
+        return TenantContext(
+            organization_id=organization.id,
+            organization_slug=organization.slug,
+            source=TenantResolutionSource.VERIFIED_HOSTNAME,
+        )
     normalized = (host or "").split(":", 1)[0].strip("[]").rstrip(".").lower()
     mapping = session.scalar(
         select(StorefrontHostname).where(

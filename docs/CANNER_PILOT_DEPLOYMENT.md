@@ -152,6 +152,22 @@ see. Because it is idempotent it can also be appended to the release command:
 `python -m app.db.migrate && .venv/bin/python -c "..."` (use `python` if the
 image has no `.venv`). Expect `ok`, then retry **Open my demo**.
 
+### Storefront addresses in the beta
+
+Set on `jds-pilot-api`:
+
+```text
+JDS_STOREFRONT_BASE_DOMAIN=order.jdsstudio.ca   # lets owners save an address (no DNS needed for this alone)
+JDS_PILOT_SHOP_LINKS=true                        # beta: customers open https://<web>.canner.app/?shop=<slug>
+```
+
+With shop links on, the launch kit / QR code / printed sign point to
+`https://<web>.canner.app/?shop=<slug>`. Only shops that are live and pass every
+launch check open this way; free demos never do. Turn it off (and remove it) once
+real `*.order.jdsstudio.ca` hostnames are served: add the wildcard custom domain
+`*.order.jdsstudio.ca` to `jds-pilot-web` in Canner (paid Live plan), then create the two
+CNAME records Canner shows (wildcard + `_acme-challenge`) in GoDaddy DNS.
+
 ## 5. Platform admin grant for Marc
 
 Sign up once at `https://<web>.canner.app/build?invite=<code>` and verify the
