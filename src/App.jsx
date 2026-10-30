@@ -1,3 +1,4 @@
+import { PrivacyPage, TermsPage } from "./pages/LegalPages.jsx";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AppLayout from "./layouts/AppLayout.jsx";
 import AdminDashboard from "./admin/AdminDashboard.jsx";
@@ -59,6 +60,8 @@ export default function App() {
         <Route path="account/verify-email" element={<CustomerVerifyPage />} />
         <Route path="account/reset-password" element={<CustomerResetPage />} />
         <Route path="confirmation" element={<ConfirmationPage />} />
+        <Route path="privacy" element={<PrivacyPage />} />
+        <Route path="terms" element={<TermsPage />} />
         <Route element={<OwnerAuthBoundary />}>
           <Route path="activate" element={<MerchantActivationPage />} />
           <Route path="build" element={<BuildStoreLandingPage />} />

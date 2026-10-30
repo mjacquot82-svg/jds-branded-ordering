@@ -509,6 +509,7 @@ class DemoFunnelService:
         user_agent: str | None,
         client_id: str,
         invite_code: str | None = None,
+        terms_version: str | None = None,
     ) -> tuple[str, IssuedSession | None]:
         if demo_invite_code_required() and not invite_code_matches(invite_code):
             raise DemoServiceError(
@@ -537,6 +538,20 @@ class DemoFunnelService:
             desired_slug=desired_slug,
             now=now,
         )
+        if terms_version:
+            # Record Terms + Privacy acceptance (no PII beyond the email hash).
+            self.session.add(
+                OperationalAuditEvent(
+                    organization_id=None,
+                    scope="platform",
+                    actor_user_id=None,
+                    action="demo.terms_accepted",
+                    target_type="demo_pending_signup",
+                    target_id=email_hash(normalized),
+                    outcome="success",
+                    metadata_json={"terms_version": terms_version, "accepted_at": now.isoformat()},
+                )
+            )
         self.session.commit()
 
         try:

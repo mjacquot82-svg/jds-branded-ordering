@@ -44,6 +44,9 @@ from app.tenancy.context import TenantContext
 router = APIRouter(tags=["demo"])
 
 
+TERMS_VERSION = "2026-10-30"
+
+
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -55,6 +58,8 @@ class DemoSignupInput(Strict):
     contact_name: str = Field(default="", max_length=200)
     desired_slug: str | None = Field(default=None, max_length=63, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     invite_code: str | None = Field(default=None, max_length=128)
+    accepted_terms: bool = False
+    terms_version: str = Field(default=TERMS_VERSION, max_length=40)
 
 
 class DemoEnterInput(Strict):
@@ -133,6 +138,8 @@ def demo_signup(
     settings: AuthSettings = Depends(get_auth_settings),
     now: datetime = Depends(utc_now),
 ) -> dict:
+    if not payload.accepted_terms:
+        raise HTTPException(400, detail={"code": "terms_required", "message": "Please agree to the Terms and Privacy Policy to continue."})
     try:
         status, issued = service.signup(
             email=payload.email,
@@ -144,6 +151,7 @@ def demo_signup(
             user_agent=request.headers.get("user-agent"),
             client_id=client_identifier(request),
             invite_code=payload.invite_code,
+            terms_version=payload.terms_version,
         )
     except DemoServiceError as error:
         if error.code == "rate_limited":
