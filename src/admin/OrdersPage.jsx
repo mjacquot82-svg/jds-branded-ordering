@@ -193,7 +193,7 @@ function CancelDialog({ busy, onCancel, onClose, order }) {
   return (
     <dialog aria-labelledby="cancel-order-title" className="owner-confirm-dialog" onCancel={onClose} ref={dialog}>
       <h2 id="cancel-order-title">Cancel {order.reference}?</h2>
-      <p>This removes the order from the active café queue. It does not issue a Clover refund.</p>
+      <p>This removes the order from the active café queue. It does not issue a card refund.</p>
       <div className="form-actions">
         <button className="owner-danger-button" disabled={busy} type="button" onClick={onCancel}>{busy ? "Cancelling…" : "Cancel Order"}</button>
         <button className="secondary-button" disabled={busy} type="button" onClick={onClose}>Keep Order</button>

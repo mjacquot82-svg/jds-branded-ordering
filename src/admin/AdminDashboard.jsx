@@ -7,6 +7,7 @@ import { fetchOwnerCommunications } from "../services/ownerCommunicationsApi.js"
 import { fetchOwnerOrderSummary } from "../services/ownerOrdersApi.js";
 import { fetchOwnerSchedulingPreview } from "../services/ownerSchedulingApi.js";
 import { CloverConnectionError, fetchCloverConnection, getCloverConnectUrl } from "../services/cloverService.js";
+import { SquareConnectionError, describeSquareConnection, fetchSquareConnection, getSquareConnectUrl, squareReturnMessage } from "../services/squareService.js";
 import { useCatalogProducts } from "../stores/catalogStore.js";
 import ReportProblemLink from "../components/ReportProblemLink.jsx";
 
@@ -23,6 +24,7 @@ export default function AdminDashboard() {
   const canReadCommunications = administrator || hasPermission(session, "communications.announce");
   const canManageIntegrations = administrator || hasPermission(session, "integrations.manage");
   const [clover, setClover] = useState({ status: "loading" });
+  const [square, setSquare] = useState({ status: "loading" });
   const [orderSummary, setOrderSummary] = useState({ status: "loading" });
   const [ordering, setOrdering] = useState({ status: "loading" });
   const [communications, setCommunications] = useState({ status: "loading" });
@@ -44,12 +46,24 @@ export default function AdminDashboard() {
       });
   }, [canManageIntegrations]);
 
+  const loadSquareConnection = useCallback(() => {
+    if (!canManageIntegrations) return;
+    setSquare({ status: "loading" });
+    fetchSquareConnection()
+      .then((connection) => setSquare({ status: "ready", ...connection }))
+      .catch((error) => {
+        if (error instanceof SquareConnectionError && error.status === 401) setSquare({ status: "authentication-error" });
+        else setSquare({ status: "unavailable" });
+      });
+  }, [canManageIntegrations]);
+
   useEffect(() => {
     loadCloverConnection();
+    loadSquareConnection();
     if (canReadOrders) fetchOwnerOrderSummary().then((value) => setOrderSummary({ status: "ready", ...value })).catch(() => setOrderSummary({ status: "error" }));
     if (canReadScheduling) fetchOwnerSchedulingPreview().then((value) => setOrdering({ status: "ready", ...value })).catch(() => setOrdering({ status: "error" }));
     if (canReadCommunications) fetchOwnerCommunications().then((value) => setCommunications({ status: "ready", ...value })).catch(() => setCommunications({ status: "error" }));
-  }, [canReadCommunications, canReadOrders, canReadScheduling, loadCloverConnection]);
+  }, [canReadCommunications, canReadOrders, canReadScheduling, loadCloverConnection, loadSquareConnection]);
 
   // Clover is one optional payment provider. If the platform has no Clover app
   // configured, don't show a Clover card or a Connect Clover button at all.
@@ -68,6 +82,14 @@ export default function AdminDashboard() {
     if (clover.status === "network-error") return { detail: "Connection to the server failed.", heading: "Status unavailable" };
     return { detail: "Unable to determine Clover status.", heading: "Status unavailable" };
   })();
+
+  // Square is the second optional provider: hidden unless the platform has Square set up.
+  const squareHidden = square.status === "unavailable" || square.status === "loading" || (square.status === "ready" && !square.configured);
+  const squareDisplay = square.status === "authentication-error"
+    ? { heading: "Sign-in required", detail: "Owner session expired. Please sign in again." }
+    : describeSquareConnection(square.status === "ready" ? square : null);
+  const squareMessage = squareReturnMessage(searchParams.get("square"));
+  const squareNeedsConnect = square.status === "ready" && square.configured && (!square.connected || square.health === "reconnect_required");
 
   async function handleSignInAgain() {
     try { await refreshSession(); loadCloverConnection(); }
@@ -90,6 +112,7 @@ export default function AdminDashboard() {
           Retry
         </button>
       ) : null}</article> : null}
+      {canManageIntegrations && !squareHidden ? <article className="metric-card"><span>Square</span><strong>{squareDisplay.heading}</strong><p aria-live="polite">{squareMessage ? `${squareMessage} ` : ""}{squareDisplay.detail}</p>{squareNeedsConnect ? <a className="secondary-button" href={getSquareConnectUrl()}>{square.health === "reconnect_required" ? "Reconnect Square" : "Connect Square"}</a> : null}</article> : null}
     </div>
     {!administrator && !canReadOrders ? <p className="owner-page-message error"><AlertTriangle size={18} /> Your account cannot read the café order queue. Ask an Owner for operational access.</p> : null}
   </section>;

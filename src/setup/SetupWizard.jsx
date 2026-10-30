@@ -9,6 +9,7 @@ import SchedulingPage from "../admin/SchedulingPage.jsx";
 import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
 import { fetchOnboarding, fetchReadiness, saveOnboarding } from "../services/designStudioApi.js";
 import { getCloverConnectUrl } from "../services/cloverService.js";
+import { getSquareConnectUrl } from "../services/squareService.js";
 import { fetchDemoStatus } from "../services/demoFunnelApi.js";
 import GoLiveActivationPage from "../admin/GoLiveActivationPage.jsx";
 import OrderSettingsPanel from "../admin/OrderSettingsPanel.jsx";
@@ -20,7 +21,7 @@ const labels = { welcome:"Welcome", look:"Choose your app layout", brand:"Make i
 const prospectLabels = { ...labels, payments:"Payments", launch:"Request activation" };
 
 function ProspectPaymentStep() {
-  return <section className="wizard-focus-card payment-wizard-step prospect-payment-step"><p className="eyebrow">Step 6</p><h1>Payments are set up after activation.</h1><p>Your free demo never takes real orders or payments, so there’s nothing to connect yet. When you request activation, JDS connects the payment processor you already use (Clover today) to this same store.</p><ul className="prospect-step-list"><li>Customers can browse your menu in the preview.</li><li>Checkout stays turned off until your store is activated.</li><li>Your design, menu, and photos carry over unchanged.</li></ul></section>;
+  return <section className="wizard-focus-card payment-wizard-step prospect-payment-step"><p className="eyebrow">Step 6</p><h1>Payments are set up after activation.</h1><p>Your free demo never takes real orders or payments, so there’s nothing to connect yet. When you request activation, JDS connects the payment processor you already use (Clover or Square) to this same store.</p><ul className="prospect-step-list"><li>Customers can browse your menu in the preview.</li><li>Checkout stays turned off until your store is activated.</li><li>Your design, menu, and photos carry over unchanged.</li></ul></section>;
 }
 
 function PaymentSetupStep() {
@@ -30,8 +31,11 @@ function PaymentSetupStep() {
   if(!readiness)return <section className="wizard-focus-card"><h1>Choose how customers pay</h1><p>Checking payment readiness…</p></section>;
   const simulated=readiness.reviewMode === "local" || readiness.reviewMode === "staging";
   const cloverAvailable=readiness.paymentOptions?.cloverAvailable===true;
+  const squareAvailable=readiness.paymentOptions?.squareAvailable===true;
+  const selectedProvider=readiness.paymentOptions?.selectedProvider||"";
+  const squareNeedsReconnect=readiness.paymentOptions?.squareHealth==="reconnect_required";
   const ready=Boolean(readiness.checks?.payment_connected ?? readiness.checks?.clover);
-  return <section className="wizard-focus-card payment-wizard-step"><p className="eyebrow">Step 6</p><h1>Choose how customers pay.</h1><p>You can let customers pay at the counter when they pick up, connect the card payment system you already use, or both. Card payment providers are connected for you once you tell us which one you use.</p>{ready?<div className="wizard-success-note"><strong>Customers can pay for orders.</strong><p>{readiness.paymentOptions?.payAtPickupEnabled?"Pay at pickup is on.":"Your payment connection is ready for launch."}</p></div>:null}<OrderSettingsPanel onSaved={load}/>{simulated&&cloverAvailable?<div className="wizard-simulation-note"><strong>Payment connection is simulated in this review environment.</strong><p>No real Clover request or transaction can be made here.</p></div>:cloverAvailable&&!ready?<a className="secondary-button" href={getCloverConnectUrl()}>Connect Clover</a>:null}</section>;
+  return <section className="wizard-focus-card payment-wizard-step"><p className="eyebrow">Step 6</p><h1>Choose how customers pay.</h1><p>You can let customers pay at the counter when they pick up, connect the card payment system you already use, or both. Card payment providers are connected for you once you tell us which one you use.</p>{ready?<div className="wizard-success-note"><strong>Customers can pay for orders.</strong><p>{readiness.paymentOptions?.payAtPickupEnabled?"Pay at pickup is on.":"Your payment connection is ready for launch."}</p></div>:null}<OrderSettingsPanel onSaved={load}/>{simulated&&cloverAvailable?<div className="wizard-simulation-note"><strong>Payment connection is simulated in this review environment.</strong><p>No real Clover request or transaction can be made here.</p></div>:cloverAvailable&&!ready?<a className="secondary-button" href={getCloverConnectUrl()}>Connect Clover</a>:null}{!simulated&&squareAvailable&&(!ready||squareNeedsReconnect)?<a className="secondary-button" href={getSquareConnectUrl()}>{squareNeedsReconnect?"Reconnect Square":"Connect Square"}</a>:null}{ready&&selectedProvider?<p className="wizard-provider-note">Card payments: {selectedProvider==="square"?"Square":selectedProvider==="clover"?"Clover":selectedProvider}.</p>:null}</section>;
 }
 
 export default function SetupWizard() {
