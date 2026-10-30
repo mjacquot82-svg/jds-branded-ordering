@@ -3,7 +3,7 @@ import { LogOut } from "lucide-react";
 import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useOwnerAuth } from "./OwnerAuthContext.jsx";
 import { ownerLoginDestination } from "./ownerAuthRouting.js";
-import { canAccessOwnerPath, operationsLinks } from "./ownerProductPermissions.js";
+import { canAccessOwnerPath, hasPlatformCapability, operationsLinks } from "./ownerProductPermissions.js";
 
 export default function RequireOwner() {
   const location = useLocation();
@@ -38,7 +38,19 @@ export default function RequireOwner() {
       </div>
     </section>
   );
-  if (["owner", "manager"].includes(session?.role) && session?.app_launched === false) {
+  const platformPath = /^\/admin\/platform(\/|$)/.test(location.pathname);
+  if (session && platformPath && session.platform_capabilities_loaded === false) return (
+    <section className="page-section compact-section" aria-live="polite">
+      <div className="operations-panel">
+        <h1>Platform</h1>
+        <p>Checking your platform access…</p>
+      </div>
+    </section>
+  );
+  // Platform operators keep access to /admin/platform even while their own shop is
+  // still in setup. The backend still enforces platform grants on every API call.
+  const platformBypass = platformPath && hasPlatformCapability(session, "platform.organizations.read");
+  if (!platformBypass && ["owner", "manager"].includes(session?.role) && session?.app_launched === false) {
     // A new shop's go-live request lives inside setup (last step), so links to
     // /admin/go-live or /admin/launch land there instead of bouncing to step 1.
     if (/^\/admin\/(go-live|launch)(\/|$)/.test(location.pathname)) return <Navigate replace to="/setup/launch" />;
