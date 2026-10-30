@@ -35,6 +35,7 @@ from app.jds_auth.schemas import (
     MerchantActivationInspectRequest,
     MerchantActivationRequest,
     MessageResponse,
+    OwnerPasswordCompletionRequest,
     PasswordCompletionRequest,
     PasswordResetRequest,
     SessionResponse,
@@ -307,18 +308,18 @@ def request_password_reset(payload: PasswordResetRequest, request: Request, _: N
     enforce_limit(service, RESET_REQUEST_IP, client_identifier(request), now)
     enforce_limit(service, RESET_REQUEST_ACCOUNT, payload.email, now)
     try:
-        service.request_password_reset(payload.email, f"{settings.frontend_url.rstrip('/')}/admin/reset-password")
+        service.request_password_reset(payload.email, f"{settings.frontend_url.rstrip('/')}/reset-password")
     except IdentityProviderError:
         pass
-    return MessageResponse(message="If the account exists, password reset instructions have been sent.")
+    return MessageResponse(message="If an account exists, we've sent a link.")
 
 
 @router.post("/password-reset/complete", response_model=MessageResponse)
-def complete_password_reset(payload: PasswordCompletionRequest, request: Request, _: None = Depends(require_trusted_origin), service: AuthenticationService = Depends(get_auth_service), now: datetime = Depends(utc_now)) -> MessageResponse:
+def complete_password_reset(payload: OwnerPasswordCompletionRequest, request: Request, _: None = Depends(require_trusted_origin), service: AuthenticationService = Depends(get_auth_service), now: datetime = Depends(utc_now)) -> MessageResponse:
     enforce_limit(service, RESET_COMPLETE_IP, client_identifier(request), now)
-    enforce_limit(service, RESET_COMPLETE_TOKEN, payload.token_hash, now)
+    enforce_limit(service, RESET_COMPLETE_TOKEN, payload.token_hash or payload.access_token or "", now)
     try:
-        service.complete_password_reset(payload.token_hash, payload.password, now=now)
+        service.complete_password_reset(payload.token_hash, payload.password, access_token=payload.access_token, now=now)
     except (IdentityProviderError, AuthenticationError):
         auth_error(400, "password_reset_invalid", "Password reset link is invalid or expired.")
     except SQLAlchemyError:

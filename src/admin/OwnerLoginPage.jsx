@@ -47,6 +47,7 @@ export default function OwnerLoginPage() {
             Password
             <input autoComplete="current-password" name="password" onChange={(event) => setPassword(event.target.value)} required type="password" value={password} />
           </label>
+          <Link className="forgot-password-link" to="/reset-password">Forgot password?</Link>
           {error ? <p className="form-error" role="alert">{error}</p> : null}
           <div className="login-action-row">
             <button className="primary-button" disabled={submitting} type="submit">

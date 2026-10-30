@@ -59,6 +59,20 @@ class CustomerPasswordCompletionRequest(AuthSchema):
         return self
 
 
+class OwnerPasswordCompletionRequest(AuthSchema):
+    """Owner recovery: Supabase links carry either ?token_hash= or #access_token=."""
+
+    token_hash: str | None = Field(default=None, min_length=20, max_length=2048)
+    access_token: str | None = Field(default=None, min_length=20, max_length=4096)
+    password: str = Field(min_length=15, max_length=1024)
+
+    @model_validator(mode="after")
+    def require_one_recovery_credential(self) -> "OwnerPasswordCompletionRequest":
+        if bool(self.token_hash) == bool(self.access_token):
+            raise ValueError("Exactly one recovery credential is required.")
+        return self
+
+
 class InvitationAcceptRequest(PasswordCompletionRequest):
     invitation_id: UUID
     invitation_secret: str = Field(min_length=32, max_length=1024)
