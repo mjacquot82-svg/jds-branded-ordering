@@ -31,7 +31,7 @@ from app.square.client import SquareApiError
 from app.square.config import SquareConfigurationError, SquareSettings
 from app.square.models import SquareInstallation
 from app.square.security import verify_square_signature
-from app.square.service import SquareNotConnected, start_checkout
+from app.square.service import SquareNotConnected, SquareRefundError, refund_order, start_checkout
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +181,28 @@ class SquarePaymentProvider:
         ]
 
     def refund(self, session: Session, order: Order, amount_cents: int | None = None) -> RefundResult:
-        raise PaymentCheckoutError(
-            "Square refunds are not available in the app yet.",
-            code="payment_refund_not_implemented",
+        if amount_cents is not None and amount_cents != order.total_cents:
+            raise PaymentCheckoutError(
+                "Only full refunds are supported right now.", code="payment_partial_refund_unsupported",
+            )
+        settings = _settings()
+        if settings is None:
+            raise ProviderNotConnectedError(
+                "Square is not configured on this platform.", code="payment_provider_not_configured",
+            )
+        try:
+            _, record = refund_order(session, settings, order)
+        except SquareNotConnected as error:
+            raise ProviderNotConnectedError(str(error), code="payment_provider_reconnect_required") from error
+        except SquareRefundError as error:
+            raise PaymentCheckoutError(str(error), code=f"payment_refund_{error.code}") from error
+        except SquareApiError as error:
+            logger.warning("square refund failed org=%s order=%s code=%s",
+                           order.organization_id, order.id, error.code)
+            raise PaymentCheckoutError(
+                "Square could not process the refund. Try again in a minute.", code="payment_refund_failed",
+            ) from error
+        return RefundResult(
+            status=str(record.get("status") or "pending"), provider=self.key,
+            provider_refund_ref=record.get("id"), amount_cents=record.get("amount_cents"),
         )

@@ -6,6 +6,7 @@ import {
   fetchActiveOwnerOrders,
   fetchOwnerOrderHistory,
   markOwnerOrderNoShow,
+  refundOwnerOrder,
   markOwnerOrderPaidAtCounter,
   updateOwnerOrderFulfillment,
 } from "../services/ownerOrdersApi.js";
@@ -115,7 +116,7 @@ function OrderDetail({ order, showFinancials }) {
   );
 }
 
-function OrderCard({ administrator, busy, canFulfill, history, now, onAction, onCancel, onMarkPaid, onNoShow, onReturn, order }) {
+function OrderCard({ administrator, busy, canFulfill, history, now, onAction, onCancel, onMarkPaid, onNoShow, onRefund, onReturn, order }) {
   const payAtPickupUnpaid = order.pay_at_pickup_unpaid === true;
   const [expanded, setExpanded] = useState(false);
   const next = history ? null : nextOrderAction(order);
@@ -138,7 +139,7 @@ function OrderCard({ administrator, busy, canFulfill, history, now, onAction, on
       </div>
       <div className="owner-order-badges">
         {STATUS_LABELS[order.fulfillment_status] ? <span className={`order-badge fulfillment-${order.fulfillment_status}`}>{STATUS_LABELS[order.fulfillment_status]}</span> : null}
-        {payAtPickupUnpaid ? <span className="order-badge payment-pay-at-pickup">Pay at pickup · not paid yet</span> : <span className={`order-badge payment-${order.payment_status}`}>{order.payment_method === "pay_at_pickup" && order.payment_status === "paid" ? "Paid at counter" : PAYMENT_LABELS[order.payment_status]}</span>}
+        {payAtPickupUnpaid ? <span className="order-badge payment-pay-at-pickup">Pay at pickup · not paid yet</span> : order.refunded ? <span className="order-badge payment-refunded">Refunded</span> : <span className={`order-badge payment-${order.payment_status}`}>{order.payment_method === "pay_at_pickup" && order.payment_status === "paid" ? "Paid at counter" : PAYMENT_LABELS[order.payment_status]}</span>}
         <span>{order.item_count} item{order.item_count === 1 ? "" : "s"}</span>
         {administrator ? <strong>{money(order.total_cents, order.currency)}</strong> : null}
       </div>
@@ -170,6 +171,11 @@ function OrderCard({ administrator, busy, canFulfill, history, now, onAction, on
             </button>
             <button className="owner-cancel-button" disabled={busy} type="button" onClick={() => onNoShow(order)}>No-show</button>
           </>
+        ) : null}
+        {order.refundable && canFulfill && onRefund ? (
+          <button className="owner-cancel-button" disabled={busy} type="button" onClick={() => onRefund(order)}>
+            {busy ? "Updating…" : "Refund"}
+          </button>
         ) : null}
         {returnable ? (
           <button className="primary-button" disabled={busy} type="button" onClick={() => onReturn(order)}>
@@ -287,6 +293,20 @@ export default function OrdersPage() {
     } finally { busyRef.current = false; setBusyId(null); }
   }
 
+  async function refundOrder(order) {
+    if (!window.confirm(`Refund ${money(order.total_cents, order.currency)} for ${order.reference} to the customer's card? This can't be undone.`)) return;
+    busyRef.current = true;
+    setBusyId(order.id); setError("");
+    try {
+      await refundOwnerOrder(order.id, order.version, session.csrf_token);
+      setNotice(`${order.reference} refunded. The customer gets an email, and the money can take 5–10 business days to show on their card.`);
+      await refresh();
+    } catch (actionError) {
+      setError(actionError.message);
+      await refresh();
+    } finally { busyRef.current = false; setBusyId(null); }
+  }
+
   function returnToActive(order) {
     if (window.confirm(`Return ${order.reference} to Active Orders?`)) transition(order, "new");
   }
@@ -334,7 +354,7 @@ export default function OrdersPage() {
       {error ? <div className="owner-orders-error" role="alert"><AlertTriangle size={18} /><div><strong>Orders may be out of date.</strong><p>{error}</p></div><button type="button" onClick={() => view === "history" ? showHistory() : refresh()}>Try again</button></div> : null}
       {displayLoading ? <div className="owner-order-skeletons" aria-label="Loading orders"><div /><div /><div /></div> : null}
       {!displayLoading && !orders.length ? <div className="owner-orders-empty"><ShoppingBag size={28} /><h2>{view === "active" && activeFilter !== "all" ? "No orders match this summary" : view === "active" ? "No active orders" : "No recent order history"}</h2><p>{view === "active" && activeFilter !== "all" ? "Show all active orders to return to the full queue." : view === "active" ? "Paid orders will appear here automatically." : "Completed and cancelled orders will appear here."}</p></div> : null}
-      {!displayLoading && orders.length ? <div className="owner-order-list">{orders.map((order) => <OrderCard administrator={administrator} busy={busyId === order.id} canFulfill={canFulfill} history={view === "history"} key={order.id} now={now} onAction={transition} onCancel={setCancelOrder} onMarkPaid={(item) => payAtPickupAction(item, "paid")} onNoShow={(item) => payAtPickupAction(item, "no-show")} onReturn={returnToActive} order={order} />)}</div> : null}
+      {!displayLoading && orders.length ? <div className="owner-order-list">{orders.map((order) => <OrderCard administrator={administrator} busy={busyId === order.id} canFulfill={canFulfill} history={view === "history"} key={order.id} now={now} onAction={transition} onCancel={setCancelOrder} onMarkPaid={(item) => payAtPickupAction(item, "paid")} onNoShow={(item) => payAtPickupAction(item, "no-show")} onRefund={refundOrder} onReturn={returnToActive} order={order} />)}</div> : null}
       {administrator && cancelOrder ? <CancelDialog busy={busyId === cancelOrder.id} onCancel={() => transition(cancelOrder, "cancelled")} onClose={() => setCancelOrder(null)} order={cancelOrder} /> : null}
     </section>
   );

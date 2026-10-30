@@ -122,3 +122,32 @@ def send_customer_receipt_safely(session: Session, order: Order) -> bool:
             getattr(order, "organization_id", None), getattr(order, "id", None), type(error).__name__,
         )
         return False
+
+
+def build_refund_email(order: Order, *, shop_name: str) -> AlertEmail:
+    reference = order_reference(order)
+    lines = [
+        f"{shop_name} has refunded your order {reference}.",
+        "",
+        f"Refund: {_money(order.total_cents, order.currency)} back to the card you paid with.",
+        "It can take 5-10 business days to show on your statement, depending on your bank.",
+        "",
+        "Sent by JDS Studio on behalf of " + shop_name + ".",
+    ]
+    return AlertEmail(to=order.guest_email, subject=f"Your {shop_name} order {reference} was refunded",
+                      text="\n".join(lines))
+
+
+def send_refund_email_safely(session: Session, order: Order) -> bool:
+    """Same Resend path as receipts. Never raises."""
+    try:
+        if not customer_receipts_enabled() or not (getattr(order, "guest_email", "") or "").strip():
+            logger.info("refund email skipped order=%s", getattr(order, "id", None))
+            return False
+        order_alerts.email_sender(build_refund_email(order, shop_name=_shop_name(session, order)))
+        logger.info("refund email sent org=%s order=%s", order.organization_id, order.id)
+        return True
+    except Exception as error:  # noqa: BLE001
+        logger.warning("refund email failed org=%s order=%s error=%s",
+                       getattr(order, "organization_id", None), getattr(order, "id", None), type(error).__name__)
+        return False

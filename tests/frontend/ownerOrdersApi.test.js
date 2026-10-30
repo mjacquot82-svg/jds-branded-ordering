@@ -126,3 +126,16 @@ test("dashboard uses real order metrics with honest loading and error states", a
   assert.doesNotMatch(dashboard, /Merchant:|clover\.merchant_id/);
   assert.match(dashboard, /\s+Retry\s+<\/button>/);
 });
+
+test("owner refund posts the expected version with CSRF and the screen shows Refunded", async () => {
+  const { refundOwnerOrder } = await import("../../src/services/ownerOrdersApi.js");
+  const calls = [];
+  const fetchImpl = async (...args) => { calls.push(args); return response(200, { id: 7, refunded: true }); };
+  await refundOwnerOrder(7, 3, "csrf-1", { apiBaseUrl: "https://api.test/", fetchImpl });
+  assert.equal(calls[0][0], "https://api.test/api/v1/owner/orders/7/refund");
+  assert.equal(calls[0][1].method, "POST");
+  assert.deepEqual(JSON.parse(calls[0][1].body), { expected_version: 3 });
+  const page = await readFile(new URL("../../src/admin/OrdersPage.jsx", import.meta.url), "utf8");
+  assert.match(page, />Refunded</);
+  assert.match(page, /window\.confirm\(`Refund /);
+});
