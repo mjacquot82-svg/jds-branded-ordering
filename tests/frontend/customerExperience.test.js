@@ -6,7 +6,9 @@ import { getApiErrorMessage, getCustomerErrorMessage } from "../../src/services/
 import { formatCustomerPhone, isCompleteCustomerPhone, normalizeCustomerPhone } from "../../src/services/customerPhone.js";
 
 const authPageSource = await readFile(new URL("../../src/pages/CustomerAuthPage.jsx", import.meta.url), "utf8");
-const resetPageSource = await readFile(new URL("../../src/pages/CustomerResetPage.jsx", import.meta.url), "utf8");
+const resetPageSource = await readFile(new URL("../../src/pages/PasswordResetPage.jsx", import.meta.url), "utf8");
+const customerResetWrapper = await readFile(new URL("../../src/pages/CustomerResetPage.jsx", import.meta.url), "utf8");
+const resetRules = await readFile(new URL("../../src/auth/passwordReset.js", import.meta.url), "utf8");
 const verifyPageSource = await readFile(new URL("../../src/pages/CustomerVerifyPage.jsx", import.meta.url), "utf8");
 const accountPageSource = await readFile(new URL("../../src/pages/AccountPage.jsx", import.meta.url), "utf8");
 const cartPageSource = await readFile(new URL("../../src/pages/CartPage.jsx", import.meta.url), "utf8");
@@ -55,9 +57,10 @@ test("customer forms default persistence and expose guarded pending states", () 
 
 test("customer registration and recovery require 10-character passwords", () => {
   assert.match(authPageSource, /minLength=\{creating \? 10 : 8\}/);
-  assert.match(resetPageSource, /minLength=\{10\}/);
+  assert.match(customerResetWrapper, /minLength=\{CUSTOMER_PASSWORD_MIN\}/);
+  assert.match(resetRules, /CUSTOMER_PASSWORD_MIN = 10/);
   assert.match(authPageSource, /Use at least 10 characters\./);
-  assert.match(resetPageSource, /Use at least 10 characters\./);
+  assert.match(resetPageSource, /Use at least \{minLength\} characters/);
 });
 
 test("customer password fields have accessible visibility toggles", () => {

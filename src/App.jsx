@@ -12,6 +12,7 @@ import MenuPage from "./pages/MenuPage.jsx";
 import OrdersPageMobile from "./pages/OrdersPageMobile.jsx";
 import AccountPage from "./pages/AccountPage.jsx";
 import OwnerLoginPage from "./admin/OwnerLoginPage.jsx";
+import OwnerResetPasswordPage from "./admin/OwnerResetPasswordPage.jsx";
 import RequireOwner from "./auth/RequireOwner.jsx";
 import CustomerAuthPage from "./pages/CustomerAuthPage.jsx";
 import CustomerVerifyPage from "./pages/CustomerVerifyPage.jsx";
@@ -38,6 +39,12 @@ function OwnerPathRedirect() {
   const location = useLocation();
   const rest = location.pathname.replace(/^\/owner\/?/, "");
   return <Navigate replace to={`/admin${rest ? `/${rest}` : ""}${location.search}`} />;
+}
+
+// Older owner reset emails pointed at /admin/reset-password; keep the link (and its #token) working.
+function LegacyOwnerResetRedirect() {
+  const location = useLocation();
+  return <Navigate replace to={`/reset-password${location.search}${location.hash}`} />;
 }
 
 function OwnerHome() {
@@ -67,6 +74,9 @@ export default function App() {
           <Route path="build" element={<BuildStoreLandingPage />} />
           <Route path="build/verify" element={<BuildStoreLandingPage />} />
           <Route path="owner/login" element={<OwnerLoginPage />} />
+          <Route path="reset-password" element={<OwnerResetPasswordPage />} />
+          <Route path="owner/forgot-password" element={<Navigate replace to="/reset-password" />} />
+          <Route path="admin/reset-password" element={<LegacyOwnerResetRedirect />} />
           <Route path="owner" element={<Navigate replace to="/admin" />} />
           <Route path="owner/*" element={<OwnerPathRedirect />} />
           <Route path="staff" element={<StaffLoginPage />} />

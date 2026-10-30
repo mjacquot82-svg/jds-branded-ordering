@@ -106,3 +106,15 @@ export function logoutOwner(csrfToken, options = {}) {
 export function isUnauthenticatedOwnerError(error) {
   return error instanceof OwnerAuthError && error.status === 401;
 }
+
+export function requestOwnerPasswordReset(email, options = {}) {
+  return ownerAuthRequest("/password-reset", { ...options, body: { email }, method: "POST" });
+}
+
+export function completeOwnerPasswordReset({ accessToken, password, tokenHash }, options = {}) {
+  return ownerAuthRequest("/password-reset/complete", {
+    ...options,
+    body: { access_token: accessToken || undefined, password, token_hash: tokenHash || undefined },
+    method: "POST",
+  });
+}

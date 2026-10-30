@@ -20,6 +20,7 @@ const customerVerifySource = await readFile(
   new URL("../../src/pages/CustomerVerifyPage.jsx", import.meta.url),
   "utf8"
 );
+const sharedResetSource = await readFile(new URL("../../src/pages/PasswordResetPage.jsx", import.meta.url), "utf8");
 const customerResetSource = await readFile(
   new URL("../../src/pages/CustomerResetPage.jsx", import.meta.url),
   "utf8"
@@ -74,7 +75,7 @@ test("customer verification failures expose the existing resend flow", () => {
 });
 
 test("customer password recovery detects Supabase fragment sessions", () => {
-  assert.match(customerResetSource, /window\.location\.hash/);
-  assert.match(customerResetSource, /recoveryParams\.get\("access_token"\)/);
-  assert.match(customerResetSource, /Choose a new password/);
+  assert.match(customerResetSource, /PasswordResetPage/);
+  assert.match(sharedResetSource, /window\.location\.hash/);
+  assert.match(sharedResetSource, /Choose a new password/);
 });

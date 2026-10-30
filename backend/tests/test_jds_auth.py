@@ -404,9 +404,9 @@ async def test_password_reset_is_generic_and_provider_managed(
         json={"email": "unknown@example.com"},
     )
     assert response.status_code == 200
-    assert response.json()["message"].startswith("If the account exists")
+    assert response.json()["message"] == "If an account exists, we've sent a link."
     assert fake_provider.reset_requests == [
-        ("unknown@example.com", "http://test/admin/reset-password")
+        ("unknown@example.com", "http://test/reset-password")
     ]
 
 
@@ -1743,3 +1743,30 @@ async def test_customer_registration_verification_profile_and_role_isolation(
     )
     assert logout.status_code == 200
     assert (await auth_client.get("/api/v1/customer/auth/session")).status_code == 401
+
+
+@pytest.mark.anyio
+@pytest.mark.postgresql
+async def test_owner_password_reset_accepts_recovery_access_token_link(
+    auth_client: AsyncClient,
+) -> None:
+    await owner_login(auth_client)
+    completed = await auth_client.post(
+        "/api/v1/owner/auth/password-reset/complete",
+        headers={"Origin": "http://test"},
+        json={"access_token": "recovery-access-token", "password": "a sufficiently long password"},
+    )
+    assert completed.status_code == 200, completed.text
+    assert (await auth_client.get("/api/v1/owner/auth/session")).status_code == 401
+    both = await auth_client.post(
+        "/api/v1/owner/auth/password-reset/complete",
+        headers={"Origin": "http://test"},
+        json={"token_hash": "t" * 32, "access_token": "recovery-access-token", "password": "a sufficiently long password"},
+    )
+    assert both.status_code == 422
+    short = await auth_client.post(
+        "/api/v1/owner/auth/password-reset/complete",
+        headers={"Origin": "http://test"},
+        json={"access_token": "recovery-access-token", "password": "too short pw"},
+    )
+    assert short.status_code == 422
