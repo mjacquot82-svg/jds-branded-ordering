@@ -5,6 +5,7 @@ import { useTenant } from "../tenant/TenantContext.jsx";
 import { getLayoutDefinition } from "../design/layoutDefinitions.js";
 import HeaderBrandingIdentity from "../design/HeaderBrandingIdentity.jsx";
 import ReportProblemLink from "../components/ReportProblemLink.jsx";
+import GetAppButton from "../components/GetAppButton.jsx";
 
 function customerLinks(layout) { return [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -67,6 +68,7 @@ export default function AppLayout() {
       </header>
       {tenant.value?.design?.announcement?.enabled && tenant.value.design.announcement.text ? <aside className="storefront-announcement">{tenant.value.design.announcement.text}</aside> : null}
 
+      {showCustomerFooter ? <GetAppButton businessName={tenant.value?.business?.displayName || tenant.value?.design?.displayName || "this shop"} /> : null}
       <main>
         <Outlet />
       </main>

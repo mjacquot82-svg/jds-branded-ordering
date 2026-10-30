@@ -665,9 +665,13 @@ def test_hostname_retry_disable_and_launch_assets_are_tenant_bound(
                 StorefrontHostname.hostname == alpha_host,
             )
         )
-        assert launch_kit(context(a, "alpha"), session)["url"] == (
-            f"https://{alpha_host}"
-        )
+        kit = launch_kit(context(a, "alpha"), session)
+        assert kit["url"] == f"https://{alpha_host}"
+        # Marketing kit branding: shop name, brand colours, same-origin owner logo.
+        assert kit["name"]
+        assert kit["logoUrl"] == "/api/v1/owner/storefront/launch-kit/logo.png"
+        assert set(kit["colors"]) == {"primary", "accent", "background", "surface", "text"}
+        assert all(value.startswith("#") for value in kit["colors"].values())
         with pytest.raises(HTTPException) as foreign:
             retry_storefront(alpha.id, principal, context(b, "beta"), session)
         assert foreign.value.status_code == 404
@@ -896,3 +900,24 @@ def test_loyalty_programs_and_balances_are_independent_for_one_global_customer(p
         ]);session.commit()
         assert session.scalar(select(CustomerLoyaltyEvent.quantity).where(CustomerLoyaltyEvent.organization_id==a,CustomerLoyaltyEvent.customer_user_id==actor)) == 2
         assert session.scalar(select(CustomerLoyaltyEvent.quantity).where(CustomerLoyaltyEvent.organization_id==b,CustomerLoyaltyEvent.customer_user_id==actor)) == 5
+
+
+def test_launch_print_sign_says_get_our_app() -> None:
+    import inspect
+
+    from app.api.v1 import platform as platform_api
+
+    source = inspect.getsource(platform_api.launch_print)
+    assert "Scan to get our app" in source
+    assert "Order ahead from {name}</h1>" not in source
+
+
+def test_owner_logo_and_public_icon_share_one_helper() -> None:
+    import inspect
+
+    from app.api.v1 import platform as platform_api
+
+    assert "_tenant_icon_bytes" in inspect.getsource(platform_api.launch_logo)
+    assert "_tenant_icon_bytes" in inspect.getsource(platform_api.storefront_icon)
+    # The uploaded-icon path used to reference an undefined `position`; it now reads imagePositions.appIcon.
+    assert 'get("appIcon")' in inspect.getsource(platform_api._tenant_icon_bytes)
