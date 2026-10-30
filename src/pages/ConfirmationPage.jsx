@@ -4,6 +4,7 @@ import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { clearOrderSubmission } from "../services/checkoutOrder.js";
 import { fetchPendingOrder } from "../services/orderApi.js";
 import { removeTenantLocalStorage } from "../services/tenantBrowserState.js";
+import { refreshSquarePaymentStatus } from "../services/squareService.js";
 
 function formatPrice(cents) {
   return new Intl.NumberFormat("en-CA", {
@@ -24,6 +25,8 @@ export default function ConfirmationPage() {
   const [searchParams] = useSearchParams();
   const publicToken = searchParams.get("order") || "";
   const paymentResult = searchParams.get("payment");
+  const paymentProvider = searchParams.get("provider") === "square" ? "square" : "clover";
+  const providerName = paymentProvider === "square" ? "Square" : "Clover";
   const suppliedOrder =
     location.state?.order?.public_token === publicToken
       ? location.state.order
@@ -65,12 +68,15 @@ export default function ConfirmationPage() {
     ) {
       return undefined;
     }
-    const timer = window.setTimeout(
-      () => setReloadSequence((value) => value + 1),
-      1500
-    );
+    const timer = window.setTimeout(async () => {
+      // Square: ask the server to check Square directly in case its notice is slow.
+      if (paymentProvider === "square" && publicToken) {
+        await refreshSquarePaymentStatus(publicToken);
+      }
+      setReloadSequence((value) => value + 1);
+    }, 1500);
     return () => window.clearTimeout(timer);
-  }, [order?.status, paymentResult, reloadSequence]);
+  }, [order?.status, paymentProvider, paymentResult, publicToken, reloadSequence]);
 
   useEffect(() => {
     if (order?.status !== "paid") {
@@ -101,10 +107,10 @@ export default function ConfirmationPage() {
               {order.status === "paid"
                 ? `Thanks, ${order.customer.name}. We have your paid order for pickup ${formatPickupTime(order.requested_pickup_at)}.`
                 : order.status === "payment_failed" || paymentResult === "failure"
-                  ? "Clover could not complete the payment. Your cart was saved as a pending order; please try checkout again."
+                  ? `${providerName} could not complete the payment. Your cart was saved as a pending order; please try checkout again.`
                   : paymentResult === "cancelled"
                     ? "No payment was completed. You can return to the menu and try again."
-                    : "Clover returned you to the shop. We are waiting for its signed payment confirmation."}
+                    : `${providerName} returned you to the shop. We are waiting for its signed payment confirmation.`}
             </p>
             <div className="confirmation-summary">
               <span>Order {order.public_token.slice(0, 8).toUpperCase()}</span>

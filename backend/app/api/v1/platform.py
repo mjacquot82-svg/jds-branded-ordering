@@ -17,6 +17,8 @@ from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.jds_auth.models import JdsApplication, JdsUser, Membership, MerchantAcquisition, Organization, Role
 from app.jds_auth.config import AuthSettings
 from app.clover.models import CloverInstallation
+from app.payments.models import OrganizationPaymentSettings
+from app.square.models import SquareInstallation
 from app.catalog.models import Product
 from app.jds_auth.service import AuthPrincipal
 from app.platform.assets import launch_qr_svg, tenant_icon_png, tenant_media_icon_png
@@ -179,9 +181,11 @@ def onboarding(tenant: TenantContext = Depends(authenticated_owner_tenant), sess
 def readiness(request: Request, tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     result = evaluate_storefront_readiness(session, tenant.organization_id)
     review_mode = "staging" if getattr(request.app.state,"staging_review_enabled",False) else "local" if getattr(request.app.state,"local_review_enabled",False) else None
-    from app.platform.readiness import clover_available, pay_at_pickup_enabled
+    from app.platform.readiness import clover_available, pay_at_pickup_enabled, payment_provider_summary, square_available
     return {"publicReady": result.public_ready, "checks": result.checks, "reviewMode":review_mode,
-            "paymentOptions": {"cloverAvailable": clover_available(), "payAtPickupEnabled": pay_at_pickup_enabled(session, tenant.organization_id)}}
+            "paymentOptions": {"cloverAvailable": clover_available(), "squareAvailable": square_available(),
+                               "payAtPickupEnabled": pay_at_pickup_enabled(session, tenant.organization_id),
+                               **payment_provider_summary(session, tenant.organization_id)}}
 
 @router.post("/owner/readiness/recheck")
 def recheck_readiness(principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -499,7 +503,9 @@ def platform_organizations(principal: AuthPrincipal = Depends(current_principal)
         hostname=session.scalar(select(StorefrontHostname.hostname).where(StorefrontHostname.organization_id==org.id,StorefrontHostname.is_canonical.is_(True),StorefrontHostname.status=="verified"))
         owners=session.scalar(select(func.count()).select_from(Membership).join(Role,Role.id==Membership.role_id).where(Membership.organization_id==org.id,Membership.status=="active",Role.key=="owner"))
         clover=session.scalars(select(CloverInstallation.connection_state).where(CloverInstallation.organization_id==org.id)).all()
-        result.append({"id":str(org.id),"name":org.name,"slug":org.slug,"status":org.lifecycle_status,"onboarding":onboarding.state if onboarding else "not_started","publicReady":bool(onboarding and onboarding.public_ready),"canonicalHost":hostname,"ownerMemberships":owners or 0,"cloverHealth":sorted(set(clover)) or ["not_connected"],"publishedVersionId":str(design.published_version_id) if design and design.published_version_id else None,"subscription":subscription.state if subscription else "none"})
+        square=session.scalars(select(SquareInstallation.connection_state).where(SquareInstallation.organization_id==org.id)).all()
+        provider=session.get(OrganizationPaymentSettings,org.id)
+        result.append({"id":str(org.id),"name":org.name,"slug":org.slug,"status":org.lifecycle_status,"onboarding":onboarding.state if onboarding else "not_started","publicReady":bool(onboarding and onboarding.public_ready),"canonicalHost":hostname,"ownerMemberships":owners or 0,"cloverHealth":sorted(set(clover)) or ["not_connected"],"squareHealth":sorted(set(square)) or ["not_connected"],"paymentProvider":provider.provider_key if provider else None,"publishedVersionId":str(design.published_version_id) if design and design.published_version_id else None,"subscription":subscription.state if subscription else "none"})
     return result
 
 @router.get("/platform/admin/organizations/{organization_id}")
@@ -513,14 +519,19 @@ def platform_organization_detail(organization_id: UUID, principal: AuthPrincipal
     audits=session.scalars(select(OperationalAuditEvent).where(OperationalAuditEvent.organization_id==organization_id).order_by(OperationalAuditEvent.occurred_at.desc()).limit(50)).all()
     owners=session.execute(select(Membership,JdsUser,Role).join(JdsUser,JdsUser.id==Membership.user_id).join(Role,Role.id==Membership.role_id).where(Membership.organization_id==organization_id,Role.key=="owner").order_by(JdsUser.display_name)).all()
     installations=session.scalars(select(CloverInstallation).where(CloverInstallation.organization_id==organization_id).order_by(CloverInstallation.created_at.desc())).all()
+    square_installations=session.scalars(select(SquareInstallation).where(SquareInstallation.organization_id==organization_id).order_by(SquareInstallation.created_at.desc())).all()
+    provider_settings=session.get(OrganizationPaymentSettings,organization_id)
+    selected_provider=provider_settings.provider_key if provider_settings else None
     workspace=session.get(DesignWorkspace,organization_id);subscription=session.get(OrganizationSubscription,organization_id)
     warnings=[]
     if not owners: warnings.append("No owner membership is assigned.")
     if not any(item.status=="verified" and item.is_canonical for item in hostnames): warnings.append("No verified canonical storefront is configured.")
-    if not installations or not any(item.connection_state=="connected" for item in installations): warnings.append("Clover is not connected.")
+    if selected_provider=="square":
+        if not any(item.connection_state=="connected" for item in square_installations): warnings.append("Square is not connected.")
+    elif not installations or not any(item.connection_state=="connected" for item in installations): warnings.append("Clover is not connected.")
     if workspace is None or workspace.published_version_id is None: warnings.append("No storefront design is published.")
     if subscription is None: warnings.append("No subscription record is assigned.")
-    result={"id":str(organization.id),"name":organization.name,"slug":organization.slug,"status":organization.lifecycle_status,"readiness":{"publicReady":readiness.public_ready,"checks":readiness.checks},"hostnames":[{"id":str(item.id),"hostname":item.hostname,"status":item.status,"canonical":item.is_canonical} for item in hostnames],"owners":[{"membershipId":str(membership.id),"displayName":user.display_name,"email":user.primary_email,"status":membership.status} for membership,user,_ in owners],"clover":[{"environment":item.environment,"connectionState":item.connection_state,"merchantReference":item.merchant_id[-4:].rjust(len(item.merchant_id),"•") if item.merchant_id else None,"updatedAt":item.updated_at} for item in installations],"design":{"publishedVersionId":str(workspace.published_version_id) if workspace and workspace.published_version_id else None,"draftRevision":workspace.revision if workspace else None},"subscription":{"state":subscription.state,"plan":subscription.plan_key,"provider":subscription.provider} if subscription else None,"warnings":warnings,"audit":[{"action":item.action,"outcome":item.outcome,"targetType":item.target_type,"targetId":item.target_id,"occurredAt":item.occurred_at} for item in audits]}
+    result={"id":str(organization.id),"name":organization.name,"slug":organization.slug,"status":organization.lifecycle_status,"readiness":{"publicReady":readiness.public_ready,"checks":readiness.checks},"hostnames":[{"id":str(item.id),"hostname":item.hostname,"status":item.status,"canonical":item.is_canonical} for item in hostnames],"owners":[{"membershipId":str(membership.id),"displayName":user.display_name,"email":user.primary_email,"status":membership.status} for membership,user,_ in owners],"clover":[{"environment":item.environment,"connectionState":item.connection_state,"merchantReference":item.merchant_id[-4:].rjust(len(item.merchant_id),"•") if item.merchant_id else None,"updatedAt":item.updated_at} for item in installations],"square":[{"environment":item.environment,"connectionState":item.connection_state,"merchantReference":item.merchant_id[-4:].rjust(len(item.merchant_id),"•") if item.merchant_id else None,"updatedAt":item.updated_at} for item in square_installations],"paymentProvider":selected_provider,"design":{"publishedVersionId":str(workspace.published_version_id) if workspace and workspace.published_version_id else None,"draftRevision":workspace.revision if workspace else None},"subscription":{"state":subscription.state,"plan":subscription.plan_key,"provider":subscription.provider} if subscription else None,"warnings":warnings,"audit":[{"action":item.action,"outcome":item.outcome,"targetType":item.target_type,"targetId":item.target_id,"occurredAt":item.occurred_at} for item in audits]}
     session.add(OperationalAuditEvent(scope="platform",actor_user_id=principal.user_id,action="platform.organization_viewed",target_type="organization",target_id=str(organization_id),outcome="success"));session.commit()
     return result
 

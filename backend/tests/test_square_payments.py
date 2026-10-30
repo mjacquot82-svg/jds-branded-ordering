@@ -355,3 +355,27 @@ def test_token_refresh_and_reconnect_required(orders_api, monkeypatch) -> None:
         assert session.scalar(select(SquareInstallation.connection_state)) == "reconnect_required"
         status_ = SquarePaymentProvider().connection_status(session, LADELS_ORGANIZATION_ID)
         assert status_.connected is False and status_.health == "reconnect_required"
+
+
+@pytest.mark.postgresql
+def test_launch_readiness_and_owner_summary_accept_square(orders_api, monkeypatch) -> None:
+    from app.platform.readiness import evaluate_storefront_readiness, payment_provider_summary, square_available
+
+    key = _square_env(monkeypatch)
+    _, engine, _ = orders_api
+    _reset_square(engine)
+    with Session(engine) as session:
+        assert payment_provider_summary(session, LADELS_ORGANIZATION_ID) == {
+            "selectedProvider": None, "squareHealth": "disconnected"}
+    _install(engine, key)
+    with Session(engine) as session:
+        assert square_available() is True
+        assert evaluate_storefront_readiness(session, LADELS_ORGANIZATION_ID).checks["payment_connected"] is True
+        assert payment_provider_summary(session, LADELS_ORGANIZATION_ID) == {
+            "selectedProvider": "square", "squareHealth": "healthy"}
+    _clear_square_env(monkeypatch)
+    with Session(engine) as session:
+        assert square_available() is False
+        assert payment_provider_summary(session, LADELS_ORGANIZATION_ID)["squareHealth"] is None
+        # Square chosen but platform not set up → not ready (fails closed).
+        assert evaluate_storefront_readiness(session, LADELS_ORGANIZATION_ID).checks["payment_connected"] is False

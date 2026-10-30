@@ -20,6 +20,29 @@ def pay_at_pickup_enabled(session: Session, organization_id: UUID) -> bool:
     return bool(row and row.pay_at_pickup_enabled)
 
 
+def square_available() -> bool:
+    """True only when the platform has every JDS_SQUARE_* value configured."""
+    from app.square.config import SquareSettings
+
+    return SquareSettings.from_env().is_configured
+
+
+def payment_provider_summary(session: Session, organization_id: UUID) -> dict:
+    """Non-secret provider info for owner screens: chosen provider + Square health."""
+    from app.payments.models import OrganizationPaymentSettings
+
+    settings = session.get(OrganizationPaymentSettings, organization_id)
+    square_health = None
+    if square_available():
+        from app.payments.adapters.square_adapter import SquarePaymentProvider
+
+        square_health = SquarePaymentProvider().connection_status(session, organization_id).health
+    return {
+        "selectedProvider": settings.provider_key if settings else None,
+        "squareHealth": square_health,
+    }
+
+
 def clover_available() -> bool:
     """True only when the platform has Clover app credentials configured."""
     from app.clover.config import CloverConfigurationError, CloverSettings
