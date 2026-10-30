@@ -82,6 +82,7 @@ export default function CustomerAuthPage({ mode }) {
           <button className="primary-button" disabled={isSubmitting || isResending} type="submit">{isSubmitting ? (creating ? "Creating account…" : "Signing in…") : (creating ? "Create Account" : "Sign In")}</button>
           {status ? <p className="form-status" role={verificationRequired ? "alert" : "status"} aria-live="polite">{status}</p> : null}
           {verificationRequired ? <button className="secondary-button" disabled={isSubmitting || isResending} type="button" onClick={resendVerification}>{isResending ? "Sending…" : "Resend verification email"}</button> : null}
+          <p className="form-legal-note">{creating ? "By creating an account you agree to our " : "See our "}<Link to="/privacy">Privacy Notice</Link>.</p>
         </form>
         <div className="form-actions">
           <Link className="secondary-button" to={customerAuthHref(creating ? "/account/sign-in" : "/account/create", returnTo)}>{creating ? "Sign In" : "Create Account"}</Link>

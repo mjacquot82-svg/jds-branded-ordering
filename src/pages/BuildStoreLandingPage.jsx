@@ -34,6 +34,7 @@ export default function BuildStoreLandingPage() {
     business_name: "",
     contact_name: "",
     invite_code: inviteFromLink,
+    accepted_terms: false,
   });
   const verifyHash = new URLSearchParams((location.hash || "").replace(/^#/, ""));
   const verifyError = onVerifyRoute ? verifyHash.get("error_description") || searchParams.get("error_description") : null;
@@ -83,6 +84,7 @@ export default function BuildStoreLandingPage() {
               business_name: form.business_name,
               contact_name: form.contact_name,
               invite_code: form.invite_code || undefined,
+              accepted_terms: form.accepted_terms,
             })
           : await enterDemo({ email: form.email, password: form.password });
       if (result.status === "verification_required") {
@@ -256,7 +258,21 @@ export default function BuildStoreLandingPage() {
               </button>
             </div>
           ) : null}
-          <button className="primary-button" disabled={status.kind === "working"} type="submit">
+          {mode === "signup" ? (
+            <label className="legal-agree">
+              <input
+                required
+                type="checkbox"
+                checked={form.accepted_terms}
+                onChange={(event) => setForm((current) => ({ ...current, accepted_terms: event.target.checked }))}
+              />
+              <span>
+                I agree to the{" "}
+                <Link to="/terms" target="_blank" rel="noopener noreferrer">Terms and Privacy Policy</Link>
+              </span>
+            </label>
+          ) : null}
+          <button className="primary-button" disabled={status.kind === "working" || (mode === "signup" && !form.accepted_terms)} type="submit">
             {status.kind === "working"
               ? "Working…"
               : mode === "signup"

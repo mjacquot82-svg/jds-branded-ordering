@@ -1,3 +1,4 @@
+import { LegalLinks } from "./LegalPages.jsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ClipboardList, CreditCard, Minus, Plus, Trash2, UserRound } from "lucide-react";
@@ -697,6 +698,7 @@ export default function CartPage() {
             {isPlacingOrder ? "Placing order…" : paymentChoice === "pay_at_pickup" && payAtPickup.available ? "Place order · pay at pickup" : "Place order"}
           </button>
         )}
+        <p className="cart-legal-note">By placing an order you agree to how {tenant.value?.business?.displayName || "this café"} handles your information. <LegalLinks /></p>
       </div>
     </section>
   );

@@ -626,3 +626,34 @@ def test_30_new_shops_start_with_pay_at_pickup_off(demo_ctx):
         )
         assert get_order_settings(session, org_id).pay_at_pickup_enabled is False
         assert check_eligibility(session, org_id, issued.principal.user_id, total_cents=500).available is False
+
+
+def test_signup_records_terms_acceptance(demo_ctx):
+    from app.platform.models import OperationalAuditEvent
+    from app.platform.demo_service import email_hash
+
+    engine, settings, provider = demo_ctx
+    email = f"terms-{uuid4().hex[:8]}@example.com"
+    with Session(engine) as session:
+        service = _service(session, settings, provider)
+        status, _ = service.signup(
+            email=email, password="correct horse battery staple", business_name="Terms Café",
+            contact_name="", desired_slug=None, now=datetime.now(timezone.utc),
+            user_agent="pytest", client_id=f"ip-{email}", terms_version="2026-10-30",
+        )
+        assert status == "ready"
+        event = session.scalar(select(OperationalAuditEvent).where(
+            OperationalAuditEvent.action == "demo.terms_accepted",
+            OperationalAuditEvent.target_id == email_hash(email),
+        ))
+        assert event is not None
+        assert event.metadata_json["terms_version"] == "2026-10-30"
+
+
+def test_signup_endpoint_requires_terms():
+    from app.api.v1.demo import DemoSignupInput, demo_signup
+
+    payload = DemoSignupInput(email="a@example.com", password="x" * 12, business_name="Cafe")
+    with pytest.raises(HTTPException) as caught:
+        demo_signup(payload, None, None, None, None, None, None)
+    assert caught.value.detail["code"] == "terms_required"

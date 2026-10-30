@@ -8400,3 +8400,11 @@ html[data-tenant-slug]:not([data-tenant-slug="the-guest-house"]) .cafe-hero-imag
 .marketing-kit-item img { width: 100%; height: 220px; object-fit: contain; background: #f4f2ee; border-radius: 8px; }
 .marketing-kit-item h3 { margin: 0.6rem 0 0.2rem; font-size: 1rem; }
 .marketing-kit-item p { margin: 0 0 0.5rem; font-size: 0.85rem; }
+
+/* Legal pages (/terms, /privacy) */
+.legal-page{max-width:760px;margin:0 auto;padding:1.5rem 1.25rem 5rem;line-height:1.6}
+.legal-page h1{font-size:1.8rem;margin:.5rem 0 1rem}.legal-page h2{margin-top:2rem}.legal-page h3{margin:1.4rem 0 .4rem;font-size:1.05rem}
+.legal-table-wrap{overflow-x:auto}.legal-page table{border-collapse:collapse;width:100%}.legal-page th,.legal-page td{border:1px solid #ddd;padding:.4rem .6rem;text-align:left;vertical-align:top}
+.legal-links{font-size:.9rem}.legal-links a{color:inherit}
+.legal-agree{display:flex;gap:.5rem;align-items:flex-start;font-size:.95rem}.legal-agree input{margin-top:.25rem}
+.cart-legal-note,.form-legal-note{font-size:.85rem;opacity:.8;margin-top:.75rem}

@@ -1,3 +1,4 @@
+import { LegalLinks } from "../pages/LegalPages.jsx";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { Home, Search, ShoppingBag, UserRound } from "lucide-react";
 import { useCustomerAuth } from "../auth/CustomerAuthContext.jsx";
@@ -79,7 +80,7 @@ export default function AppLayout() {
           <a href="https://jdsstudio.ca" rel="noopener noreferrer" target="_blank">
             jdsstudio.ca
           </a>
-          {" "}<ReportProblemLink context="customer" />
+          {" "}· <LegalLinks />{" "}<ReportProblemLink context="customer" />
         </footer>
       ) : null}
 
