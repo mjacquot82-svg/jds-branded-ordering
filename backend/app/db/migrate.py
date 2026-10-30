@@ -18,6 +18,7 @@ from app.customers import models as customer_models  # noqa: F401
 from app.push import models as push_models  # noqa: F401
 from app.clover import models as clover_models  # noqa: F401
 from app.payments import models as payment_models  # noqa: F401
+from app.square import models as square_models  # noqa: F401
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 CATALOG_BASELINE_REVISION = "20260727_01"

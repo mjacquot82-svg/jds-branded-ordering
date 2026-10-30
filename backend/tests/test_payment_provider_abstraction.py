@@ -56,17 +56,16 @@ def _clover_env(monkeypatch, **extra: str) -> str:
     return key
 
 
-def test_only_clover_is_enabled_provider() -> None:
-    assert SUPPORTED_PROVIDERS == frozenset({"clover"})
+def test_only_clover_and_square_are_enabled_providers() -> None:
+    assert SUPPORTED_PROVIDERS == frozenset({"clover", "square"})
     assert get_provider("clover").key == "clover"
+    assert get_provider("square").key == "square"
 
 
 def test_unsupported_provider_fails_closed_no_clover_fallback() -> None:
     with pytest.raises(UnsupportedProviderError) as caught:
         get_provider("stripe")
     assert caught.value.code == "payment_provider_unsupported"
-    with pytest.raises(UnsupportedProviderError):
-        resolve_provider_key("square")
     with pytest.raises(UnsupportedProviderError):
         resolve_provider_key("moneris")
     with pytest.raises(UnsupportedProviderError):
