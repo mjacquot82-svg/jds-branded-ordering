@@ -200,3 +200,69 @@ def reconcile_from_square_order(
             if newly_paid:
                 return True, outcome
     return False, "no_completed_payment"
+
+
+class SquareRefundError(RuntimeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def refund_idempotency_key(order: Order) -> str:
+    # One full refund per order: retries and double-clicks reuse the same Square refund.
+    import hashlib
+
+    digest = hashlib.sha256(order.public_access_token.encode()).hexdigest()[:40]
+    return f"jdsr-{digest}"  # Square caps idempotency keys at 45 chars
+
+
+def refund_order(
+    session: Session, settings: SquareSettings, order: Order, *,
+    client: SquareClient | None = None, now: datetime | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Fully refund a paid Square order with the shop's own token.
+
+    Returns (newly_refunded, refund_metadata). Idempotent: an already refunded
+    order returns its stored refund without calling Square again.
+    """
+    from app.payments.order_payment import PAYMENT_STATUS_PAID, PAYMENT_STATUS_REFUNDED
+
+    metadata = dict(order.payment_provider_metadata or {})
+    if order.payment_status == PAYMENT_STATUS_REFUNDED:
+        return False, metadata.get("refund") or {}
+    if order.payment_provider != PROVIDER_KEY or not order.payment_provider_txn_id:
+        raise SquareRefundError("not_square_payment", "Only orders paid online with Square can be refunded here.")
+    if order.status != OrderStatus.PAID or order.payment_status != PAYMENT_STATUS_PAID:
+        raise SquareRefundError("not_paid", "Only paid orders can be refunded.")
+    environment = metadata.get("environment") or settings.environment
+    if environment != settings.environment:
+        raise SquareRefundError("environment_mismatch", "This order was paid in a different Square mode.")
+    installation = connected_installation(session, order.organization_id, settings.environment)
+    if installation is None:
+        raise SquareNotConnected("Square is not connected for this business.")
+    if metadata.get("merchant_id") and metadata["merchant_id"] != installation.merchant_id:
+        raise SquareRefundError("merchant_mismatch", "This order was paid to a different Square account.")
+    client = client or SquareClient(settings)
+    token = active_access_token(session, settings, installation, client=client)
+    refund = client.refund_payment(token, {
+        "idempotency_key": refund_idempotency_key(order),
+        "payment_id": order.payment_provider_txn_id,
+        "amount_money": {"amount": int(order.total_cents), "currency": order.currency},
+        "reason": f"Refund for JDS order {order_reference(order)}",
+    })
+    refund_status = str(refund.get("status") or "").upper()
+    if refund_status in {"REJECTED", "FAILED"}:
+        raise SquareRefundError("refund_rejected", "Square declined this refund. Check the order in Square.")
+    record = {
+        "id": str(refund["id"]),
+        "status": refund_status.lower() or "pending",
+        "amount_cents": int(order.total_cents),
+        "currency": order.currency,
+        "refunded_at": (now or datetime.now(timezone.utc)).isoformat(),
+    }
+    metadata["refund"] = record
+    order.payment_provider_metadata = metadata
+    order.payment_status = PAYMENT_STATUS_REFUNDED
+    order.version += 1
+    session.flush()
+    return True, record

@@ -76,3 +76,9 @@ export const markOwnerOrderNoShow = (orderId, expectedVersion, csrfToken, option
   `/${encodeURIComponent(orderId)}/no-show`,
   { ...options, body: { expected_version: expectedVersion }, csrfToken, method: "POST" },
 );
+
+/** Online orders: fully refund through the shop's own payment provider (Square). Safe to retry. */
+export const refundOwnerOrder = (orderId, expectedVersion, csrfToken, options = {}) => request(
+  `/${encodeURIComponent(orderId)}/refund`,
+  { ...options, body: { expected_version: expectedVersion }, csrfToken, method: "POST" },
+);

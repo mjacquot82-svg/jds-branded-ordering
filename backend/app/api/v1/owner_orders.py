@@ -47,6 +47,10 @@ class OwnerOrderResponse(OwnerOrderSchema):
     payment_status: OrderStatus
     payment_method: str
     pay_at_pickup_unpaid: bool
+    payment_provider: str | None = None
+    refunded: bool = False
+    refund_status: str | None = None
+    refundable: bool = False
     fulfillment_status: FulfillmentStatus
     customer_name: str
     customer_email: str
@@ -75,6 +79,11 @@ class OwnerOrderResponse(OwnerOrderSchema):
             payment_method="pay_at_pickup" if is_pay_at_pickup(order) else "online",
             pay_at_pickup_unpaid=is_pay_at_pickup(order) and order.status != OrderStatus.PAID
             and order.fulfillment_status != FulfillmentStatus.CANCELLED,
+            payment_provider=order.payment_provider,
+            refunded=order.payment_status == "refunded",
+            refund_status=((order.payment_provider_metadata or {}).get("refund") or {}).get("status"),
+            refundable=order.payment_provider == "square" and order.status == OrderStatus.PAID
+            and order.payment_status == "paid" and bool(order.payment_provider_txn_id),
             fulfillment_status=order.fulfillment_status,
             customer_name=order.guest_name,
             customer_email=order.guest_email,
@@ -246,3 +255,56 @@ def mark_pay_at_pickup_no_show(
 ) -> OwnerOrderResponse:
     """Customer never came: cancel the order and turn off pay at pickup for them."""
     return _pay_at_pickup_action(service, order_id, principal, payload, mark_no_show)
+
+
+class RefundRequest(OwnerOrderSchema):
+    expected_version: int = Field(ge=1)
+    # Only full refunds for now; if sent, must equal the order total.
+    amount_cents: int | None = Field(default=None, ge=1)
+
+
+@router.post("/{order_id}/refund", response_model=OwnerOrderResponse)
+def refund_order(
+    payload: RefundRequest,
+    order_id: int = Path(ge=1),
+    principal: AuthPrincipal = Depends(require_permission("orders.fulfill")),
+    service: OwnerOrderService = Depends(get_service),
+) -> OwnerOrderResponse:
+    """Fully refund a paid online order through the shop's own payment provider."""
+    from app.communications.customer_receipts import send_refund_email_safely
+    from app.payments.errors import PaymentPortError
+    from app.payments.registry import get_provider
+    from app.platform.models import OperationalAuditEvent
+
+    session = service._session
+    try:
+        order = service.order(order_id)  # tenant-scoped: 404 for other shops' orders
+        if order.payment_status == "refunded":
+            return OwnerOrderResponse.from_model(order)  # idempotent repeat
+        if payload.expected_version != order.version:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                "code": "stale_order", "message": "This order changed on another device. Refresh and try again."})
+        if not order.payment_provider or order.status != OrderStatus.PAID:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                "code": "not_refundable", "message": "Only orders paid online can be refunded."})
+        result = get_provider(order.payment_provider).refund(session, order, payload.amount_cents)
+        session.add(OperationalAuditEvent(
+            organization_id=order.organization_id, scope="tenant", actor_user_id=principal.user_id,
+            action="order.refunded", target_type="order", target_id=str(order.id), outcome="success",
+            metadata_json={"provider": result.provider, "amount_cents": result.amount_cents,
+                           "refund_status": result.status},
+        ))
+        session.commit()
+        refreshed = service.order(order_id)
+        send_refund_email_safely(session, refreshed)
+        return OwnerOrderResponse.from_model(refreshed)
+    except HTTPException:
+        session.rollback()
+        raise
+    except PaymentPortError as error:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail={"code": error.code, "message": str(error)}) from error
+    except (SQLAlchemyError, FulfillmentError) as error:
+        session.rollback()
+        _handle_error(error)

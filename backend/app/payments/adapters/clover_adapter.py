@@ -313,7 +313,9 @@ class CloverPaymentProvider:
         order: Order,
         amount_cents: int | None = None,
     ) -> RefundResult:
+        # TODO(refunds): Clover refunds are not built yet. Shops on Clover refund
+        # from their Clover dashboard for now; the owner Refund button is hidden.
         raise PaymentCheckoutError(
-            "Clover refunds are not exposed through the M1 payment port yet.",
+            "Clover refunds aren't available in the app yet. Refund this order in your Clover dashboard.",
             code="payment_refund_not_implemented",
         )

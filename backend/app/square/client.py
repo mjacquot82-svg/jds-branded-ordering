@@ -124,3 +124,10 @@ class SquareClient:
         if not isinstance(payment, dict):
             raise SquareApiError("Square returned an invalid payment.", code="square_invalid_response")
         return payment
+
+    def refund_payment(self, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
+        data = self._request("POST", "/v2/refunds", token=access_token, json=payload)
+        refund = data.get("refund")
+        if not isinstance(refund, dict) or not refund.get("id"):
+            raise SquareApiError("Square returned an invalid refund.", code="square_invalid_response")
+        return refund
