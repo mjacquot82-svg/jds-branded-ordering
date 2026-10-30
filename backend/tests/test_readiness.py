@@ -35,3 +35,17 @@ async def test_readiness_fails_without_database_configuration() -> None:
         "status": "not_ready",
         "database": "failed",
     }
+
+
+@pytest.mark.anyio
+async def test_readiness_accepts_head(postgresql_url: str) -> None:
+    application = create_app(database_url=postgresql_url)
+    transport = ASGITransport(app=application)
+
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.head("/health/ready")
+    finally:
+        application.state.db_engine.dispose()
+
+    assert response.status_code == 200

@@ -253,6 +253,7 @@ def create_app(
         }
 
     @application.get("/health/live")
+    @application.head("/health/live", include_in_schema=False)
     async def liveness() -> dict[str, str]:
         return {
             "status": "ok",
@@ -266,6 +267,7 @@ def create_app(
         return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=300"})
 
     @application.get("/health/ready")
+    @application.head("/health/ready", include_in_schema=False)
     def readiness(request: Request) -> JSONResponse:
         database_engine = request.app.state.db_engine
 
