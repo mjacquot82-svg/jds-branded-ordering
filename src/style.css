@@ -8260,7 +8260,9 @@ body {
 .build-store-hero h1 { font-size: clamp(2rem, 4vw, 3rem); margin: .35rem 0 0.75rem; }
 .build-store-points { display: grid; gap: .5rem; padding-left: 1.1rem; }
 .build-store-disclosure { color: #4d5648; font-size: .95rem; }
-.build-store-card { max-width: 460px; }
+.build-store-card { width: 100%; max-width: 460px; box-sizing: border-box; justify-self: stretch; }
+.build-store-card:has(.package-picker) { max-width: 960px; }
+.build-store-card .owner-login-form { max-width: 460px; }
 .demo-prospect-banner { display: flex; flex-wrap: wrap; gap: .65rem 1rem; align-items: baseline; background: #fff7e8; border: 1px solid #e6c98a; border-radius: 12px; padding: .85rem 1rem; margin-bottom: 1rem; }
 .demo-prospect-banner strong { color: #7a4e00; }
 .platform-prospect-list { list-style: none; padding: 0; display: grid; gap: .75rem; }
@@ -8412,8 +8414,9 @@ html[data-tenant-slug]:not([data-tenant-slug="the-guest-house"]) .cafe-hero-imag
 /* Package picker (/build, owner dashboard) — stacks on phones */
 .package-picker { display: grid; gap: 0.75rem; margin: 1rem 0; }
 .package-beta-notice { background: #eef8f0; border: 1px solid #9fd3aa; border-radius: 10px; padding: 0.75rem 1rem; margin: 0; }
-.package-grid { display: grid; gap: 0.75rem; grid-template-columns: 1fr; }
-@media (min-width: 760px) { .package-grid { grid-template-columns: repeat(3, 1fr); } }
+.package-grid { display: grid; gap: 0.75rem; grid-template-columns: minmax(0, 1fr); }
+.package-card { min-width: 0; overflow-wrap: anywhere; box-sizing: border-box; }
+@media (min-width: 760px) { .package-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .package-card { display: flex; flex-direction: column; gap: 0.4rem; text-align: left; padding: 1rem; border: 2px solid #d9d9d9; border-radius: 12px; background: #fff; color: inherit; font: inherit; cursor: pointer; min-height: 44px; }
 .package-card.is-selected { border-color: #1f6f43; box-shadow: 0 0 0 3px rgba(31, 111, 67, 0.15); }
 .package-card ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.25rem; }
