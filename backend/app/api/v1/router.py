@@ -21,6 +21,7 @@ from app.api.v1.staff_access import router as staff_access_router
 from app.api.v1.loyalty import router as loyalty_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.demo import router as demo_router
+from app.api.v1.billing import router as billing_router
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(catalog_router)
@@ -44,3 +45,4 @@ router.include_router(staff_access_router)
 router.include_router(loyalty_router)
 router.include_router(platform_router)
 router.include_router(demo_router)
+router.include_router(billing_router)

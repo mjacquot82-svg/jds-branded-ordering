@@ -104,6 +104,9 @@ def send_new_order_alert_safely(session: Session, order: Order) -> bool:
             logger.info("new-order alert skipped org=%s order=%s reason=no_recipient", order.organization_id, order.id)
             return False
         email_sender(build_new_order_alert(order, to=recipient))
+        from app.billing.usage import record_usage
+
+        record_usage(session, order.organization_id, "emails_sent")
         logger.info("new-order alert sent org=%s order=%s", order.organization_id, order.id)
         return True
     except Exception as error:  # noqa: BLE001 - alerts must never break ordering

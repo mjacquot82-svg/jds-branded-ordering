@@ -2,6 +2,7 @@ from collections.abc import Awaitable, Callable, Generator
 from datetime import datetime, timezone
 from typing import Annotated
 
+from app.billing.service import enforce_ordering_not_paused
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
@@ -137,6 +138,7 @@ def create_pending_order(
         if customer is not None and customer.organization_id != tenant.organization_id:
             raise_order_http_error(status.HTTP_404_NOT_FOUND, "tenant_not_found", "Storefront is unavailable.")
         enforce_live_commerce(session, tenant.organization_id, action="create_order")
+        enforce_ordering_not_paused(session, tenant.organization_id)
         order = OrderCreationService(session, tenant).create_pending_order(
             domain_request,
             now=now,

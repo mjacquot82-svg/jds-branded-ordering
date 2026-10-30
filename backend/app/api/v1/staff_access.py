@@ -125,6 +125,12 @@ def create_staff(
     session: Session = Depends(get_db_session), settings: AuthSettings = Depends(get_auth_settings),
     now: datetime = Depends(utc_now),
 ) -> StaffAccountResponse:
+    from app.billing.service import enforce_package_feature
+
+    try:
+        enforce_package_feature(session, principal.organization_id, "staffPins")
+    finally:
+        session.rollback()  # read-only check; keep the begin() below clean
     with session.begin():
         role = session.scalar(select(Role).where(Role.application_id == principal.application_id, Role.key == "staff"))
         if role is None:
