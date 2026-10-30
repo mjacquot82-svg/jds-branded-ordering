@@ -3,7 +3,11 @@
 Fail-safe by design: any problem (not configured, network, provider error,
 bad data) is logged and swallowed. The customer's order is never affected.
 
+OFF by default: shops see new orders on the owner Orders screen. Set
+JDS_OWNER_ORDER_ALERTS_ENABLED=true to turn these emails on platform-wide.
+
 Configuration (all optional; without them alerts are skipped and logged):
+  JDS_OWNER_ORDER_ALERTS_ENABLED  "true" to send owner new-order emails (default false)
   JDS_ORDER_ALERT_RESEND_API_KEY  Resend API key (sending only)
   JDS_ORDER_ALERT_FROM_EMAIL      verified sender, e.g. orders@yourdomain
 Recipient: the shop's "new order alert email" in Order settings.
@@ -53,6 +57,10 @@ def _resend_sender(message: AlertEmail) -> None:
 email_sender: Callable[[AlertEmail], None] = _resend_sender
 
 
+def owner_order_alerts_enabled() -> bool:
+    return os.environ.get("JDS_OWNER_ORDER_ALERTS_ENABLED", "false").strip().lower() == "true"
+
+
 def _money(cents: int, currency: str) -> str:
     return f"${cents / 100:,.2f} {currency}"
 
@@ -85,6 +93,9 @@ def build_new_order_alert(order: Order, *, to: str) -> AlertEmail:
 
 def send_new_order_alert_safely(session: Session, order: Order) -> bool:
     """Returns True if an email was handed to the provider. Never raises."""
+    if not owner_order_alerts_enabled():
+        logger.info("new-order alert skipped org=%s order=%s reason=disabled", getattr(order, "organization_id", None), getattr(order, "id", None))
+        return False
     try:
         from app.payments.pay_at_pickup import get_order_settings
 

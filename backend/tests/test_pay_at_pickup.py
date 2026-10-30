@@ -56,6 +56,7 @@ def _fresh_order(client, engine, ids, key="pap-order-request-1"):
 
 @pytest.fixture
 def sent(monkeypatch):
+    monkeypatch.setenv("JDS_OWNER_ORDER_ALERTS_ENABLED", "true")
     messages = []
     monkeypatch.setattr(order_alerts, "email_sender", messages.append)
     return messages
@@ -290,3 +291,17 @@ def test_order_reference_prefix_per_shop() -> None:
     assert order_reference_prefix("", "") == "JDS"
     assert order_reference(SimpleNamespace(id=7, reference_prefix="TBC")) == "TBC-000007"
     assert order_reference(SimpleNamespace(id=7, reference_prefix=None)) == "GH-000007"
+
+
+def test_owner_order_alerts_are_off_by_default(monkeypatch) -> None:
+    from types import SimpleNamespace
+    calls = []
+    monkeypatch.delenv("JDS_OWNER_ORDER_ALERTS_ENABLED", raising=False)
+    monkeypatch.setattr(order_alerts, "email_sender", calls.append)
+    order = SimpleNamespace(id=1, organization_id=uuid4())
+    assert order_alerts.owner_order_alerts_enabled() is False
+    # Disabled: returns before reading settings or sending anything.
+    assert order_alerts.send_new_order_alert_safely(None, order) is False
+    assert calls == []
+    monkeypatch.setenv("JDS_OWNER_ORDER_ALERTS_ENABLED", "true")
+    assert order_alerts.owner_order_alerts_enabled() is True
