@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import json
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
@@ -12,6 +13,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.clover.security import create_oauth_state
 from app.api.v1.owner_auth import current_principal
 from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.jds_auth.service import AuthPrincipal
@@ -146,6 +148,23 @@ def test_authorization_url_requests_payment_scopes(monkeypatch) -> None:
     assert query["redirect_uri"] == ["https://api.example.test/api/v1/square/oauth/callback"]
 
 
+def test_production_authorization_url_uses_production_host(monkeypatch) -> None:
+    _square_env(monkeypatch)
+    monkeypatch.setenv("JDS_SQUARE_ENVIRONMENT", "production")
+    monkeypatch.setenv("JDS_SQUARE_APPLICATION_ID", "sq0idp-test")
+    settings = SquareSettings.from_env()
+    settings.validate()
+    parsed = urlparse(SquareClient(settings).authorization_url("S"))
+    assert parsed.netloc == "connect.squareup.com"
+    assert parse_qs(parsed.query)["client_id"] == ["sq0idp-test"]
+
+
+def test_sandbox_mode_rejects_production_application_id(monkeypatch) -> None:
+    _square_env(monkeypatch)
+    monkeypatch.setenv("JDS_SQUARE_APPLICATION_ID", "sq0idp-IaeCVG_YtVBjCTwEofzTdw")
+    assert SquareSettings.from_env().is_configured is False
+
+
 # --- DB-backed flows ---------------------------------------------------------
 
 @pytest.mark.postgresql
@@ -181,12 +200,35 @@ def test_oauth_connect_stores_encrypted_tokens_and_selects_square(orders_api, mo
         start = client.get("/api/v1/square/oauth/start", follow_redirects=False)
         assert start.status_code == 302
         state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
-        # Missing cookie → rejected.
-        bad = client.get(f"/api/v1/square/oauth/callback?code=c&state={state}", follow_redirects=False)
-        assert bad.status_code == 400
-        cookie = {"cookie": f"jds_square_oauth_state={state}"}
-        done = client.get(f"/api/v1/square/oauth/callback?code=c&state={state}", headers=cookie,
-                          follow_redirects=False)
+        # Square's browser redirect carries no bearer token: the callback must
+        # authenticate from the signed state alone.
+        client.app.dependency_overrides.pop(current_principal, None)
+        client.app.dependency_overrides.pop(authenticated_owner_tenant, None)
+        mismatched = client.get(f"/api/v1/square/oauth/callback?code=c&state={state}",
+                                headers={"cookie": "jds_square_oauth_state=other"}, follow_redirects=False)
+        assert mismatched.headers["location"].endswith("square=error")
+        tampered = client.get(f"/api/v1/square/oauth/callback?code=c&state={state[:-2]}xx",
+                              follow_redirects=False)
+        assert tampered.status_code == 302
+        assert tampered.headers["location"].endswith("square=error")
+        forged = create_oauth_state("x" * 48, organization_id=str(LADELS_ORGANIZATION_ID),
+                                    membership_id=str(owner.membership_id), environment="sandbox",
+                                    app_id="sandbox-sq0idb-test")
+        assert client.get(f"/api/v1/square/oauth/callback?code=c&state={forged}",
+                          follow_redirects=False).headers["location"].endswith("square=error")
+        # Signed but never issued (no nonce row) → rejected.
+        unissued = create_oauth_state("q" * 48, organization_id=str(LADELS_ORGANIZATION_ID),
+                                      membership_id=str(owner.membership_id), environment="sandbox",
+                                      app_id="sandbox-sq0idb-test")
+        assert client.get(f"/api/v1/square/oauth/callback?code=c&state={unissued}",
+                          follow_redirects=False).headers["location"].endswith("square=error")
+        expired = create_oauth_state("q" * 48, organization_id=str(LADELS_ORGANIZATION_ID),
+                                     membership_id=str(owner.membership_id), environment="sandbox",
+                                     app_id="sandbox-sq0idb-test", now=int(time.time()) - 3600)
+        assert client.get(f"/api/v1/square/oauth/callback?code=c&state={expired}",
+                          follow_redirects=False).headers["location"].endswith("square=error")
+        cookie = {}
+        done = client.get(f"/api/v1/square/oauth/callback?code=c&state={state}", follow_redirects=False)
         assert done.status_code == 302
         assert done.headers["location"] == "https://shop.example.test/admin?square=connected"
         # State is single-use.
@@ -196,6 +238,8 @@ def test_oauth_connect_stores_encrypted_tokens_and_selects_square(orders_api, mo
         # Denied on Square → nothing stored, friendly redirect.
         denied = client.get("/api/v1/square/oauth/callback?error=access_denied", follow_redirects=False)
         assert denied.headers["location"].endswith("square=cancelled")
+        client.app.dependency_overrides[current_principal] = lambda: owner
+        client.app.dependency_overrides[authenticated_owner_tenant] = lambda: LADELS_TENANT
         status_body = client.get("/api/v1/square/connection").json()
         assert status_body["connected"] is True
         assert status_body["merchant_id_hint"] == "…ANT1"

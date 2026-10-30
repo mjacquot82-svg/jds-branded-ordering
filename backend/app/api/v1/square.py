@@ -7,7 +7,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -138,34 +138,36 @@ def square_oauth_callback(
     session: Session = Depends(get_db_session),
     settings: SquareSettings = Depends(get_square_settings),
     client: SquareClient = Depends(get_square_client),
-    principal: AuthPrincipal = Depends(require_read_permission("integrations.manage")),
-    tenant: TenantContext = Depends(authenticated_owner_tenant),
 ) -> RedirectResponse:
+    """Public browser redirect from Square.
+
+    A redirect cannot carry the owner's bearer token, so the request is
+    authenticated by the HMAC-signed ``state`` (shop + owner membership +
+    issue time + nonce) plus a single-use, unexpired nonce row stored when the
+    owner started the connection. Every outcome redirects to the owner dashboard.
+    """
     if error:
         # Owner pressed "Deny" on Square, or Square refused. Nothing is stored.
         return _admin_redirect(settings, "cancelled")
     cookie_state = request.cookies.get(OAUTH_STATE_COOKIE)
-    if not code or not state or not cookie_state or cookie_state != state:
-        raise HTTPException(status_code=400, detail={"code": "invalid_oauth_state",
-                                                     "message": "Square sign-in could not be verified."})
+    if not code or not state or (cookie_state is not None and cookie_state != state):
+        return _admin_redirect(settings, "error")
     try:
         claims = verify_oauth_state(state, settings.state_secret)
-    except InvalidOAuthState as exc:
-        raise HTTPException(status_code=400, detail={"code": "invalid_oauth_state", "message": str(exc)}) from exc
-    if (
-        claims.get("organization_id") != str(tenant.organization_id)
-        or claims.get("membership_id") != str(principal.membership_id)
-        or claims.get("environment") != settings.environment
-        or claims.get("app_id") != settings.application_id
-    ):
-        raise HTTPException(status_code=403, detail={"code": "square_tenant_mismatch",
-                                                     "message": "Square sign-in does not match this business."})
+        organization_id = UUID(str(claims.get("organization_id")))
+        membership_id = UUID(str(claims.get("membership_id")))
+    except (InvalidOAuthState, ValueError, TypeError):
+        logger.warning("Square OAuth callback rejected: invalid state")
+        return _admin_redirect(settings, "error")
+    if claims.get("environment") != settings.environment or claims.get("app_id") != settings.application_id:
+        logger.warning("Square OAuth callback rejected: environment/app mismatch")
+        return _admin_redirect(settings, "error")
     try:
         oauth_state = session.scalar(
             select(SquareOAuthState).where(
                 SquareOAuthState.nonce_hash == oauth_nonce_hash(claims["nonce"]),
-                SquareOAuthState.organization_id == tenant.organization_id,
-                SquareOAuthState.membership_id == principal.membership_id,
+                SquareOAuthState.organization_id == organization_id,
+                SquareOAuthState.membership_id == membership_id,
                 SquareOAuthState.consumed_at.is_(None),
                 SquareOAuthState.expires_at > datetime.now(timezone.utc),
             ).with_for_update()
@@ -180,17 +182,17 @@ def square_oauth_callback(
             SquareInstallation.environment == settings.environment,
             SquareInstallation.merchant_id == pair.merchant_id,
         ))
-        if claimed is not None and claimed.organization_id != tenant.organization_id:
+        if claimed is not None and claimed.organization_id != organization_id:
             raise ValueError("Square seller is already connected to another business.")
         location = pick_location(client.list_locations(pair.access_token))
         cipher = SquareTokenCipher(settings.token_encryption_key)
         installation = session.scalar(select(SquareInstallation).where(
-            SquareInstallation.organization_id == tenant.organization_id,
+            SquareInstallation.organization_id == organization_id,
             SquareInstallation.environment == settings.environment,
         ).with_for_update())
         if installation is None:
             installation = SquareInstallation(
-                id=uuid4(), organization_id=tenant.organization_id, environment=settings.environment,
+                id=uuid4(), organization_id=organization_id, environment=settings.environment,
                 merchant_id=pair.merchant_id, application_id=settings.application_id,
                 access_token_encrypted="", refresh_token_encrypted="",
                 access_token_expires_at=pair.expires_at,
@@ -205,11 +207,11 @@ def square_oauth_callback(
         installation.currency = str(location.get("currency") or "") or None if location else None
         installation.connection_state = "connected"
         installation.reconnect_reason = None if location else "no_active_location"
-        ensure_provider_selected(session, tenant.organization_id, PROVIDER_KEY)
+        ensure_provider_selected(session, organization_id, PROVIDER_KEY)
         session.commit()
     except (SquareApiError, InvalidOAuthState, SQLAlchemyError, ValueError) as exc:
         session.rollback()
-        logger.warning("Square OAuth failed org=%s reason=%s", tenant.organization_id,
+        logger.warning("Square OAuth failed org=%s reason=%s", organization_id,
                        getattr(exc, "code", type(exc).__name__))
         return _admin_redirect(settings, "error")
     return _admin_redirect(settings, "connected" if location else "no_location")
