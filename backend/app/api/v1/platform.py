@@ -103,15 +103,23 @@ def manifest(response: Response, tenant: TenantContext = Depends(ladels_compatib
     response.headers["Cache-Control"]="public, max-age=60" if version else "no-store";response.headers["Vary"]="Host"
     return {"id": f"/{tenant.organization_slug}", "name": config.get("displayName", "Order ahead"), "short_name": pwa.get("shortName", "Order"), "start_url": "/", "scope": "/", "display": "standalone", "theme_color": pwa.get("themeColor", "#6f7d5f"), "background_color": pwa.get("backgroundColor", "#f7f0e6"), "icons":[{"src":f"/api/v1/storefront/icon/192.png?{cache_key}","sizes":"192x192","type":"image/png","purpose":"any"},{"src":f"/api/v1/storefront/icon/512.png?{cache_key}","sizes":"512x512","type":"image/png","purpose":"any"},{"src":f"/api/v1/storefront/icon/192.png?maskable=1&{cache_key}","sizes":"192x192","type":"image/png","purpose":"maskable"},{"src":f"/api/v1/storefront/icon/512.png?maskable=1&{cache_key}","sizes":"512x512","type":"image/png","purpose":"maskable"}]}
 
+def _published_config(session: Session, organization_id) -> dict:
+    workspace=session.get(DesignWorkspace,organization_id);version=session.get(DesignVersion,workspace.published_version_id) if workspace and workspace.published_version_id else None
+    return version.config if version else DEFAULT_CONFIG
+
+
+def _tenant_icon_bytes(request: Request, session: Session, organization_id, size: int, *, maskable: bool = False) -> bytes:
+    config=_published_config(session,organization_id);colors=config.get("colors",{});icon_id=config.get("appIconMediaId")
+    position=(config.get("imagePositions") or {}).get("appIcon") or {"x":50,"y":50,"zoom":1}
+    item=session.scalar(select(MediaAsset).where(MediaAsset.id==UUID(str(icon_id)),MediaAsset.organization_id==organization_id,MediaAsset.status=="active")) if icon_id else None
+    if item:
+        return tenant_media_icon_png(media_storage(request).read(item.storage_key),size,colors.get("primary","#6f7d5f"),position,contain=str(icon_id)==str(config.get("logoMediaId")),maskable=maskable)
+    return tenant_icon_png(size,colors.get("primary","#6f7d5f"),colors.get("accent","#b98564"),maskable=maskable)
+
+
 @router.get("/storefront/icon/{size}.png")
 def storefront_icon(size: int, request: Request, maskable: bool = False, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> Response:
-    workspace=session.get(DesignWorkspace,tenant.organization_id);version=session.get(DesignVersion,workspace.published_version_id) if workspace and workspace.published_version_id else None
-    config=version.config if version else DEFAULT_CONFIG;colors=config.get("colors",{});icon_id=config.get("appIconMediaId")
-    try:
-        item=session.scalar(select(MediaAsset).where(MediaAsset.id==UUID(str(icon_id)),MediaAsset.organization_id==tenant.organization_id,MediaAsset.status=="active")) if icon_id else None
-        if item:
-            content=tenant_media_icon_png(media_storage(request).read(item.storage_key),size,colors.get("primary","#6f7d5f"),position,contain=str(icon_id)==str(config.get("logoMediaId")),maskable=maskable)
-        else: content=tenant_icon_png(size,colors.get("primary","#6f7d5f"),colors.get("accent","#b98564"),maskable=maskable)
+    try: content=_tenant_icon_bytes(request,session,tenant.organization_id,size,maskable=maskable)
     except ValueError as error: raise HTTPException(404,detail="Icon not found.") from error
     return Response(content=content,media_type="image/png",headers={"Cache-Control":"public, max-age=31536000, immutable","Vary":"Host"})
 
@@ -209,7 +217,19 @@ def launch_kit(tenant: TenantContext = Depends(authenticated_owner_tenant), sess
     hostname=session.scalar(select(StorefrontHostname.hostname).where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.status=="verified",StorefrontHostname.is_canonical.is_(True)))
     if not hostname: raise HTTPException(409,detail="Verify a canonical storefront before generating launch assets.")
     url=pilot_shop_url(tenant.organization_slug) or (f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true" else storefront_url(hostname))
-    return {"url":url,"qrUrl":"/api/v1/owner/storefront/launch-kit/qr.svg","printUrl":"/api/v1/owner/storefront/launch-kit/print"}
+    config=_published_config(session,tenant.organization_id);profile=session.get(BusinessProfile,tenant.organization_id)
+    colors=config.get("colors") or DEFAULT_CONFIG["colors"]
+    name=(profile.display_name if profile and profile.display_name.strip() else config.get("displayName")) or "Our café"
+    return {"url":url,"qrUrl":"/api/v1/owner/storefront/launch-kit/qr.svg","printUrl":"/api/v1/owner/storefront/launch-kit/print",
+            "logoUrl":"/api/v1/owner/storefront/launch-kit/logo.png","name":name,
+            "colors":{key:colors.get(key,DEFAULT_CONFIG["colors"][key]) for key in ("primary","accent","background","surface","text")}}
+
+@router.get("/owner/storefront/launch-kit/logo.png")
+def launch_logo(request: Request, tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> Response:
+    """The shop's app icon, same-origin for the owner so the marketing kit can draw it on a canvas."""
+    try: content=_tenant_icon_bytes(request,session,tenant.organization_id,512)
+    except ValueError as error: raise HTTPException(404,detail="Icon not found.") from error
+    return Response(content=content,media_type="image/png",headers={"Cache-Control":"private, no-store"})
 
 @router.get("/owner/storefront/launch-kit/qr.svg")
 def launch_qr(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> Response:
@@ -226,7 +246,7 @@ def launch_print(tenant: TenantContext = Depends(authenticated_owner_tenant), se
     staging=os.getenv("JDS_ENVIRONMENT","").lower()=="staging" and os.getenv("JDS_ENABLE_STAGING_REVIEW","false").lower()=="true"
     staging_url=f"{os.environ['FRONTEND_URL'].rstrip('/')}?review_tenant={tenant.organization_slug}" if staging else ""
     name=escape(profile.display_name);url=escape(pilot_shop_url(tenant.organization_slug) or (staging_url if staging else storefront_url(hostname)))
-    body=f"""<!doctype html><html><head><title>{name} launch sign</title><style>body{{font-family:system-ui;text-align:center;padding:8vh;color:#222}}h1{{font-size:3rem}}img{{width:min(60vw,420px)}}p{{font-size:1.4rem}}@media print{{button{{display:none}}}}</style></head><body><h1>Order ahead from {name}</h1><img src='/api/v1/owner/storefront/launch-kit/qr.svg' alt='QR code for {name}'><p>{url}</p><button onclick='print()'>Print sign</button></body></html>"""
+    body=f"""<!doctype html><html><head><title>{name} app sign</title><style>body{{font-family:system-ui;text-align:center;padding:8vh;color:#222}}h1{{font-size:3rem}}img{{width:min(60vw,420px)}}p{{font-size:1.4rem}}@media print{{button{{display:none}}}}</style></head><body><h1>Scan to get our app</h1><h2>{name}</h2><img src='/api/v1/owner/storefront/launch-kit/qr.svg' alt='QR code for {name}'><p>Scan with your phone camera, then tap “Get the app” to add {name} to your home screen.</p><p>{url}</p><button onclick='print()'>Print sign</button></body></html>"""
     return HTMLResponse(body,headers={"Cache-Control":"private, no-store"})
 
 @router.put("/owner/storefront")

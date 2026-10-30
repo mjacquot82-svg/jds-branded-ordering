@@ -7,9 +7,13 @@ import AppErrorBoundary from "./components/AppErrorBoundary.jsx";
 import "./style.css";
 import { TenantProvider } from "./tenant/TenantContext.jsx";
 import { applyOperationsBranding, isOperationsPath } from "./tenant/operationsBranding.js";
+import { captureInstallPrompt } from "./services/installPrompt.js";
 
 // Avoid flashing a café title/icon on owner, setup, and /build pages before React mounts.
 if (isOperationsPath(location.pathname)) applyOperationsBranding(document, location.pathname);
+
+// Catch the Android/Chrome install event before React mounts so "Get the app" can use it.
+if (!isOperationsPath(location.pathname)) captureInstallPrompt(window);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register(`/service-worker.js?tenant=${encodeURIComponent(location.hostname)}`, { scope: "/", updateViaCache: "none" }).catch((error) => {
