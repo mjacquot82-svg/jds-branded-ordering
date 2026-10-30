@@ -921,3 +921,32 @@ def test_owner_logo_and_public_icon_share_one_helper() -> None:
     assert "_tenant_icon_bytes" in inspect.getsource(platform_api.storefront_icon)
     # The uploaded-icon path used to reference an undefined `position`; it now reads imagePositions.appIcon.
     assert 'get("appIcon")' in inspect.getsource(platform_api._tenant_icon_bytes)
+
+
+@pytest.mark.postgresql
+def test_package_choice_is_recorded_per_shop_and_shown_to_platform_admin(platform_db):
+    from app.api.v1.platform import PackageSelection, choose_owner_package, owner_package, packages
+
+    engine, (a, b, actor, _, _) = platform_db
+    catalog = packages()
+    assert [(p["key"], p["amountCents"]) for p in catalog["packages"]] == [("starter", 15000), ("plus", 22500), ("pro", 30000)]
+    assert "Free during the beta" in catalog["betaNotice"] and "30 days" in catalog["betaNotice"]
+    assert sum(1 for f in catalog["packages"][2]["features"] if f.get("comingSoon")) == 3
+    owner = AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="o@example.com",display_name="O",role="owner",permissions=frozenset(),assurance_level="password")
+    staff = AuthPrincipal(user_id=actor,membership_id=uuid4(),organization_id=a,application_id=uuid4(),session_id=uuid4(),email="s@example.com",display_name="S",role="staff",permissions=frozenset(),assurance_level="password")
+    with Session(engine) as session:
+        assert owner_package(context(a,"alpha"),session)["package"] is None
+        with pytest.raises(HTTPException) as denied:
+            choose_owner_package(PackageSelection(package="pro"), staff, context(a,"alpha"), session)
+        assert denied.value.status_code == 403
+        chosen = choose_owner_package(PackageSelection(package="plus"), owner, context(a,"alpha"), session)
+        assert chosen["package"] == "plus" and chosen["name"] == "Plus"
+        assert owner_package(context(b,"beta"),session)["package"] is None
+        # Recording a package never creates or changes a subscription (no billing).
+        assert session.get(OrganizationSubscription, a) is None
+        session.add(PlatformGrant(user_id=actor,capability="platform.organizations.read",is_active=True));session.commit()
+        rows = {item["id"]: item for item in platform_organizations(owner, session)}
+        assert rows[str(a)]["selectedPackage"] == "plus" and rows[str(b)]["selectedPackage"] is None
+        assert platform_organization_detail(a, owner, session)["selectedPackage"] == "plus"
+    with pytest.raises(Exception):
+        PackageSelection(package="gold")

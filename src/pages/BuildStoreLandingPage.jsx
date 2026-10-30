@@ -9,6 +9,9 @@ import {
   resendDemoVerification,
   signupDemo,
 } from "../services/demoFunnelApi.js";
+import PackagePicker from "../components/PackagePicker.jsx";
+import { forgetPackage, packageName, rememberPackage, rememberedPackage } from "../services/packages.js";
+import { saveOwnerPackage } from "../services/designStudioApi.js";
 
 function passwordHint(password, mode) {
   if (mode !== "signup") return null;
@@ -62,6 +65,9 @@ export default function BuildStoreLandingPage() {
       .catch(() => setPilot({ inviteRequired: false, captcha: { enabled: false } }));
   }, []);
 
+  const [selectedPackage, setSelectedPackage] = useState(() => rememberedPackage() || searchParams.get("package") || null);
+  function choosePackage(key) { setSelectedPackage(key); rememberPackage(key); }
+
   const hint = useMemo(() => passwordHint(form.password, mode), [form.password, mode]);
 
   if (session && ["owner", "manager"].includes(session.role)) {
@@ -97,7 +103,12 @@ export default function BuildStoreLandingPage() {
         setMode("enter");
         return;
       }
-      await refreshSession?.();
+      const nextSession = await refreshSession?.();
+      const pending = selectedPackage || rememberedPackage();
+      if (pending && nextSession?.csrf_token) {
+        // Record the choice only; nothing is charged during the beta.
+        await saveOwnerPackage(pending, nextSession.csrf_token).then(() => forgetPackage()).catch(() => {});
+      }
       navigate("/admin/design", { replace: true });
     } catch (error) {
       const message =
@@ -158,7 +169,7 @@ export default function BuildStoreLandingPage() {
         <ul className="build-store-points">
           <li>Start from the polished fictional Harbor &amp; Hearth café template (not a live shop)</li>
           <li>Customize branding and a starter menu, then preview safely</li>
-          <li>Go live later for about {amount} — JDS takes <strong>0% of sales</strong></li>
+          <li>Packages from {amount} — JDS takes <strong>0% of sales</strong>. Free during the beta.</li>
           <li>Real orders and payments stay locked until JDS activates your live plan</li>
         </ul>
         {pricing?.disclosure ? <p className="build-store-disclosure">{pricing.disclosure}</p> : null}
@@ -190,7 +201,11 @@ export default function BuildStoreLandingPage() {
             I already started
           </button>
         </div>
+        {mode === "signup" ? (
+          <PackagePicker value={selectedPackage} onChange={choosePackage} heading="Step 1: Pick your package" />
+        ) : null}
         <form className="owner-login-form" onSubmit={submit}>
+          {mode === "signup" ? <h2>{selectedPackage ? `Step 2: Create your account (${packageName(selectedPackage)})` : "Step 2: Create your account"}</h2> : null}
           {mode === "signup" ? (
             <>
               <label>
@@ -272,7 +287,8 @@ export default function BuildStoreLandingPage() {
               </span>
             </label>
           ) : null}
-          <button className="primary-button" disabled={status.kind === "working" || (mode === "signup" && !form.accepted_terms)} type="submit">
+          {mode === "signup" && !selectedPackage ? <p className="build-store-disclosure">Pick a package above to continue. You can change it later.</p> : null}
+          <button className="primary-button" disabled={status.kind === "working" || (mode === "signup" && (!form.accepted_terms || !selectedPackage))} type="submit">
             {status.kind === "working"
               ? "Working…"
               : mode === "signup"

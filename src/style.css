@@ -8408,3 +8408,18 @@ html[data-tenant-slug]:not([data-tenant-slug="the-guest-house"]) .cafe-hero-imag
 .legal-links{font-size:.9rem}.legal-links a{color:inherit}
 .legal-agree{display:flex;gap:.5rem;align-items:flex-start;font-size:.95rem}.legal-agree input{margin-top:.25rem}
 .cart-legal-note,.form-legal-note{font-size:.85rem;opacity:.8;margin-top:.75rem}
+
+/* Package picker (/build, owner dashboard) — stacks on phones */
+.package-picker { display: grid; gap: 0.75rem; margin: 1rem 0; }
+.package-beta-notice { background: #eef8f0; border: 1px solid #9fd3aa; border-radius: 10px; padding: 0.75rem 1rem; margin: 0; }
+.package-grid { display: grid; gap: 0.75rem; grid-template-columns: 1fr; }
+@media (min-width: 760px) { .package-grid { grid-template-columns: repeat(3, 1fr); } }
+.package-card { display: flex; flex-direction: column; gap: 0.4rem; text-align: left; padding: 1rem; border: 2px solid #d9d9d9; border-radius: 12px; background: #fff; color: inherit; font: inherit; cursor: pointer; min-height: 44px; }
+.package-card.is-selected { border-color: #1f6f43; box-shadow: 0 0 0 3px rgba(31, 111, 67, 0.15); }
+.package-card ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.25rem; }
+.package-name { font-weight: 700; font-size: 1.15rem; }
+.package-price { font-size: 1.35rem; font-weight: 700; }
+.package-includes { font-weight: 600; }
+.package-soon { font-style: normal; font-size: 0.8em; background: #fff4d6; border-radius: 6px; padding: 0 0.35rem; margin-left: 0.25rem; }
+.package-select { margin-top: auto; font-weight: 600; color: #1f6f43; }
+.package-notes { margin: 0; padding-left: 1.1rem; color: #555; }
