@@ -90,7 +90,10 @@ test("Owner Orders provides complete operational states and refresh safeguards",
   assert.match(page, /Mark Completed/);
   assert.match(page, /Return to Active/);
   assert.match(page, /window\.confirm/);
-  assert.doesNotMatch(page, /Start Preparing|Mark Ready|Complete Order/);
+  // Card orders stay one-click "Mark Completed"; only pay-at-pickup orders get kitchen stages.
+  assert.doesNotMatch(page, /Complete Order/);
+  assert.equal((page.match(/Start Preparing|Mark Ready/g) || []).length, 2);
+  assert.match(page, /PAY_AT_PICKUP_STAGE_ACTION = \{\n  new: \["Start Preparing", "preparing"\],\n  preparing: \["Mark Ready", "ready"\],\n\};/);
   assert.doesNotMatch(page, /Waiting for payment<\/span>/);
   assert.doesNotMatch(page, />New<\/span>/);
   assert.match(page, /Recent history/);

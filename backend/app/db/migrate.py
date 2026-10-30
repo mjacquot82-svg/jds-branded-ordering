@@ -89,6 +89,8 @@ ORDER_CLOVER_COLUMN_NAMES = frozenset(
         "payment_failure_code",
         "payment_paid_at",
         "payment_provider_metadata",
+        # Per-shop order number prefix (20261029_35)
+        "reference_prefix",
     }
 )
 ORDER_TENANT_COLUMN_NAMES = frozenset({"organization_id"})

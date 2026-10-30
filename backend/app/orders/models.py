@@ -210,6 +210,9 @@ class Order(OrderModelValidation, Base):
     guest_email: Mapped[str] = mapped_column(String(320))
     guest_phone: Mapped[str] = mapped_column(String(30))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Shop-specific order number prefix captured when the order is created
+    # (e.g. "TBC" -> TBC-000123). Orders created before this existed keep "GH".
+    reference_prefix: Mapped[str | None] = mapped_column(String(8))
     requested_pickup_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     business_timezone: Mapped[str] = mapped_column(String(100))
     currency: Mapped[str] = mapped_column(

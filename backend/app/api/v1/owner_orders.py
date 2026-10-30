@@ -1,3 +1,4 @@
+from app.orders.reference import order_reference
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -68,7 +69,7 @@ class OwnerOrderResponse(OwnerOrderSchema):
     def from_model(cls, order: Order) -> "OwnerOrderResponse":
         return cls(
             id=order.id,
-            reference=f"GH-{order.id:06d}",
+            reference=order_reference(order),
             version=order.version,
             payment_status=order.status,
             payment_method="pay_at_pickup" if is_pay_at_pickup(order) else "online",

@@ -21,6 +21,8 @@ const money = (cents, currency = "CAD") => new Intl.NumberFormat("en-CA", {
 }).format(cents / 100);
 
 const STATUS_LABELS = {
+  preparing: "Preparing",
+  ready: "Ready for pickup",
   completed: "Completed",
   cancelled: "Cancelled",
 };
@@ -37,6 +39,21 @@ const NEXT_ACTION = {
   preparing: ["Mark Completed", "completed"],
   ready: ["Mark Completed", "completed"],
 };
+
+// Pay-at-pickup orders are made before the customer pays at the counter, so staff can
+// move them through Preparing and Ready while unpaid. Completing still needs "Mark as paid".
+export const PAY_AT_PICKUP_STAGE_ACTION = {
+  new: ["Start Preparing", "preparing"],
+  preparing: ["Mark Ready", "ready"],
+};
+
+export function nextOrderAction(order) {
+  const payAtPickup = order.payment_method === "pay_at_pickup";
+  const stage = payAtPickup ? PAY_AT_PICKUP_STAGE_ACTION[order.fulfillment_status] : null;
+  if (stage) return stage;
+  if (order.payment_status !== "paid") return null;
+  return NEXT_ACTION[order.fulfillment_status] || null;
+}
 
 function pickupTime(order) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -101,8 +118,8 @@ function OrderDetail({ order, showFinancials }) {
 function OrderCard({ administrator, busy, canFulfill, history, now, onAction, onCancel, onMarkPaid, onNoShow, onReturn, order }) {
   const payAtPickupUnpaid = order.pay_at_pickup_unpaid === true;
   const [expanded, setExpanded] = useState(false);
-  const next = NEXT_ACTION[order.fulfillment_status];
-  const actionable = canFulfill && order.payment_status === "paid" && next;
+  const next = history ? null : nextOrderAction(order);
+  const actionable = canFulfill && next;
   const returnable = history && canFulfill && order.payment_status === "paid" && order.fulfillment_status === "completed";
   const attentionReasons = history ? [] : ownerOrderAttentionReasons(order, now);
   const overdue = new Date(order.requested_pickup_at) < now;
@@ -126,7 +143,7 @@ function OrderCard({ administrator, busy, canFulfill, history, now, onAction, on
         {administrator ? <strong>{money(order.total_cents, order.currency)}</strong> : null}
       </div>
       {payAtPickupUnpaid ? (
-        <p className="owner-order-warning"><AlertTriangle size={17} /> Collect {money(order.total_cents, order.currency)} at the counter, then mark it paid. If the customer never comes, mark a no-show.</p>
+        <p className="owner-order-warning"><AlertTriangle size={17} /> You can prepare this order now. Collect {money(order.total_cents, order.currency)} at the counter, then mark it paid to complete it. If the customer never comes, mark a no-show.</p>
       ) : order.payment_status !== "paid" ? (
         <p className="owner-order-warning"><AlertTriangle size={17} /> Payment is not complete. This order cannot be completed.</p>
       ) : null}

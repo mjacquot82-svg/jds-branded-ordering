@@ -242,3 +242,51 @@ def test_pay_at_pickup_satisfies_payment_readiness_without_clover(orders_api, mo
     with Session(engine) as session, session.begin():
         session.execute(delete(OrganizationOrderSettings))
     assert before in (True, False)
+
+
+@pytest.mark.postgresql
+def test_pay_at_pickup_moves_through_kitchen_stages_before_and_after_payment(owner_orders_api) -> None:
+    client, engine = owner_orders_api
+    owner_id = client.app.dependency_overrides[
+        __import__("app.api.v1.owner_auth", fromlist=["csrf_principal"]).csrf_principal
+    ]().user_id
+    with Session(engine) as session, session.begin():
+        if session.get(JdsUser, owner_id) is None:
+            session.add(JdsUser(id=owner_id, primary_email=f"owner-{owner_id}@example.test", display_name="Owner", status="active"))
+        order = add_order(session, key="pap-stages-001", payment=OrderStatus.PAYMENT_PENDING)
+        order.payment_status = "manual_unpaid"
+        order.payment_provider_metadata = {"method": "pay_at_pickup"}
+        card = add_order(session, key="card-unpaid-01", payment=OrderStatus.PAYMENT_PENDING)
+        order_id, card_id = order.id, card.id
+
+    url = f"/api/v1/owner/orders/{order_id}/fulfillment"
+    preparing = client.patch(url, json={"status": "preparing", "expected_version": 1})
+    assert preparing.status_code == 200, preparing.text
+    assert preparing.json()["fulfillment_status"] == "preparing"
+    assert preparing.json()["pay_at_pickup_unpaid"] is True
+    ready = client.patch(url, json={"status": "ready", "expected_version": 2})
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["fulfillment_timestamps"]["ready_at"] is not None
+    # still cannot complete while unpaid
+    blocked = client.patch(url, json={"status": "completed", "expected_version": 3})
+    assert blocked.status_code == 409 and blocked.json()["detail"]["code"] == "payment_required"
+    paid = client.post(f"/api/v1/owner/orders/{order_id}/mark-paid", json={"expected_version": 3})
+    assert paid.status_code == 200, paid.text
+    done = client.patch(url, json={"status": "completed", "expected_version": 4})
+    assert done.status_code == 200 and done.json()["fulfillment_status"] == "completed"
+
+    # card orders still need payment for every stage
+    card_stage = client.patch(f"/api/v1/owner/orders/{card_id}/fulfillment", json={"status": "preparing", "expected_version": 1})
+    assert card_stage.status_code == 409 and card_stage.json()["detail"]["code"] == "payment_required"
+
+
+def test_order_reference_prefix_per_shop() -> None:
+    from types import SimpleNamespace
+    from app.orders.reference import order_reference, order_reference_prefix
+    assert order_reference_prefix("Test Bean Café (TEST)") == "TBC"
+    assert order_reference_prefix("The Guest House") == "GH"
+    assert order_reference_prefix("Ladel's", "ladels") == "LAD"
+    assert order_reference_prefix("", "maple-bean-cafe") == "MBC"
+    assert order_reference_prefix("", "") == "JDS"
+    assert order_reference(SimpleNamespace(id=7, reference_prefix="TBC")) == "TBC-000007"
+    assert order_reference(SimpleNamespace(id=7, reference_prefix=None)) == "GH-000007"

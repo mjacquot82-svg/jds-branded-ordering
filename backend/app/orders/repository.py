@@ -138,6 +138,7 @@ class OrderRepository:
         current_status: FulfillmentStatus,
         target_status: FulfillmentStatus,
         now: datetime,
+        allow_unpaid: bool = False,
     ) -> bool:
         timestamp_column = {
             FulfillmentStatus.PREPARING: Order.preparing_at,
@@ -156,7 +157,9 @@ class OrderRepository:
                 Order.organization_id == self._tenant.organization_id,
                 Order.id == order_id,
                 Order.version == expected_version,
-                Order.status == OrderStatus.PAID,
+                Order.status.in_((OrderStatus.PAID, OrderStatus.PAYMENT_PENDING))
+                if allow_unpaid
+                else Order.status == OrderStatus.PAID,
                 Order.fulfillment_status == current_status,
             )
             .values(

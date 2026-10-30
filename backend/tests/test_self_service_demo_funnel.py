@@ -607,3 +607,22 @@ def test_29_pilot_shop_links_only_open_live_ready_shops(demo_ctx, monkeypatch):
         finally:
             current_pilot_shop.reset(token)
             session.rollback()
+
+
+def test_30_new_shops_start_with_pay_at_pickup_off(demo_ctx):
+    from app.payments.models import OrganizationOrderSettings
+    from app.payments.pay_at_pickup import check_eligibility, get_order_settings
+    engine, settings, provider = demo_ctx
+    with Session(engine) as session:
+        issued = _signup(session, settings, provider, f"pap-off-{uuid4().hex[:8]}@example.com", "Fresh Café")
+        org_id = issued.principal.organization_id
+        assert session.get(OrganizationOrderSettings, org_id) is None
+        view = get_order_settings(session, org_id)
+        assert view.pay_at_pickup_enabled is False
+        assert (view.pay_at_pickup_min_completed_orders, view.pay_at_pickup_max_total_cents) == (1, 2500)
+        # Activation (promote to live) must not switch it on either.
+        _service(session, settings, provider).promote_to_live(
+            organization_id=org_id, actor_user_id=issued.principal.user_id, now=datetime.now(timezone.utc)
+        )
+        assert get_order_settings(session, org_id).pay_at_pickup_enabled is False
+        assert check_eligibility(session, org_id, issued.principal.user_id, total_cents=500).available is False
