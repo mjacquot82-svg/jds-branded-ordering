@@ -32,6 +32,7 @@ from app.payments.service import (
 )
 from app.tenancy.context import TenantContext
 from app.platform.commercial import enforce_live_commerce
+from app.communications.customer_receipts import send_customer_receipt_safely
 from app.communications.order_alerts import send_new_order_alert_safely
 from app.payments.pay_at_pickup import (
     PayAtPickupError,
@@ -273,6 +274,7 @@ def choose_pay_at_pickup(
         ) from error
     if not already:
         send_new_order_alert_safely(session, order)
+        send_customer_receipt_safely(session, order)
     return PayAtPickupResponse(
         payment_method="pay_at_pickup",
         payment_status=order.payment_status or "manual_unpaid",
