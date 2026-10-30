@@ -1,6 +1,7 @@
 import json
 from app.tenancy.pilot_shop import pilot_shop_url
 from datetime import datetime, timezone
+from typing import Literal
 from html import escape
 import hashlib
 import os
@@ -26,6 +27,7 @@ from app.platform.acquisition import AcquisitionError, AcquisitionRequest, Merch
 from app.platform.config import STANDARD_STOREFRONT_BASE_DOMAIN, hosted_storefront_hostname, storefront_base_domain, storefront_url
 from app.platform.design import DEFAULT_CONFIG, DesignService, DesignValidationError
 from app.platform.entitlements import entitlement_features
+from app.platform.packages import BETA_NOTICE, package_catalog, package_name
 from app.platform.models import BillingPlan, BusinessProfile, DesignMediaReference, DesignVersion, DesignWorkspace, MediaAsset, OnboardingState, OperationalAuditEvent, OrganizationSubscription, PlatformGrant, StorefrontHostname
 from app.platform.media import MediaStorage, MediaStorageError, MediaValidationError, default_media_storage, image_dimensions, prepare_image
 from app.platform.starter_media import STARTER_MEDIA_ASSETS, starter_asset_art_style, starter_asset_available, starter_asset_path, starter_reference
@@ -396,6 +398,43 @@ def initial_launch(principal: AuthPrincipal = Depends(csrf_principal), tenant: T
     session.commit()
     return {"launched":True,"initialSetupCompletedAt":now,"publicReady":True}
 
+@router.get("/packages")
+def packages() -> dict:
+    return package_catalog()
+
+
+class PackageSelection(BaseModel):
+    package: Literal["starter", "plus", "pro"]
+
+
+def _package_view(organization: Organization) -> dict:
+    return {"package": organization.selected_package, "name": package_name(organization.selected_package),
+            "selectedAt": organization.selected_package_at, "betaNotice": BETA_NOTICE}
+
+
+@router.get("/owner/package")
+def owner_package(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    organization = session.get(Organization, tenant.organization_id)
+    if organization is None: raise HTTPException(404, detail="Organization not found.")
+    return _package_view(organization)
+
+
+@router.put("/owner/package")
+def choose_owner_package(payload: PackageSelection, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+    """Record the owner's package choice. No charge, no subscription or feature change."""
+    if principal.role not in {"owner", "manager"}:
+        raise HTTPException(403, detail={"code": "owner_required", "message": "Only the shop owner can choose a package."})
+    organization = session.get(Organization, tenant.organization_id)
+    if organization is None: raise HTTPException(404, detail="Organization not found.")
+    previous = organization.selected_package
+    if previous != payload.package:
+        organization.selected_package = payload.package
+        organization.selected_package_at = datetime.now(timezone.utc)
+        session.add(OperationalAuditEvent(organization_id=organization.id, scope="tenant", actor_user_id=principal.user_id, action="merchant.package_selected", target_type="organization", target_id=str(organization.id), outcome="success", metadata_json={"package": payload.package, "previous": previous}))
+        session.commit()
+    return _package_view(organization)
+
+
 @router.get("/owner/entitlements")
 def entitlements(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     state,plan,features=entitlement_features(session,tenant.organization_id)
@@ -525,7 +564,7 @@ def platform_organizations(principal: AuthPrincipal = Depends(current_principal)
         clover=session.scalars(select(CloverInstallation.connection_state).where(CloverInstallation.organization_id==org.id)).all()
         square=session.scalars(select(SquareInstallation.connection_state).where(SquareInstallation.organization_id==org.id)).all()
         provider=session.get(OrganizationPaymentSettings,org.id)
-        result.append({"id":str(org.id),"name":org.name,"slug":org.slug,"status":org.lifecycle_status,"onboarding":onboarding.state if onboarding else "not_started","publicReady":bool(onboarding and onboarding.public_ready),"canonicalHost":hostname,"ownerMemberships":owners or 0,"cloverHealth":sorted(set(clover)) or ["not_connected"],"squareHealth":sorted(set(square)) or ["not_connected"],"paymentProvider":provider.provider_key if provider else None,"publishedVersionId":str(design.published_version_id) if design and design.published_version_id else None,"subscription":subscription.state if subscription else "none"})
+        result.append({"id":str(org.id),"name":org.name,"slug":org.slug,"status":org.lifecycle_status,"onboarding":onboarding.state if onboarding else "not_started","publicReady":bool(onboarding and onboarding.public_ready),"canonicalHost":hostname,"ownerMemberships":owners or 0,"cloverHealth":sorted(set(clover)) or ["not_connected"],"squareHealth":sorted(set(square)) or ["not_connected"],"paymentProvider":provider.provider_key if provider else None,"publishedVersionId":str(design.published_version_id) if design and design.published_version_id else None,"subscription":subscription.state if subscription else "none","selectedPackage":org.selected_package})
     return result
 
 @router.get("/platform/admin/organizations/{organization_id}")
@@ -551,7 +590,7 @@ def platform_organization_detail(organization_id: UUID, principal: AuthPrincipal
     elif not installations or not any(item.connection_state=="connected" for item in installations): warnings.append("Clover is not connected.")
     if workspace is None or workspace.published_version_id is None: warnings.append("No storefront design is published.")
     if subscription is None: warnings.append("No subscription record is assigned.")
-    result={"id":str(organization.id),"name":organization.name,"slug":organization.slug,"status":organization.lifecycle_status,"readiness":{"publicReady":readiness.public_ready,"checks":readiness.checks},"hostnames":[{"id":str(item.id),"hostname":item.hostname,"status":item.status,"canonical":item.is_canonical} for item in hostnames],"owners":[{"membershipId":str(membership.id),"displayName":user.display_name,"email":user.primary_email,"status":membership.status} for membership,user,_ in owners],"clover":[{"environment":item.environment,"connectionState":item.connection_state,"merchantReference":item.merchant_id[-4:].rjust(len(item.merchant_id),"•") if item.merchant_id else None,"updatedAt":item.updated_at} for item in installations],"square":[{"environment":item.environment,"connectionState":item.connection_state,"merchantReference":item.merchant_id[-4:].rjust(len(item.merchant_id),"•") if item.merchant_id else None,"updatedAt":item.updated_at} for item in square_installations],"paymentProvider":selected_provider,"design":{"publishedVersionId":str(workspace.published_version_id) if workspace and workspace.published_version_id else None,"draftRevision":workspace.revision if workspace else None},"subscription":{"state":subscription.state,"plan":subscription.plan_key,"provider":subscription.provider} if subscription else None,"warnings":warnings,"audit":[{"action":item.action,"outcome":item.outcome,"targetType":item.target_type,"targetId":item.target_id,"occurredAt":item.occurred_at} for item in audits]}
+    result={"id":str(organization.id),"name":organization.name,"slug":organization.slug,"status":organization.lifecycle_status,"readiness":{"publicReady":readiness.public_ready,"checks":readiness.checks},"hostnames":[{"id":str(item.id),"hostname":item.hostname,"status":item.status,"canonical":item.is_canonical} for item in hostnames],"owners":[{"membershipId":str(membership.id),"displayName":user.display_name,"email":user.primary_email,"status":membership.status} for membership,user,_ in owners],"clover":[{"environment":item.environment,"connectionState":item.connection_state,"merchantReference":item.merchant_id[-4:].rjust(len(item.merchant_id),"•") if item.merchant_id else None,"updatedAt":item.updated_at} for item in installations],"square":[{"environment":item.environment,"connectionState":item.connection_state,"merchantReference":item.merchant_id[-4:].rjust(len(item.merchant_id),"•") if item.merchant_id else None,"updatedAt":item.updated_at} for item in square_installations],"paymentProvider":selected_provider,"design":{"publishedVersionId":str(workspace.published_version_id) if workspace and workspace.published_version_id else None,"draftRevision":workspace.revision if workspace else None},"subscription":{"state":subscription.state,"plan":subscription.plan_key,"provider":subscription.provider} if subscription else None,"selectedPackage":organization.selected_package,"selectedPackageAt":organization.selected_package_at,"warnings":warnings,"audit":[{"action":item.action,"outcome":item.outcome,"targetType":item.target_type,"targetId":item.target_id,"occurredAt":item.occurred_at} for item in audits]}
     session.add(OperationalAuditEvent(scope="platform",actor_user_id=principal.user_id,action="platform.organization_viewed",target_type="organization",target_id=str(organization_id),outcome="success"));session.commit()
     return result
 

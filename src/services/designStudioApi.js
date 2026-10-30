@@ -34,3 +34,6 @@ export async function uploadMedia(file, altText, csrf, purpose = "design") {
   if (!response.ok) throw new Error(body?.detail || "Image upload failed.");
   return body;
 }
+export const fetchPackages = () => request("/packages");
+export const fetchOwnerPackage = () => request("/owner/package");
+export const saveOwnerPackage = (pkg, csrf) => request("/owner/package", { method: "PUT", headers: { "X-CSRF-Token": csrf }, body: JSON.stringify({ package: pkg }) });

@@ -27,6 +27,7 @@ class Organization(Timestamped, Base):
     __table_args__ = (
         CheckConstraint("lifecycle_status IN ('onboarding','active','suspended','archived')", name="ck_organizations_lifecycle_status"),
         CheckConstraint("commercial_mode IN ('prospect','live')", name="ck_organizations_commercial_mode"),
+        CheckConstraint("selected_package IS NULL OR selected_package IN ('starter','plus','pro')", name="ck_organizations_selected_package"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     slug: Mapped[str] = mapped_column(String(100), unique=True)
@@ -35,6 +36,9 @@ class Organization(Timestamped, Base):
     lifecycle_status: Mapped[str] = mapped_column(String(20), default="active", server_default="active")
     # M2: free self-service demos are prospect; paying/legacy merchants are live.
     commercial_mode: Mapped[str] = mapped_column(String(20), default="live", server_default="live")
+    # Package the owner picked (record only; no billing, no feature gating yet).
+    selected_package: Mapped[str | None] = mapped_column(String(20))
+    selected_package_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class JdsUser(Timestamped, Base):
