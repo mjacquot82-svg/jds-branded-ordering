@@ -25,8 +25,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-# Supported provider keys for M1. Only clover is enabled for real checkout.
-ENABLED_PROVIDER_KEYS = frozenset({"clover"})
+# Providers with a real adapter. Square stays inert until JDS_SQUARE_* is set.
+ENABLED_PROVIDER_KEYS = frozenset({"clover", "square"})
 KNOWN_PROVIDER_KEYS = frozenset({"clover", "stripe", "square", "moneris"})
 
 

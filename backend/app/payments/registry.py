@@ -29,6 +29,10 @@ def get_provider(provider_key: str) -> PaymentProvider:
         from app.payments.adapters.clover_adapter import CloverPaymentProvider
 
         return CloverPaymentProvider()
+    if key == "square":
+        from app.payments.adapters.square_adapter import SquarePaymentProvider
+
+        return SquarePaymentProvider()
     raise UnsupportedProviderError(
         f"Payment provider '{key}' is not enabled on this platform.",
         code="payment_provider_unsupported",
