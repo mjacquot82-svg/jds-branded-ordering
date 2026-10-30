@@ -131,6 +131,7 @@ def test_alert_failure_never_breaks_the_order(orders_api, monkeypatch) -> None:
     body = _fresh_order(client, engine, ids)
     response = client.post(f"/api/v1/payments/orders/{body['public_token']}/pay-at-pickup")
     assert response.status_code == 200
+    _settings(engine, enabled=False)
 
 
 def test_alert_skips_when_not_configured(monkeypatch) -> None:
@@ -305,3 +306,53 @@ def test_owner_order_alerts_are_off_by_default(monkeypatch) -> None:
     assert calls == []
     monkeypatch.setenv("JDS_OWNER_ORDER_ALERTS_ENABLED", "true")
     assert order_alerts.owner_order_alerts_enabled() is True
+
+
+@pytest.mark.postgresql
+def test_customer_receipt_sent_once_for_pay_at_pickup(orders_api, monkeypatch) -> None:
+    client, engine, ids = orders_api
+    monkeypatch.delenv("JDS_OWNER_ORDER_ALERTS_ENABLED", raising=False)  # owner alerts stay off
+    monkeypatch.setenv("JDS_ORDER_ALERT_RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("JDS_ORDER_ALERT_FROM_EMAIL", "contact@jdsstudio.ca")
+    sent = []
+    monkeypatch.setattr(order_alerts, "email_sender", sent.append)
+    _verify(engine, _customer_id(client))
+    _settings(engine, min_completed=0, max_total=100000)
+    body = _fresh_order(client, engine, ids)
+    assert client.post(f"/api/v1/payments/orders/{body['public_token']}/pay-at-pickup").status_code == 200
+    assert client.post(f"/api/v1/payments/orders/{body['public_token']}/pay-at-pickup").status_code == 200
+    assert len(sent) == 1  # receipt only, once; no owner alert
+    receipt = sent[0]
+    with Session(engine) as session:
+        order = session.scalar(select(Order).where(Order.public_access_token == body["public_token"]))
+        from app.orders.reference import order_reference
+        reference = order_reference(order)
+        assert receipt.to == order.guest_email
+    assert reference in receipt.subject and reference in receipt.text
+    assert "Pay at pickup" in receipt.text and "Total:" in receipt.text and "Pickup:" in receipt.text
+    assert "Sent by JDS Studio" in receipt.text
+    _settings(engine, enabled=False)  # leave the shared shop as other tests expect
+
+
+@pytest.mark.postgresql
+def test_customer_receipt_skips_without_key_and_failures_never_block(orders_api, monkeypatch) -> None:
+    from app.communications import customer_receipts
+    client, engine, ids = orders_api
+    monkeypatch.delenv("JDS_ORDER_ALERT_RESEND_API_KEY", raising=False)
+    monkeypatch.setenv("JDS_ORDER_ALERT_FROM_EMAIL", "contact@jdsstudio.ca")
+    assert customer_receipts.customer_receipts_enabled() is False
+    monkeypatch.setenv("JDS_ORDER_ALERT_RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("JDS_CUSTOMER_RECEIPTS_ENABLED", "false")
+    assert customer_receipts.customer_receipts_enabled() is False
+    monkeypatch.delenv("JDS_CUSTOMER_RECEIPTS_ENABLED")
+
+    def boom(_message):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(order_alerts, "email_sender", boom)
+    _verify(engine, _customer_id(client))
+    _settings(engine, min_completed=0, max_total=100000)
+    body = _fresh_order(client, engine, ids, key="pap-receipt-fail-1")
+    response = client.post(f"/api/v1/payments/orders/{body['public_token']}/pay-at-pickup")
+    assert response.status_code == 200
+    _settings(engine, enabled=False)

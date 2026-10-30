@@ -36,6 +36,7 @@ from app.jds_auth.models import Organization
 from app.jds_auth.service import AuthPrincipal
 from app.orders.pricing import calculate_tax_cents
 from app.tenancy.context import TenantContext
+from app.communications.customer_receipts import send_customer_receipt_safely
 from app.communications.order_alerts import send_new_order_alert_safely
 from app.payments.order_payment import (
     mark_electronically_paid,
@@ -1325,6 +1326,7 @@ async def hosted_checkout_webhook(
         ) from error
     if order.status == OrderStatus.PAID and previous_status != OrderStatus.PAID:
         send_new_order_alert_safely(session, order)
+        send_customer_receipt_safely(session, order)
     logger.warning(
         "Clover Hosted Checkout webhook transition applied: %s",
         json.dumps(
@@ -1448,4 +1450,5 @@ def reconcile_hosted_checkout_payment(
     session.commit()
     if newly_paid:
         send_new_order_alert_safely(session, order)
+        send_customer_receipt_safely(session, order)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
