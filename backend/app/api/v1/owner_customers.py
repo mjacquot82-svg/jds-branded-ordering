@@ -3,6 +3,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.v1.orders import get_order_session
+from app.billing.service import enforce_package_feature
 from app.api.v1.owner_auth import require_read_permission
 from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.jds_auth.models import JdsUser
@@ -22,6 +23,7 @@ def owner_customers(
     tenant: TenantContext = Depends(authenticated_owner_tenant),
     session: Session = Depends(get_order_session),
 ) -> dict:
+    enforce_package_feature(session, tenant.organization_id, "customerList")
     query = (
         select(CustomerRelationship, JdsUser)
         .join(JdsUser, JdsUser.id == CustomerRelationship.user_id)

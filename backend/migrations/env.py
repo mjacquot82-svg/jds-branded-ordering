@@ -14,6 +14,7 @@ from app.customers import models as customer_models  # noqa: F401
 from app.push import models as push_models  # noqa: F401
 from app.loyalty import models as loyalty_models  # noqa: F401
 from app.platform import models as platform_models  # noqa: F401
+from app.billing import models as billing_models  # noqa: F401
 from app.db.base import Base
 
 config = context.config

@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
+from app.billing.usage import record_usage
 from app.communications import order_alerts
 from app.communications.order_alerts import AlertEmail
 from app.orders.models import Order
@@ -114,6 +115,7 @@ def send_customer_receipt_safely(session: Session, order: Order) -> bool:
             logger.info("customer receipt skipped order=%s reason=no_email", order.id)
             return False
         order_alerts.email_sender(build_customer_receipt(order, shop_name=_shop_name(session, order)))
+        record_usage(session, order.organization_id, "emails_sent")
         logger.info("customer receipt sent org=%s order=%s", order.organization_id, order.id)
         return True
     except Exception as error:  # noqa: BLE001 - receipts must never break ordering
@@ -145,6 +147,7 @@ def send_refund_email_safely(session: Session, order: Order) -> bool:
             logger.info("refund email skipped order=%s", getattr(order, "id", None))
             return False
         order_alerts.email_sender(build_refund_email(order, shop_name=_shop_name(session, order)))
+        record_usage(session, order.organization_id, "emails_sent")
         logger.info("refund email sent org=%s order=%s", order.organization_id, order.id)
         return True
     except Exception as error:  # noqa: BLE001

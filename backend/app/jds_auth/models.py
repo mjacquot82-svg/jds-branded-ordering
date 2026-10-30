@@ -39,6 +39,8 @@ class Organization(Timestamped, Base):
     # Package the owner picked (record only; no billing, no feature gating yet).
     selected_package: Mapped[str | None] = mapped_column(String(20))
     selected_package_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Shops marked exempt are never charged or feature-gated (beta shops are exempt by default).
+    billing_exempt: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class JdsUser(Timestamped, Base):
