@@ -36,3 +36,12 @@ async def test_request_id_is_propagated_or_safely_replaced() -> None:
     assert propagated.headers["X-Request-Id"] == "local-test:123"
     assert replaced.headers["X-Request-Id"] != "unsafe value"
     uuid.UUID(replaced.headers["X-Request-Id"])
+
+
+@pytest.mark.anyio
+async def test_liveness_accepts_head() -> None:
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.head("/health/live")
+
+    assert response.status_code == 200
