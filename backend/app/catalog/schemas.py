@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import model_validator, BaseModel, ConfigDict, Field
 
 
 class CatalogSchema(BaseModel):
@@ -63,7 +63,17 @@ class CategoryResponse(CatalogSchema):
 
 class CatalogPricingResponse(CatalogSchema):
     tax_name: str
+    # Stored scale: 10,000,000 = 100%, so 1,300,000 means 13% (the legacy field
+    # name says "millionths"). Kept unchanged so existing tax math is untouched.
     tax_rate_millionths: int = Field(ge=0, le=10_000_000)
+
+    # Human-readable rate derived from the scaled value, e.g. 13.0 for HST 13%.
+    tax_rate_percent: float | None = None
+
+    @model_validator(mode="after")
+    def _derive_tax_rate_percent(self) -> "CatalogPricingResponse":
+        self.tax_rate_percent = round(self.tax_rate_millionths / 100_000, 4)
+        return self
 
 
 class CatalogResponse(CatalogSchema):

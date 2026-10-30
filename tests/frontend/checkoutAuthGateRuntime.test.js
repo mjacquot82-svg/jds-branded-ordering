@@ -92,7 +92,7 @@ async function runContinuation(mode) {
     if (path === "/api/v1/scheduling/options") return response(200, { ordering_available: true, quick_pickup_options: [{ key: "asap", label: "ASAP", preference_minutes: null, requested_pickup_at: "2026-08-12T12:30:00Z" }], minimum_lead_time_minutes: 10, pickup_interval_minutes: 5, maximum_advance_days: 1, business_timezone: "UTC", custom_pickup_at: null, custom_pickup_error: null });
     if (path === "/api/v1/orders") {
       orderCalls += 1;
-      assert.equal(authenticated, true);
+      assert.equal(authenticated, mode !== "guest");
       assert.equal(options.credentials, "include");
       return response(201, {
         public_token: "customer-order-token", status: "pending",
@@ -104,7 +104,7 @@ async function runContinuation(mode) {
     }
     if (path.includes("/api/v1/payments/orders/") || path.includes("/api/v1/clover/orders/")) {
       cloverCalls += 1;
-      assert.equal(authenticated, true);
+      assert.equal(authenticated, mode !== "guest");
       assert.equal(options.credentials, "include");
       return response(200, { checkout_session_id: "mock-session", checkout_url: "https://checkout.example.test/mock" });
     }
@@ -116,10 +116,22 @@ async function runContinuation(mode) {
     await waitForText(document.body, "Coffee");
     await click([...document.querySelectorAll("a")].find((link) => link.textContent.trim() === "Cart"), dom.window);
     await waitForText(document.body, "Your order");
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent.includes("Place order")), dom.window);
-    await waitForText(document.body, "Sign in to place your order");
+    await waitForText(document.body, "Ordering as a guest");
+    assert.doesNotMatch(document.body.textContent, /Pay at pickup/);
+    if (mode === "guest") {
+      const contactInputs = document.querySelectorAll(".checkout-contact-grid input");
+      await input(contactInputs[0], "Jessie Guest", dom.window);
+      await input(contactInputs[1], "jessie@example.com", dom.window);
+      await input(contactInputs[2], "5198816869", dom.window);
+      await click([...document.querySelectorAll("button")].find((button) => button.textContent.includes("Place order")), dom.window);
+      for (let attempt = 0; attempt < 100 && cloverCalls === 0; attempt += 1) {
+        await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+      }
+      assert.equal(orderCalls, 1); assert.equal(cloverCalls, 1);
+      return;
+    }
     assert.equal(orderCalls, 0); assert.equal(cloverCalls, 0);
-    const authLink = [...document.querySelectorAll("a")].find((link) => link.textContent.trim() === (mode === "register" ? "Create Account" : "Sign In") && link.closest(".checkout-auth-required"));
+    const authLink = [...document.querySelectorAll("a")].find((link) => link.textContent.trim().toLowerCase() === (mode === "register" ? "create an account" : "sign in") && link.closest(".checkout-guest-note"));
     await click(authLink, dom.window);
     await waitForText(document.body, mode === "register" ? "Create Account" : "Welcome back");
     if (mode === "register") {
@@ -155,3 +167,4 @@ async function runContinuation(mode) {
 
 test("signed-out configured Cart signs in, preserves configuration, and submits with customer authority", { concurrency: false }, () => runContinuation("login"));
 test("signed-out configured Cart continues through Create Account and submits with customer authority", { concurrency: false }, () => runContinuation("register"));
+test("signed-out Cart can check out as a guest and pays by card", { concurrency: false }, () => runContinuation("guest"));

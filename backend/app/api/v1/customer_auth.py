@@ -137,6 +137,20 @@ def optional_customer(
         return None
 
 
+def optional_ordering_customer(
+    principal: AuthPrincipal | None = Depends(optional_customer),
+) -> AuthPrincipal | None:
+    """Signed-in ordering customer, or None for a guest checkout.
+
+    Guests can place and pay for an order by card; their order is reachable
+    only through its unguessable public token. Pay at pickup still requires
+    a signed-in customer with prior paid orders.
+    """
+    if principal is None or principal.role != "customer":
+        return None
+    return principal
+
+
 def customer_csrf(
     request: Request,
     principal: AuthPrincipal = Depends(current_customer),

@@ -1,4 +1,6 @@
+// Tax rates use a 10,000,000 = 100% scale (1,300,000 = 13%).
 export const TAX_RATE_SCALE = 10_000_000;
+
 
 export function calculateTaxCents(subtotalCents, taxRateMillionths) {
   if (!Number.isSafeInteger(subtotalCents) || subtotalCents < 0) {
@@ -17,6 +19,11 @@ export function calculateTaxCents(subtotalCents, taxRateMillionths) {
 }
 
 export function getOrderPricing(subtotalCents, pricing) {
+  // The menu may still be loading (e.g. /cart opened directly); show no tax yet
+  // instead of crashing. Real orders are always priced by the server.
+  if (!pricing || !Number.isSafeInteger(pricing.taxRateMillionths)) {
+    return { subtotalCents, taxCents: 0, totalCents: subtotalCents };
+  }
   const taxCents = calculateTaxCents(
     subtotalCents,
     pricing.taxRateMillionths
@@ -29,6 +36,9 @@ export function getOrderPricing(subtotalCents, pricing) {
 }
 
 export function formatTaxLabel(pricing) {
-  const percent = pricing.taxRateMillionths / 100_000;
+  if (!pricing) return "Tax";
+  const percent = Number.isFinite(pricing.taxRatePercent)
+    ? pricing.taxRatePercent
+    : pricing.taxRateMillionths / 100_000;
   return `${pricing.taxName} (${percent.toLocaleString("en-US")}%)`;
 }

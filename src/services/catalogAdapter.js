@@ -244,6 +244,9 @@ export function adaptCatalog(payload) {
         payload.pricing?.tax_rate_millionths,
         "pricing.tax_rate_millionths"
       ),
+      taxRatePercent: Number.isFinite(payload.pricing?.tax_rate_percent)
+        ? payload.pricing.tax_rate_percent
+        : payload.pricing.tax_rate_millionths / 100_000,
     },
     categories,
     products: products.sort(compareByOrder),

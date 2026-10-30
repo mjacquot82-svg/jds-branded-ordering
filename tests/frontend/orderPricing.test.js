@@ -18,3 +18,9 @@ test("order pricing applies the catalog tax rate with half-up cent rounding", ()
   });
   assert.equal(formatTaxLabel(pricing), "HST (13%)");
 });
+
+test("order pricing tolerates a menu that is still loading (cart opened directly)", () => {
+  assert.deepEqual(getOrderPricing(450, undefined), { subtotalCents: 450, taxCents: 0, totalCents: 450 });
+  assert.equal(formatTaxLabel(undefined), "Tax");
+  assert.equal(formatTaxLabel({ taxName: "HST", taxRateMillionths: 1_300_000, taxRatePercent: 13 }), "HST (13%)");
+});

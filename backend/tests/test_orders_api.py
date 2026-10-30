@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.availability.models import ProductAvailabilityOverride
 from app.api.v1.clover import _active_credential, create_hosted_checkout, get_settings
 from app.api.v1.catalog import ladels_compatibility_tenant
-from app.api.v1.customer_auth import current_ordering_customer
+from app.api.v1.customer_auth import current_ordering_customer, optional_ordering_customer
 from app.api.v1.orders import get_current_time
 from app.clover.client import CloverApiError, CloverClient, CloverTokenPair
 from app.clover.config import CloverSettings
@@ -72,6 +72,7 @@ def orders_api(
     application.dependency_overrides[ladels_compatibility_tenant] = lambda: LADELS_TENANT
     application.dependency_overrides[get_current_time] = lambda: local_datetime(8)
     application.dependency_overrides[current_ordering_customer] = lambda: customer
+    application.dependency_overrides[optional_ordering_customer] = lambda: customer
     with TestClient(application) as client:
         yield client, engine, ids
 
@@ -182,6 +183,7 @@ def test_authenticated_order_uses_authoritative_checkout_contact(
         ))
         session.commit()
     client.app.dependency_overrides[current_ordering_customer] = lambda: customer
+    client.app.dependency_overrides[optional_ordering_customer] = lambda: customer
     payload = order_payload(ids, customer={
         "name": "Checkout Customer",
         "email": "checkout@example.com",
@@ -221,6 +223,7 @@ def test_customer_cannot_read_or_checkout_another_customers_order(
         ))
         session.commit()
     client.app.dependency_overrides[current_ordering_customer] = lambda: other
+    client.app.dependency_overrides[optional_ordering_customer] = lambda: other
     settings = CloverSettings(
         app_id="app-id", app_secret="app-secret",
         token_encryption_key=Fernet.generate_key().decode(),
@@ -904,3 +907,35 @@ def test_order_openapi_documents_contract_and_errors() -> None:
     assert post_operation["responses"]["422"]
     assert get_operation["responses"]["200"]
     assert get_operation["responses"]["404"]
+
+
+@pytest.mark.postgresql
+def test_guest_can_order_and_reach_only_guest_orders_by_token(
+    orders_api: tuple[TestClient, Engine, dict[str, int]],
+) -> None:
+    client, engine, ids = orders_api
+    signed_in = client.app.dependency_overrides[optional_ordering_customer]
+    member_order = client.post("/api/v1/orders", json=order_payload(ids)).json()
+
+    client.app.dependency_overrides[optional_ordering_customer] = lambda: None
+    response = client.post(
+        "/api/v1/orders",
+        json=order_payload(ids, idempotency_key="guest-order-request-1"),
+    )
+    assert response.status_code == 201
+    guest_token = response.json()["public_token"]
+    with Session(engine) as session:
+        order = session.scalar(
+            select(Order).where(Order.public_access_token == guest_token)
+        )
+        assert order is not None
+        assert order.customer_user_id is None
+        assert order.guest_email == "jessie@example.com"
+
+    assert client.get(f"/api/v1/orders/{guest_token}").status_code == 200
+    # A guest cannot open a signed-in customer's order by token.
+    assert client.get(f"/api/v1/orders/{member_order['public_token']}").status_code == 404
+
+    # A signed-in customer cannot open a guest's order either.
+    client.app.dependency_overrides[optional_ordering_customer] = signed_in
+    assert client.get(f"/api/v1/orders/{guest_token}").status_code == 404
