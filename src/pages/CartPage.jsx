@@ -102,8 +102,6 @@ export default function CartPage() {
   const [paymentChoice, setPaymentChoice] = useState("online");
   const [payAtPickup, setPayAtPickup] = useState({ available: false, reason: "not_offered" });
   const [payAtPickupConfirmed, setPayAtPickupConfirmed] = useState(false);
-  const [showAuthRequirement, setShowAuthRequirement] = useState(false);
-  const authRequirementRef = useRef(null);
   const submissionGate = useRef(createSubmissionGate());
   useEffect(() => {
     if (!orderingCustomer) return;
@@ -171,8 +169,8 @@ export default function CartPage() {
     return () => controller.abort();
   }, [refreshScheduling, resolvedCart.hasStaleLines, schedulingLines.length, status]);
   const orderPricing = useMemo(
-    () => getOrderPricing(resolvedCart.totalCents, catalog.pricing),
-    [catalog.pricing, resolvedCart.totalCents]
+    () => getOrderPricing(resolvedCart.totalCents, catalog?.pricing),
+    [catalog?.pricing, resolvedCart.totalCents]
   );
   useEffect(() => {
     if (!orderingCustomer || stagingPaymentsDisabled || savedOrder) return;
@@ -253,11 +251,6 @@ export default function CartPage() {
   }
 
   async function placeOrder() {
-    if (!orderingCustomer) {
-      setShowAuthRequirement(true);
-      window.requestAnimationFrame(() => authRequirementRef.current?.focus());
-      return;
-    }
     const visibleContact = Object.fromEntries(
       Object.entries(checkoutContactInputsRef.current).map(([field, input]) => [
         field,
@@ -298,7 +291,8 @@ export default function CartPage() {
       const submission = await prepareOrderSubmission(request);
       const order = await createPendingOrder(submission);
       setSavedOrder(order);
-      if (paymentChoice === "pay_at_pickup" && payAtPickup.available) {
+      // Guests always pay by card; pay at pickup needs a signed-in customer with prior paid orders.
+      if (orderingCustomer && paymentChoice === "pay_at_pickup" && payAtPickup.available) {
         await choosePayAtPickup(order.public_token);
         setPayAtPickupConfirmed(true);
         clearOrderSubmission();
@@ -598,7 +592,7 @@ export default function CartPage() {
               <h2>How should we contact you?</h2>
             </div>
           </div>
-          {!orderingCustomer && showAuthRequirement ? <div className="checkout-auth-required" role="status" aria-live="polite"><h2 ref={authRequirementRef} tabIndex="-1">Sign in to place your order</h2><p>Your café bag is saved. Sign in or create a customer account to continue.</p><div className="form-actions"><Link className="primary-button" to="/account/sign-in?returnTo=%2Fcart">Sign In</Link><Link className="secondary-button" to="/account/create?returnTo=%2Fcart">Create Account</Link></div></div> : null}
+          {!orderingCustomer ? <p className="checkout-guest-note" role="note">Ordering as a guest — you’ll pay by card. <Link to="/account/sign-in?returnTo=%2Fcart">Sign in</Link> or <Link to="/account/create?returnTo=%2Fcart">create an account</Link> to save your details and earn rewards.</p> : null}
           <div className="checkout-contact-grid">
             <label>
               <span>Name</span>

@@ -1,5 +1,9 @@
 import os
 
+# Test-only database engines must see UTC like the app engine does, so results
+# never depend on the PostgreSQL server's local time zone or DST changes.
+os.environ["PGTZ"] = "UTC"
+
 import pytest
 from sqlalchemy import create_engine, text
 

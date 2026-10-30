@@ -148,6 +148,7 @@ test("adaptCatalog preserves the legacy category and product interfaces", () => 
   assert.deepEqual(result.pricing, {
     taxName: "HST",
     taxRateMillionths: 1_300_000,
+    taxRatePercent: 13,
   });
   assert.deepEqual(
     result.categories.map(({ id, backendId, name, note, sortOrder }) => ({

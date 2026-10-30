@@ -1344,8 +1344,10 @@ async def test_active_owner_cannot_sign_in_through_customer_login(
         "lines": [{"product_id": 1, "quantity": 1}],
     }
     owner_order = await auth_client.post("/api/v1/orders", json=ordering_payload)
-    assert owner_order.status_code == 401
-    assert owner_order.json()["detail"]["code"] == "unauthenticated"
+    # The failed customer login created no customer session, so this is just an
+    # ordinary guest request (rejected here only because product 1 is invalid).
+    assert owner_order.status_code == 422
+    assert "set-cookie" not in owner_order.headers
 
     owner_login_response = await auth_client.post(
         "/api/v1/owner/auth/login",
@@ -1415,7 +1417,7 @@ async def test_active_owner_cannot_sign_in_through_customer_login(
 
 @pytest.mark.anyio
 @pytest.mark.postgresql
-async def test_anonymous_order_and_clover_checkout_are_rejected_before_side_effects(
+async def test_anonymous_guest_order_is_allowed_but_checkout_needs_a_real_order(
     auth_client: AsyncClient,
     auth_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
@@ -1452,8 +1454,10 @@ async def test_anonymous_order_and_clover_checkout_are_rejected_before_side_effe
         "/api/v1/clover/orders/not-an-order/checkout"
     )
 
-    assert order_response.status_code == 401
-    assert checkout_response.status_code == 401
+    # Guests may order (card only); they are no longer rejected as unauthenticated.
+    assert order_response.status_code != 401
+    # Checkout for an unknown token never reaches the payment provider.
+    assert checkout_response.status_code in {404, 503}
     assert clover_calls == 0
     with Session(auth_engine) as session:
         assert session.scalar(select(text("count(*)")).select_from(Order)) == 0

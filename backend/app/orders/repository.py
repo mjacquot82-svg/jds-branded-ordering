@@ -38,13 +38,13 @@ class OrderRepository:
         )
 
     def get_by_public_access_token(
-        self, public_access_token: str, *, customer_user_id: UUID
+        self, public_access_token: str, *, customer_user_id: UUID | None
     ) -> Order | None:
         return self._session.scalar(
             self._complete_order_query().where(
                 Order.organization_id == self._tenant.organization_id,
                 Order.public_access_token == public_access_token,
-                Order.customer_user_id == customer_user_id,
+                order_owner_clause(customer_user_id),
             )
         )
 
@@ -227,3 +227,11 @@ class OrderRepository:
             "today_paid_revenue_cents": row[3] if row[4] <= 1 else None,
             "currency": row[5] if row[4] == 1 else None,
         }
+
+
+def order_owner_clause(customer_user_id: UUID | None):
+    """Signed-in customers see only their orders; guests (None) see only guest
+    orders, reachable solely by the unguessable public token."""
+    if customer_user_id is None:
+        return Order.customer_user_id.is_(None)
+    return Order.customer_user_id == customer_user_id

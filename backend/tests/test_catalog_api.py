@@ -95,6 +95,7 @@ async def test_catalog_returns_complete_seeded_guest_house_contract(
     assert payload["pricing"] == {
         "tax_name": "HST",
         "tax_rate_millionths": 1_300_000,
+        "tax_rate_percent": 13.0,
     }
 
     assert [category["slug"] for category in payload["categories"]] == [
@@ -456,3 +457,11 @@ def test_openapi_documents_catalog_contract() -> None:
         "pricing",
         "categories",
     }
+
+
+def test_catalog_pricing_reports_readable_tax_percent() -> None:
+    from app.catalog.schemas import CatalogPricingResponse
+
+    pricing = CatalogPricingResponse(tax_name="HST", tax_rate_millionths=1_300_000)
+    assert pricing.tax_rate_percent == 13.0
+    assert pricing.model_dump()["tax_rate_millionths"] == 1_300_000

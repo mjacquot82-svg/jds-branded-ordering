@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useNavigate } from "react-router-dom";
 import { useOwnerAuth } from "../auth/OwnerAuthContext.jsx";
@@ -36,10 +36,30 @@ const subscriptionMessages = {
   none: "No subscription is assigned yet.",
 };
 
+function LaunchConfirmDialog({ onConfirm, onClose }) {
+  const dialog = useRef(null);
+  useEffect(() => {
+    const element = dialog.current;
+    if (element && !element.open) element.showModal?.();
+    return () => element?.close?.();
+  }, []);
+  return (
+    <dialog aria-describedby="launch-confirm-message" aria-labelledby="launch-confirm-title" className="owner-confirm-dialog launch-confirm-dialog" onCancel={(event) => { event.preventDefault(); onClose(); }} ref={dialog}>
+      <h2 id="launch-confirm-title">Launch your ordering app?</h2>
+      <p id="launch-confirm-message">Customers will be able to open your app and place orders. You can still change your menu, hours, and design afterwards.</p>
+      <div className="form-actions">
+        <button className="primary-button" type="button" onClick={onConfirm}>Launch my app</button>
+        <button autoFocus className="secondary-button" type="button" onClick={onClose}>Not yet</button>
+      </div>
+    </dialog>
+  );
+}
+
 export default function LaunchPage({ setupMode = false }) {
   const { refreshSession, session } = useOwnerAuth();
   const navigate=useNavigate();
   const [state,setState]=useState({status:"loading"});
+  const [confirmingLaunch,setConfirmingLaunch]=useState(false);
   async function load(){try{const [readiness,storefront,entitlements,onboarding]=await Promise.all([fetchReadiness(),fetchStorefront(),fetchEntitlements(),fetchOnboarding()]);let kit=null;if(onboarding.initialSetupCompletedAt)kit=await fetchLaunchKit();setState({status:"ready",readiness,storefront,entitlements,onboarding,kit});}catch(error){setState({status:"error",error:error.message});}}
   useEffect(()=>{load();},[]);
   if(state.status==="loading")return <section className="page-section launch-page"><h1>Preparing your launch area…</h1><p>Checking your storefront and launch assets.</p></section>;
@@ -49,11 +69,12 @@ export default function LaunchPage({ setupMode = false }) {
   const paymentOk=Boolean(readiness.checks.payment_connected ?? readiness.checks.clover); const commerceReady=["business_profile","verified_hostname","fulfillment","hours","catalog"].every((key)=>readiness.checks[key]) && paymentOk;
   const wizardActions={business_profile:"/setup/business",verified_hostname:"/setup/business",fulfillment:"/setup/ordering",hours:"/setup/ordering",catalog:"/setup/catalog",published_design:"/setup/preview",payment_connected:"/setup/payments",clover:"/setup/payments"};
   const autoOnLaunch=new Set(["organization","published_design"]);const firstMissing=Object.keys(readiness.checks).find((key)=>!readiness.checks[key]&&!autoOnLaunch.has(key));
-  async function launch(){if(!globalThis.confirm?.("Launch the ordering app you reviewed?"))return;try{setState({...state,status:"publishing"});await launchMerchant(session.csrf_token);await load();}catch(error){setState({...state,status:"ready",error:error.message});}}
+  async function launch(){setConfirmingLaunch(false);try{setState({...state,status:"publishing"});await launchMerchant(session.csrf_token);await load();}catch(error){setState({...state,status:"ready",error:error.message});}}
   async function enterApplication(){await refreshSession();navigate("/admin",{replace:true});}
   return <section className={`page-section launch-page ${setupMode?"embedded-launch-step":""}`}><header><p className="eyebrow">{launched&&setupMode?"You’re live!":"Your final step"}</p><h1>{launched?setupMode?"You created your ordering app.":"Your ordering app is ready.":"Let’s get your app ready to launch."}</h1><p>{launched&&setupMode?"Share it with customers, open your storefront, or enter your owner dashboard.":"Everything here is checked against your saved app. Your storefront stays private until every launch check passes."}</p></header>
-    {state.error?<p className="owner-page-message error" role="alert">{state.error}</p>:null}<div className="launch-grid"><section className="operations-panel"><h2>{launched?"Here’s what your customers can use":"A few things still need attention"}</h2><ul className="launch-checks">{Object.entries(readiness.checks).map(([key,ready])=>{const [label,adminTo]=checkActions[key]||[checkNames[key]||key.replaceAll("_"," "),"/admin/setup"];const to=setupMode?(wizardActions[key]||"/setup/business"):adminTo;return <li className={ready?"ready":"pending"} key={key}><span aria-hidden="true">{ready?"✓":!launched&&autoOnLaunch.has(key)?"→":"○"}</span><span><strong>{label}</strong><small>{ready?"Ready":!launched&&autoOnLaunch.has(key)?"Done automatically when you click Launch":"Still needed"}</small></span>{!ready&&!autoOnLaunch.has(key)?<Link to={to}>Fix this</Link>:null}</li>;})}</ul>{!launched&&commerceReady?<button className="primary-button" type="button" onClick={launch}>Launch my app</button>:!launched?<Link className="primary-button" to={setupMode?(wizardActions[firstMissing]||"/setup/business"):"/admin/setup"}>Continue building my app</Link>:null}</section>
+    {state.error?<p className="owner-page-message error" role="alert">{state.error}</p>:null}<div className="launch-grid"><section className="operations-panel"><h2>{launched?"Here’s what your customers can use":"A few things still need attention"}</h2><ul className="launch-checks">{Object.entries(readiness.checks).map(([key,ready])=>{const [label,adminTo]=checkActions[key]||[checkNames[key]||key.replaceAll("_"," "),"/admin/setup"];const to=setupMode?(wizardActions[key]||"/setup/business"):adminTo;return <li className={ready?"ready":"pending"} key={key}><span aria-hidden="true">{ready?"✓":!launched&&autoOnLaunch.has(key)?"→":"○"}</span><span><strong>{label}</strong><small>{ready?"Ready":!launched&&autoOnLaunch.has(key)?"Done automatically when you click Launch":"Still needed"}</small></span>{!ready&&!autoOnLaunch.has(key)?<Link to={to}>Fix this</Link>:null}</li>;})}</ul>{!launched&&commerceReady?<button className="primary-button" type="button" onClick={()=>setConfirmingLaunch(true)}>Launch my app</button>:!launched?<Link className="primary-button" to={setupMode?(wizardActions[firstMissing]||"/setup/business"):"/admin/setup"}>Continue building my app</Link>:null}</section>
       <section className="operations-panel launch-assets"><h2>Customer launch kit</h2>{kit?<><label>Storefront URL<input readOnly value={kit.url}/></label><img src={kit.qrUrl} alt={`QR code for ${storefront.slug}`}/><div className="design-actions"><a className="primary-button" href={kit.url} target="_blank" rel="noreferrer">Open my app</a><a className="secondary-button" href={kit.printUrl} target="_blank" rel="noreferrer">Open printable sign</a><a className="secondary-button" href={kit.qrUrl} download={`${storefront.slug}-qr.svg`}>Download QR code</a>{setupMode?<button className="primary-button" type="button" onClick={enterApplication}>Go to dashboard</button>:null}</div><p>Place the sign near your counter or entrance so customers can scan and order from their phones.</p></>:<div className="preview-empty"><h3>Launch assets unlock when ready</h3><p>Complete the checks shown here, then return to download your QR code and printable sign.</p></div>}</section>
     </div><section className="operations-panel subscription-summary"><h2>Plan and feature access</h2><strong>{(entitlements.plan||"V1 access").replaceAll("-"," ")}</strong><p>{subscriptionMessages[entitlements.state]||`Subscription status: ${entitlements.state.replaceAll("_"," ")}.`}</p><ul>{Object.entries(entitlements.features).filter(([,enabled])=>enabled).map(([feature])=><li key={feature}>{feature.replace(/([A-Z])/g," $1").replace(/^./,(letter)=>letter.toUpperCase())}</li>)}</ul></section>
+  {confirmingLaunch?<LaunchConfirmDialog onConfirm={launch} onClose={()=>setConfirmingLaunch(false)}/>:null}
   </section>;
 }

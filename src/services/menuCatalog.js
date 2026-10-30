@@ -66,7 +66,9 @@ export function getMissingRequiredChoice(product, selections) {
     const distinctCount = group.allowQuantity
       ? Object.values(selectedValue || {}).filter((quantity) => quantity > 0).length
       : Array.isArray(selectedValue) ? selectedValue.length : selectedValue ? 1 : 0;
-    return (group.type === "single" && distinctCount > 1) || selectedCount < minimum || (group.maxSelections > 0 && selectedCount > group.maxSelections) || selectedCount === 0;
+    // Optional groups (e.g. milk on a latte) never block adding to the bag;
+    // only required groups or groups with a minimum need a choice.
+    return (group.type === "single" && distinctCount > 1) || selectedCount < minimum || (group.maxSelections > 0 && selectedCount > group.maxSelections);
   });
 }
 

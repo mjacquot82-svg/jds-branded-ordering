@@ -14,3 +14,9 @@ test("merchant launch area is readiness-gated and provides practical assets", ()
   assert.match(launch, /subscriptionMessages/);
   assert.match(permissions, /label: "Launch"/);
 });
+
+test("launch asks for confirmation with an in-app dialog, not a browser confirm box", () => {
+  assert.doesNotMatch(launch, /confirm\?\.\(|window\.confirm\(/);
+  assert.match(launch, /<dialog[^>]*launch-confirm-dialog/);
+  assert.match(launch, /setConfirmingLaunch\(true\)/);
+});

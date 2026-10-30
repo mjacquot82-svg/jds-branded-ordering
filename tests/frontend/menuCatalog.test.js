@@ -160,7 +160,8 @@ test("Menu begins every variant and modifier category unanswered", () => {
     ["size", "milk", "flavour-shots"]
   );
   assert.equal(getMissingRequiredChoice(product, getDefaultSelections(product)).name, "Size");
-  assert.equal(getMissingRequiredChoice(product, { ...getDefaultSelections(product), size: "small" }).name, "Milk");
+  // Optional groups (milk, flavour shots) never block: picking a size is enough.
+  assert.equal(getMissingRequiredChoice(product, { ...getDefaultSelections(product), size: "small" }), undefined);
   assert.equal(getMissingRequiredChoice(product, { ...getDefaultSelections(product), size: "small", milk: "__none__", "flavour-shots": "__none__" }), undefined);
   assert.equal(getDefaultSelections(product, { selectRequired: true }).size, "small");
 });

@@ -12,7 +12,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.v1.catalog import ladels_compatibility_tenant
-from app.api.v1.customer_auth import current_ordering_customer
+from app.api.v1.customer_auth import current_ordering_customer, optional_ordering_customer
+from app.orders.repository import order_owner_clause
 from app.api.v1.owner_auth import require_read_permission
 from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.db.session import get_db_session
@@ -120,7 +121,7 @@ def payment_connection(
 def create_order_checkout(
     public_token: str,
     response: Response,
-    customer: AuthPrincipal = Depends(current_ordering_customer),
+    customer: AuthPrincipal | None = Depends(optional_ordering_customer),
     session: Session = Depends(get_db_session),
     tenant: TenantContext = Depends(ladels_compatibility_tenant),
 ) -> CheckoutResponse:
@@ -132,7 +133,7 @@ def create_order_checkout(
             .options(selectinload(Order.items).selectinload(OrderItem.modifiers))
             .where(
                 Order.public_access_token == public_token,
-                Order.customer_user_id == customer.user_id,
+                order_owner_clause(customer.user_id if customer else None),
                 Order.organization_id == tenant.organization_id,
             )
             .with_for_update()

@@ -18,7 +18,7 @@ from app.platform.models import OperationalAuditEvent
 from app.tenancy.resolver import LADELS_ORGANIZATION_ID
 from tests.test_orders_api import order_payload, orders_api  # noqa: F401
 from tests.test_owner_orders import add_order, owner_orders_api  # noqa: F401
-from app.api.v1.customer_auth import current_ordering_customer
+from app.api.v1.customer_auth import current_ordering_customer, optional_ordering_customer
 
 
 def _customer_id(client):
