@@ -131,6 +131,7 @@ def test_alert_failure_never_breaks_the_order(orders_api, monkeypatch) -> None:
     body = _fresh_order(client, engine, ids)
     response = client.post(f"/api/v1/payments/orders/{body['public_token']}/pay-at-pickup")
     assert response.status_code == 200
+    _settings(engine, enabled=False)
 
 
 def test_alert_skips_when_not_configured(monkeypatch) -> None:
@@ -330,6 +331,7 @@ def test_customer_receipt_sent_once_for_pay_at_pickup(orders_api, monkeypatch) -
     assert reference in receipt.subject and reference in receipt.text
     assert "Pay at pickup" in receipt.text and "Total:" in receipt.text and "Pickup:" in receipt.text
     assert "Sent by JDS Studio" in receipt.text
+    _settings(engine, enabled=False)  # leave the shared shop as other tests expect
 
 
 @pytest.mark.postgresql
@@ -353,3 +355,4 @@ def test_customer_receipt_skips_without_key_and_failures_never_block(orders_api,
     body = _fresh_order(client, engine, ids, key="pap-receipt-fail-1")
     response = client.post(f"/api/v1/payments/orders/{body['public_token']}/pay-at-pickup")
     assert response.status_code == 200
+    _settings(engine, enabled=False)
