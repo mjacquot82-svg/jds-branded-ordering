@@ -1,3 +1,4 @@
+from app.platform.config import storefront_request_host
 from datetime import datetime
 import logging
 from typing import Annotated
@@ -50,7 +51,7 @@ def get_customer_auth_service(
     settings = get_customer_auth_settings(request)
     try:
         storefront = resolve_storefront_context(
-            session, host=request.url.hostname, frontend_url=settings.frontend_url,
+            session, host=storefront_request_host(request), frontend_url=settings.frontend_url,
             headers=request.headers, query_params=request.query_params,
         )
     except TenantResolutionError:
@@ -82,7 +83,7 @@ def current_customer(
     try:
         principal = service.resolve(token, now=now)
         storefront = resolve_storefront_context(
-            service._session, host=request.headers.get("host"),
+            service._session, host=storefront_request_host(request),
             frontend_url=settings.frontend_url, headers=request.headers,
             query_params=request.query_params,
         )
@@ -122,7 +123,7 @@ def optional_customer(
     try:
         principal = service.resolve(token, now=now)
         storefront = resolve_storefront_context(
-            service._session, host=request.headers.get("host"),
+            service._session, host=storefront_request_host(request),
             frontend_url=settings.frontend_url, headers=request.headers,
             query_params=request.query_params,
         )
@@ -256,7 +257,7 @@ def read_session(request: Request, service: AuthenticationService = Depends(get_
     try:
         principal, csrf = service.session_csrf(token, now=now)
         storefront = resolve_storefront_context(
-            service._session, host=request.headers.get("host"),
+            service._session, host=storefront_request_host(request),
             frontend_url=settings.frontend_url, headers=request.headers,
             query_params=request.query_params,
         )

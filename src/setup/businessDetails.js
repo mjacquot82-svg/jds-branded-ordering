@@ -28,6 +28,7 @@ export function customizeBusinessSlug(state, value) {
   return { ...state, slug: businessNameSlug(value), slugCustomized: true };
 }
 
-export function merchantAppAddress(slug, suffix) {
+export function merchantAppAddress(slug, suffix, shopLinkBase) {
+  if (shopLinkBase) return slug ? `${shopLinkBase}${encodeURIComponent(slug)}` : "";
   return `${slug}${suffix || ""}`;
 }

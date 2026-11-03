@@ -30,3 +30,24 @@ def storefront_url(hostname: str) -> str:
     if scheme not in {"http", "https"}:
         scheme = "https"
     return f"{scheme}://{hostname}"
+
+
+def storefront_request_host(request) -> str | None:
+    """Host to resolve a storefront from.
+
+    On Canner the web project proxies /api to the API project, so the API sees its own
+    hostname in Host and the shop's hostname in X-Forwarded-Host. When
+    JDS_TRUST_PROXY_STOREFRONT_HOST=true, a forwarded host that is exactly one label under
+    JDS_STOREFRONT_BASE_DOMAIN (e.g. maple.order.jdsstudio.ca) is used instead. That only
+    selects among verified, public-ready storefront mappings, which are public anyway.
+    """
+    own = request.headers.get("host") or request.url.hostname
+    if os.getenv("JDS_TRUST_PROXY_STOREFRONT_HOST", "false").strip().lower() != "true":
+        return own
+    base = storefront_base_domain()
+    forwarded = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip().split(":", 1)[0].rstrip(".").lower()
+    if base and forwarded.endswith(f".{base}"):
+        label = forwarded[: -len(base) - 1]
+        if label and "." not in label:
+            return forwarded
+    return own

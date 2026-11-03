@@ -29,6 +29,14 @@ def valid_pilot_slug(value: str | None) -> str | None:
     return slug if 3 <= len(slug) <= 63 and _SLUG.fullmatch(slug) else None
 
 
+def pilot_shop_link_base() -> str | None:
+    """Prefix the setup wizard shows before the slug while beta shop links are on."""
+    if not pilot_shop_links_enabled():
+        return None
+    frontend = os.getenv("FRONTEND_URL", "").rstrip("/")
+    return f"{frontend}/?{PILOT_SHOP_QUERY_KEY}=" if frontend else None
+
+
 def pilot_shop_url(slug: str) -> str | None:
     if not pilot_shop_links_enabled():
         return None

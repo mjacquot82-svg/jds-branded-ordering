@@ -1770,3 +1770,11 @@ async def test_owner_password_reset_accepts_recovery_access_token_link(
         json={"access_token": "recovery-access-token", "password": "too short pw"},
     )
     assert short.status_code == 422
+
+
+def test_supabase_signup_tags_owner_vs_customer_flow_for_email_template():
+    from app.jds_auth.provider import signup_flow_for_redirect
+    assert signup_flow_for_redirect("https://jds-beta-web.canner.app/build/verify") == "owner"
+    assert signup_flow_for_redirect("https://jds-beta-web.canner.app/build/verify/?x=1") == "owner"
+    assert signup_flow_for_redirect("https://shop.example/account/verify-email") == "customer"
+    assert signup_flow_for_redirect("") == "customer"

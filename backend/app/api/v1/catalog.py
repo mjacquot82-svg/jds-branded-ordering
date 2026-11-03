@@ -1,3 +1,4 @@
+from app.platform.config import storefront_request_host
 from collections.abc import Generator
 import logging
 import os
@@ -50,7 +51,7 @@ def ladels_compatibility_tenant(
                 if getattr(request.app.state, "staging_review_enabled", False)
                 and request.headers.get("x-forwarded-host", "").split(":", 1)[0].lower()
                 in getattr(request.app.state, "staging_allowed_hosts", frozenset())
-                else request.url.hostname
+                else storefront_request_host(request)
             ),
             frontend_url=frontend_url,
             headers=request.headers,
@@ -61,6 +62,23 @@ def ladels_compatibility_tenant(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "tenant_not_found", "message": "Storefront is unavailable."},
         ) from error
+
+
+def optional_storefront_tenant(
+    request: Request,
+    session: Session = Depends(get_catalog_session),
+) -> TenantContext | None:
+    """Like ladels_compatibility_tenant, but `?optional=1` turns "no storefront here" into None.
+
+    Owner/setup pages on the platform host have no café storefront; they ask with
+    optional=1 so the browser does not log a 404 on every page load.
+    """
+    try:
+        return ladels_compatibility_tenant(request, session)
+    except HTTPException as error:
+        if error.status_code == status.HTTP_404_NOT_FOUND and request.query_params.get("optional") == "1":
+            return None
+        raise
 
 
 @router.get("/catalog", response_model=CatalogResponse)
