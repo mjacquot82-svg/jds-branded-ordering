@@ -41,6 +41,7 @@ from app.jds_auth.schemas import (
     SessionResponse,
 )
 from app.platform.commercial import enforce_live_commerce
+from app.platform.config import single_label_storefront_host
 from app.jds_auth.service import (
     AuthPrincipal,
     AuthenticationError,
@@ -103,6 +104,21 @@ def get_auth_service(request: Request, session: Session = Depends(get_db_session
     return AuthenticationService(session, request.app.state.auth_provider, settings)
 
 
+def _is_hosted_shop_origin(session: Session, host: str) -> bool:
+    """True when `host` is exactly one label under the storefront base domain and resolves to a
+    live, public-ready shop, using the same lookup the storefront bootstrap uses.
+
+    Cheap by construction: the shape test rejects every non-shop host without touching the
+    database, and an accepted host costs the resolver's own organization lookup plus the
+    readiness check it already performs. No cache is added here.
+    """
+    from app.tenancy.resolver import is_hosted_storefront_host
+
+    if single_label_storefront_host(host) != host:
+        return False
+    return is_hosted_storefront_host(session, host)
+
+
 def require_trusted_origin(request: Request, settings: AuthSettings = Depends(get_auth_settings), session: Session = Depends(get_db_session)) -> None:
     origin = request.headers.get("origin")
     if origin == settings.frontend_url.rstrip("/"):
@@ -123,8 +139,21 @@ def require_trusted_origin(request: Request, settings: AuthSettings = Depends(ge
             return
     parsed=urlparse(origin or "")
     request_host=(request.url.hostname or "").lower()
-    if parsed.scheme == "https" and parsed.hostname == request_host and session.scalar(select(StorefrontHostname.id).where(StorefrontHostname.hostname==request_host,StorefrontHostname.status=="verified")) is not None:
-        return
+    if parsed.scheme == "https" and parsed.hostname == request_host:
+        # These lookups share the request session. Release the read transaction afterwards so
+        # the rate limiter's own `session.begin()` downstream still works; only close what we opened.
+        owns_transaction = not session.in_transaction()
+        try:
+            if session.scalar(select(StorefrontHostname.id).where(StorefrontHostname.hostname==request_host,StorefrontHostname.status=="verified")) is not None:
+                return
+            # A shop's own <slug>.<base domain> address is a legitimate origin even though PR #37
+            # stopped requiring a stored hostname row for it. Only an https origin that is itself a
+            # live, public-ready shop's single-label address counts; every other case still fails closed.
+            if _is_hosted_shop_origin(session, request_host):
+                return
+        finally:
+            if owns_transaction and session.in_transaction():
+                session.rollback()
     auth_error(403, "origin_invalid", "Request origin is not allowed.")
 
 

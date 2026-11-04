@@ -148,6 +148,19 @@ def _resolve_standard_subdomain(session: Session, host: str) -> TenantContext | 
     )
 
 
+def is_hosted_storefront_host(session: Session, host: str | None) -> bool:
+    """True when `host` is a live, public-ready shop's own <slug>.<base domain> address.
+
+    Reuses `_resolve_standard_subdomain`, so "live and public-ready" is decided in exactly one
+    place. A host that is not under the base domain, not a single label, or names no shop is
+    False; a shop that exists but is a demo, inactive, or not public-ready is also False.
+    """
+    try:
+        return _resolve_standard_subdomain(session, (host or "").split(":", 1)[0].rstrip(".").lower()) is not None
+    except TenantResolutionError:
+        return False
+
+
 def resolve_storefront_context(
     session: Session, *, host: str | None, frontend_url: str | None = None,
     headers: object | None = None, query_params: object | None = None,

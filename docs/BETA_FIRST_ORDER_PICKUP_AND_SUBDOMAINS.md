@@ -79,3 +79,28 @@ Section B still lost the shop host on the live beta: the running web proxy's
   instead of the short subdomain. Printing the short address needs a small backend change
   (accept the shop query for live, public-ready shops without also taking over the canonical
   launch links) — not done here.
+
+### Sign-in from the short address
+
+`require_trusted_origin` trusted only `FRONTEND_URL` or a **verified** `storefront_hostnames` row for
+the request host. PR #37 stopped requiring that row for `<slug>.<base>`, so once a shop printed the
+short address its sign-in POSTs would have got `403 origin_invalid`.
+
+- Added one case, everywhere the check lives (`backend/app/api/v1/owner_auth.py`; the only copy):
+  an `https` Origin whose hostname **equals the request host**, where that host is exactly one label
+  under `JDS_STOREFRONT_BASE_DOMAIN` **and** resolves to a live, public-ready shop.
+- "Live and public-ready" is not re-implemented: `is_hosted_storefront_host` in
+  `backend/app/tenancy/resolver.py` wraps `_resolve_standard_subdomain`, the same lookup the
+  storefront bootstrap uses.
+- Fail closed otherwise: `http`, a two-level host, an unknown slug, a prospect shop, a shop that is
+  not public-ready, or an Origin that is not the request host all still get `origin_invalid`. No
+  cache is added; a non-shop host is rejected by a string check before any query.
+- The lookups share the request session, so the check now releases the read transaction it opened
+  (only when it opened one) — otherwise the per-account login rate limiter's own `session.begin()`
+  raised `A transaction is already begun`.
+
+Caveat, verified live: Canner's edge replaces the forwarded host on the way to the API, so the API
+sees its **own** hostname as the request host even for `<slug>.order.jdsstudio.ca`. Origin and
+request host therefore only match when the API is reached under the shop's own address (direct
+origin or a reverse proxy that preserves it). On the current beta proxy this rule does not by itself
+make short-address sign-in work; the printed address still has to point at the API-visible origin.

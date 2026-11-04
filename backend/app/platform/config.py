@@ -47,6 +47,11 @@ def _single_label_storefront_host(value: str) -> str | None:
     return None
 
 
+def single_label_storefront_host(value: str) -> str | None:
+    """Public alias: the normalised host, or None unless it is exactly one label under the base."""
+    return _single_label_storefront_host(value)
+
+
 def storefront_request_host(request) -> str | None:
     """Host to resolve a storefront from.
 
