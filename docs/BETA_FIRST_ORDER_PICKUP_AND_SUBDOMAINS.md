@@ -86,21 +86,28 @@ Section B still lost the shop host on the live beta: the running web proxy's
 the request host. PR #37 stopped requiring that row for `<slug>.<base>`, so once a shop printed the
 short address its sign-in POSTs would have got `403 origin_invalid`.
 
-- Added one case, everywhere the check lives (`backend/app/api/v1/owner_auth.py`; the only copy):
-  an `https` Origin whose hostname **equals the request host**, where that host is exactly one label
-  under `JDS_STOREFRONT_BASE_DOMAIN` **and** resolves to a live, public-ready shop.
+- Added one case, everywhere the check lives (`backend/app/api/v1/owner_auth.py`; that is the only
+  copy — `customer_auth.py` delegates to it): the `Origin` header is `https`, names exactly one label
+  under `JDS_STOREFRONT_BASE_DOMAIN`, and that slug resolves to a live, public-ready shop.
+- **No `Origin` hostname == request host comparison.** Canner's edge rewrites the host the API sees,
+  so that comparison can never match for a shop subdomain on this platform; verified by curl, where a
+  spoofed `Host`, `X-Forwarded-Host` and `X-JDS-Storefront-Host` were all ignored. It was only ever a
+  proxy for "this Origin is a storefront we host", and the authoritative form of that question is
+  whether the Origin itself names such a shop right now.
 - "Live and public-ready" is not re-implemented: `is_hosted_storefront_host` in
   `backend/app/tenancy/resolver.py` wraps `_resolve_standard_subdomain`, the same lookup the
   storefront bootstrap uses.
-- Fail closed otherwise: `http`, a two-level host, an unknown slug, a prospect shop, a shop that is
-  not public-ready, or an Origin that is not the request host all still get `origin_invalid`. No
-  cache is added; a non-shop host is rejected by a string check before any query.
-- The lookups share the request session, so the check now releases the read transaction it opened
-  (only when it opened one) — otherwise the per-account login rate limiter's own `session.begin()`
-  raised `A transaction is already begun`.
-
-Caveat, verified live: Canner's edge replaces the forwarded host on the way to the API, so the API
-sees its **own** hostname as the request host even for `<slug>.order.jdsstudio.ca`. Origin and
-request host therefore only match when the API is reached under the shop's own address (direct
-origin or a reverse proxy that preserves it). On the current beta proxy this rule does not by itself
-make short-address sign-in work; the printed address still has to point at the API-visible origin.
+- Fail closed otherwise: `http`, a two-level host, a non-443 port, a path or userinfo in the Origin,
+  `Origin: null`, a missing Origin, an unknown slug, a prospect/demo shop, and a shop that is not
+  public-ready all still get `origin_invalid`. No cache is added; a non-shop origin is rejected by a
+  string check before any query.
+- The lookups share the request session, so the check releases the read transaction it opened (only
+  when it opened one) — otherwise the per-account login rate limiter's own `session.begin()` raised
+  `A transaction is already begun`.
+- Safe because host names are not secrets: an attacker can send any Origin from curl, so this case
+  cannot be doing the work alone. What an attacker cannot do is read the host-only Secure `__Host-`
+  session cookie from another origin, read a cross-origin response body without CORS approval, or
+  serve a page on our wildcard `*.<base domain>` — so no hostile page can *be* a passing Origin.
+  CSRF tokens still gate every state-changing owner and customer call. `Origin` is also not
+  authorization: the session cookie still has to be present and valid, so this widens where a sign-in
+  may be posted from, never who may sign in.

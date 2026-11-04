@@ -104,19 +104,28 @@ def get_auth_service(request: Request, session: Session = Depends(get_db_session
     return AuthenticationService(session, request.app.state.auth_provider, settings)
 
 
-def _is_hosted_shop_origin(session: Session, host: str) -> bool:
-    """True when `host` is exactly one label under the storefront base domain and resolves to a
-    live, public-ready shop, using the same lookup the storefront bootstrap uses.
+def _is_hosted_shop_origin(session: Session, parsed) -> bool:
+    """True when `parsed` is an https Origin naming exactly one label under the storefront base
+    domain and that slug resolves to a live, public-ready shop, using the same lookup the
+    storefront bootstrap uses.
 
-    Cheap by construction: the shape test rejects every non-shop host without touching the
-    database, and an accepted host costs the resolver's own organization lookup plus the
+    Cheap by construction: the shape test rejects every non-shop origin (a bare base domain,
+    "www", a two-level host, an IP, a non-443 port, empty or `null`) without touching the
+    database, and an accepted origin costs only the resolver's own organization lookup plus the
     readiness check it already performs. No cache is added here.
     """
     from app.tenancy.resolver import is_hosted_storefront_host
 
-    if single_label_storefront_host(host) != host:
+    # An Origin is scheme + host + port, never userinfo or a path. Anything unusual is not a shop.
+    if parsed.scheme != "https" or parsed.username or parsed.password or parsed.path:
         return False
-    return is_hosted_storefront_host(session, host)
+    try:
+        if parsed.port not in (None, 443):
+            return False
+    except ValueError:  # malformed port
+        return False
+    host = single_label_storefront_host(parsed.hostname or "")
+    return bool(host) and is_hosted_storefront_host(session, host)
 
 
 def require_trusted_origin(request: Request, settings: AuthSettings = Depends(get_auth_settings), session: Session = Depends(get_db_session)) -> None:
@@ -139,21 +148,33 @@ def require_trusted_origin(request: Request, settings: AuthSettings = Depends(ge
             return
     parsed=urlparse(origin or "")
     request_host=(request.url.hostname or "").lower()
-    if parsed.scheme == "https" and parsed.hostname == request_host:
-        # These lookups share the request session. Release the read transaction afterwards so
-        # the rate limiter's own `session.begin()` downstream still works; only close what we opened.
-        owns_transaction = not session.in_transaction()
-        try:
-            if session.scalar(select(StorefrontHostname.id).where(StorefrontHostname.hostname==request_host,StorefrontHostname.status=="verified")) is not None:
-                return
-            # A shop's own <slug>.<base domain> address is a legitimate origin even though PR #37
-            # stopped requiring a stored hostname row for it. Only an https origin that is itself a
-            # live, public-ready shop's single-label address counts; every other case still fails closed.
-            if _is_hosted_shop_origin(session, request_host):
-                return
-        finally:
-            if owns_transaction and session.in_transaction():
-                session.rollback()
+    # Both cases below read the database, and SQLAlchemy autobegins a transaction on any read.
+    # Release the transaction we opened (and only that one) before returning, so the per-account
+    # login rate limiter's own `session.begin()` downstream does not hit
+    # "A transaction is already begun on this Session".
+    owns_transaction = not session.in_transaction()
+    try:
+        if parsed.scheme == "https" and parsed.hostname == request_host and session.scalar(select(StorefrontHostname.id).where(StorefrontHostname.hostname==request_host,StorefrontHostname.status=="verified")) is not None:
+            return
+        # A shop's own <slug>.<base domain> address is a legitimate origin even though PR #37
+        # stopped requiring a stored hostname row for it. Note there is deliberately no
+        # `parsed.hostname == request_host` here: Canner's edge rewrites the host the API sees, so
+        # that comparison can never match for a shop subdomain on this platform. It was only ever a
+        # proxy for "this Origin is a storefront we host", and the authoritative form of that
+        # question is whether the Origin itself names a live, public-ready shop right now.
+        #
+        # This stays safe because host names are not secrets: an attacker can always send this
+        # header from curl, so the case must not be doing the work on its own. What an attacker
+        # cannot do is (a) read the host-only, Secure `__Host-` session cookie from another origin,
+        # (b) read a cross-origin response body without CORS approval, or (c) serve a page on our
+        # wildcard `*.<base domain>`, so there is no hostile page that can *be* a passing Origin.
+        # CSRF tokens still apply to every state-changing owner and customer call. A slug that is
+        # unknown, a demo, inactive, or not yet public-ready does not resolve and fails closed.
+        if _is_hosted_shop_origin(session, parsed):
+            return
+    finally:
+        if owns_transaction and session.in_transaction():
+            session.rollback()
     auth_error(403, "origin_invalid", "Request origin is not allowed.")
 
 
