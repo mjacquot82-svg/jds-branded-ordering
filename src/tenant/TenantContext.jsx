@@ -90,8 +90,8 @@ export function TenantProvider({ children }) {
   // Re-evaluated on client-side navigation so neither leaks into the other.
   useEffect(() => {
     if (isOperationsPath(location.pathname)) applyOperationsBranding(document, location.pathname);
-    else if (state.status === "ready") applyStorefrontBranding(document, state.value);
-  }, [location.pathname, state]);
+    else if (state.status === "ready") applyStorefrontBranding(document, state.value, bootstrapParams);
+  }, [location.pathname, state, bootstrapParams]);
   const context = useMemo(() => ({ ...state, storageKey: (key) => tenantStorageKey(state.value?.tenant?.id || "unresolved", key) }), [state]);
   if (state.status === "loading") return <main className="tenant-gate"><p>{isOperationsPath(location.pathname) ? "Loading…" : "Opening storefront…"}</p></main>;
   if (state.status === "error") {

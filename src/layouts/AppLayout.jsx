@@ -29,6 +29,8 @@ export default function AppLayout() {
   const showCustomerFooter = isCustomerFacingPath(pathname);
   const setupWizard = pathname === "/setup" || pathname.startsWith("/setup/") || pathname === "/activate" || pathname === "/build" || pathname.startsWith("/build/");
   const storefrontLayout = getLayoutDefinition(tenant.value?.design?.template);
+  // The header always names the shop: the design's name, falling back to the business profile's.
+  const headerConfig = { ...tenant.value?.design, displayName: tenant.value?.design?.displayName || tenant.value?.business?.displayName || "" };
   const primaryLinks = [
     ...customerLinks(storefrontLayout),
     {
@@ -53,7 +55,7 @@ export default function AppLayout() {
       ) : null}
       <header className="site-header">
         <div className="nav-container customer-nav-container">
-          <NavLink className="storefront-header-brand" to="/"><HeaderBrandingIdentity config={tenant.value.design} layout={storefrontLayout} logoUrl={tenant.value.design.logoMediaId?`/api/v1/storefront/media/${tenant.value.design.logoMediaId}`:null}/></NavLink>
+          <NavLink className="storefront-header-brand" to="/"><HeaderBrandingIdentity config={headerConfig} layout={storefrontLayout} logoUrl={tenant.value.design.logoMediaId?`/api/v1/storefront/media/${tenant.value.design.logoMediaId}`:null}/></NavLink>
           <nav className="desktop-nav" aria-label="Desktop ordering navigation">
             {primaryLinks.map((link) => {
               const Icon = link.icon;

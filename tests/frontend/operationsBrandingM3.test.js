@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom";
 import { applyOperationsBranding, applyStorefrontBranding, isOperationsPath, operationsTitle } from "../../src/tenant/operationsBranding.js";
 
 const indexHtml = await readFile(new URL("../../index.html", import.meta.url), "utf8");
-const storefront = { tenant: { id: "tenant-1" }, designVersion: 3, business: { displayName: "The Guest House" }, design: { template: "cozy", colors: { primary: "#123456" } } };
+const storefront = { tenant: { id: "tenant-1", slug: "maple" }, designVersion: 3, business: { displayName: "The Guest House" }, design: { template: "cozy", colors: { primary: "#123456" } } };
 
 test("operations routes are recognised; customer storefront routes are not", () => {
   for (const path of ["/build", "/setup/brand", "/admin/platform", "/owner/login", "/staff", "/go-live", "/activate"]) assert.equal(isOperationsPath(path), true, path);
@@ -35,7 +35,7 @@ test("storefront branding is unchanged for customer routes", () => {
   applyStorefrontBranding(doc, storefront);
   assert.equal(doc.documentElement.dataset.tenantTemplate, "cozy");
   assert.equal(doc.documentElement.style.getPropertyValue("--tenant-primary"), "#123456");
-  assert.equal(doc.querySelector('link[rel="apple-touch-icon"]').getAttribute("href"), "/api/v1/storefront/icon/192.png?tenant=tenant-1&v=3");
+  assert.equal(doc.querySelector('link[rel="apple-touch-icon"]').getAttribute("href"), "/api/v1/storefront/icon/192.png?tenant=tenant-1&v=3&shop=maple");
   assert.match(indexHtml, /<title>Ladel's Wellness Café<\/title>/); // storefront shell untouched
 });
 
@@ -44,6 +44,6 @@ test("tenant provider and entrypoint apply operations branding before and after 
     readFile(new URL("../../src/tenant/TenantContext.jsx", import.meta.url), "utf8"),
     readFile(new URL("../../src/main.jsx", import.meta.url), "utf8"),
   ]);
-  assert.match(provider, /if \(isOperationsPath\(location\.pathname\)\) applyOperationsBranding\(document, location\.pathname\);\s*else if \(state\.status === "ready"\) applyStorefrontBranding\(document, state\.value\);/);
+  assert.match(provider, /if \(isOperationsPath\(location\.pathname\)\) applyOperationsBranding\(document, location\.pathname\);\s*else if \(state\.status === "ready"\) applyStorefrontBranding\(document, state\.value, bootstrapParams\);/);
   assert.match(main, /if \(isOperationsPath\(location\.pathname\)\) applyOperationsBranding\(document, location\.pathname\);/);
 });

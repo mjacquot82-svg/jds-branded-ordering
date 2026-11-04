@@ -291,6 +291,7 @@ test("Home rejects stale exact configurations and keeps required choices behind 
 });
 
 const completedOrderDetail = {
+  reference: "GH-000016",
   public_token: "29htz8cmcustomer",
   status: "paid",
   fulfillment_status: "completed",
@@ -318,7 +319,7 @@ const completedOrderDetail = {
 };
 
 const completedOrderSummary = {
-  id: 16, status: "paid", fulfillment_status: "completed",
+  id: 16, reference: "GH-000016", status: "paid", fulfillment_status: "completed",
   requested_pickup_at: completedOrderDetail.requested_pickup_at,
   business_timezone: "America/Toronto", total_cents: 232,
   created_at: completedOrderDetail.created_at, item_count: 1,
@@ -348,7 +349,9 @@ test("Order History identifies collapsed orders and expands complete historical 
     const firstOrder = app.container.querySelector(".order-history-row");
     await act(async () => firstOrder.dispatchEvent(new app.dom.window.MouseEvent("click", { bubbles: true })));
     await waitForText(app.container, "Pickup 9:05 p.m.");
-    assert.match(app.container.textContent, /29HTZ8CM/);
+    // The customer reads the same number the shop sees; the public token stays in the URL only.
+    assert.match(app.container.textContent, /GH-000016/);
+    assert.doesNotMatch(app.container.textContent, /29HTZ8CM/);
     assert.match(app.container.textContent, /CompletedPaid/);
     assert.match(app.container.textContent, /1 × Drip Coffee/);
     assert.match(app.container.textContent, /Size12oz/);

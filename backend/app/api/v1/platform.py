@@ -100,13 +100,56 @@ def storefront_bootstrap(request: Request, response: Response, tenant: TenantCon
     staging = bool(getattr(request.app.state, "staging_review_enabled", False))
     return {"tenant": {"id": str(tenant.organization_id), "slug": tenant.organization_slug, "canonicalHost": host.hostname if host else None}, "business": {"displayName": profile.display_name if profile else tenant.organization_slug, "timezone": profile.timezone if profile else "America/Toronto", "currency": profile.currency if profile else "CAD", "pickupInstructions": profile.pickup_instructions if profile else "", "contactEmail": profile.contact_email if profile else None}, "design": version.config if version else DEFAULT_CONFIG, "designVersion": version.version_number if version else 0, "review": {"staging": staging, "label": "STAGING — NO REAL TRANSACTIONS" if staging else None, "paymentMode": getattr(request.app.state, "payment_mode", "production") if staging else "production"}}
 
+def _manifest_short_name(name: str, configured: object) -> str:
+    """The label under the installed icon: the shop's own short name, else a fit-safe name.
+
+    Home-screen labels are cut off after roughly a dozen characters, so a fallback derived
+    from the shop name keeps the first words instead of truncating mid-word at 30.
+    """
+    text = str(configured or "").strip()
+    if text and text.lower() not in {"order", "your business"}:
+        return text[:30]
+    words = str(name or "").split()
+    shortened = ""
+    for word in words:
+        candidate = f"{shortened} {word}".strip()
+        if len(candidate) > 12 and shortened:
+            break
+        shortened = candidate
+    return (shortened or "Order")[:30]
+
+
 @router.get("/storefront/manifest.webmanifest")
-def manifest(response: Response, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+def manifest(request: Request, response: Response, tenant: TenantContext | None = Depends(optional_storefront_tenant), session: Session = Depends(get_catalog_session)) -> Response:
+    # Same resolution as the storefront bootstrap: ?shop= and the shop's own host, nothing else.
+    # An unresolved storefront is a 404 so a browser install prompt never shows another shop.
+    if tenant is None:
+        raise HTTPException(404, detail={"code": "tenant_not_found", "message": "Storefront is unavailable."})
     workspace = session.get(DesignWorkspace, tenant.organization_id); version = session.get(DesignVersion, workspace.published_version_id) if workspace and workspace.published_version_id else None
-    config = version.config if version else DEFAULT_CONFIG; pwa = config.get("pwa", {})
-    version_key=version.version_number if version else 0; cache_key=f"tenant={tenant.organization_id}&v={version_key}"
-    response.headers["Cache-Control"]="public, max-age=60" if version else "no-store";response.headers["Vary"]="Host"
-    return {"id": f"/{tenant.organization_slug}", "name": config.get("displayName", "Order ahead"), "short_name": pwa.get("shortName", "Order"), "start_url": "/", "scope": "/", "display": "standalone", "theme_color": pwa.get("themeColor", "#6f7d5f"), "background_color": pwa.get("backgroundColor", "#f7f0e6"), "icons":[{"src":f"/api/v1/storefront/icon/192.png?{cache_key}","sizes":"192x192","type":"image/png","purpose":"any"},{"src":f"/api/v1/storefront/icon/512.png?{cache_key}","sizes":"512x512","type":"image/png","purpose":"any"},{"src":f"/api/v1/storefront/icon/192.png?maskable=1&{cache_key}","sizes":"192x192","type":"image/png","purpose":"maskable"},{"src":f"/api/v1/storefront/icon/512.png?maskable=1&{cache_key}","sizes":"512x512","type":"image/png","purpose":"maskable"}]}
+    config = version.config if version else DEFAULT_CONFIG; pwa = config.get("pwa", {}); colors = config.get("colors", {})
+    profile = session.get(BusinessProfile, tenant.organization_id)
+    name = str(config.get("displayName") or "").strip() or (profile.display_name if profile else "") or tenant.organization_slug
+    version_key=version.version_number if version else 0
+    # The icon is requested by the browser on its own, so it names the shop too instead of
+    # relying on an earlier request having left a shop cookie behind.
+    cache_key=f"tenant={tenant.organization_id}&v={version_key}&shop={tenant.organization_slug}"
+    body = {
+        "id": f"/{tenant.organization_slug}",
+        "name": name,
+        "short_name": _manifest_short_name(name, pwa.get("shortName")),
+        "start_url": "/", "scope": "/", "display": "standalone",
+        "theme_color": pwa.get("themeColor") or colors.get("primary") or "#6f7d5f",
+        "background_color": pwa.get("backgroundColor") or colors.get("background") or "#f7f0e6",
+        "icons": [
+            {"src": f"/api/v1/storefront/icon/{size}.png?{prefix}{cache_key}", "sizes": f"{size}x{size}", "type": "image/png", "purpose": purpose}
+            for purpose, prefix in (("any", ""), ("maskable", "maskable=1&"))
+            for size in (192, 512)
+        ],
+    }
+    return Response(
+        content=json.dumps(body), media_type="application/manifest+json",
+        headers={"Cache-Control": "public, max-age=60" if version else "no-store", "Vary": "Host"},
+    )
 
 def _published_config(session: Session, organization_id) -> dict:
     workspace=session.get(DesignWorkspace,organization_id);version=session.get(DesignVersion,workspace.published_version_id) if workspace and workspace.published_version_id else None

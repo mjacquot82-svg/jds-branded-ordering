@@ -7,6 +7,7 @@ import { useCustomerCatalog } from "../stores/customerCatalogStore.js";
 import { getCustomerErrorMessage } from "../services/customerMessages.js";
 import { formatConfigurationDescription, groupConfigurationSelections } from "../services/configurationDescription.js";
 import { writeTenantLocalStorage } from "../services/tenantBrowserState.js";
+import { orderReference } from "../services/orderReference.js";
 
 const money = (cents) => new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(cents / 100);
 const friendlyStatus = (value) => ({ paid: "Paid", completed: "Completed", ready: "Ready", preparing: "Preparing", new: "Received", cancelled: "Cancelled" })[value] || "In progress";
@@ -90,7 +91,7 @@ export default function OrdersPageMobile() {
     <div className="ordering-top-card compact-app-heading"><div><p className="eyebrow">Order history</p><h1>Orders</h1><p>Your previous customer-account orders.</p></div></div>
     {message ? <p className="form-status">{message}</p> : null}
     {detail ? <article className="content-block app-content-block order-detail-card">
-      <header className="order-detail-heading"><div><p className="eyebrow">Order</p><h2>{detail.public_token.slice(0, 8).toUpperCase()}</h2></div><div className="order-statuses"><span>{friendlyStatus(detail.fulfillment_status)}</span><span>{friendlyStatus(detail.status)}</span></div></header>
+      <header className="order-detail-heading"><div><p className="eyebrow">Order</p><h2>{orderReference(detail)}</h2></div><div className="order-statuses"><span>{friendlyStatus(detail.fulfillment_status)}</span><span>{friendlyStatus(detail.status)}</span></div></header>
       <div className="order-detail-timing"><time>{orderDate(detail.created_at, detail.business_timezone)}</time><span>Pickup {pickupTime(detail.requested_pickup_at, detail.business_timezone)}</span></div>
       <div className="order-history-items">{detail.items.map((item, index) => {
         const groups = groupConfigurationSelections([

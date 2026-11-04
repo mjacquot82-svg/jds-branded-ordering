@@ -29,6 +29,7 @@ export function applyOperationsBranding(doc = globalThis.document, pathname = gl
   if (!doc) return;
   doc.title = operationsTitle(pathname);
   setIcons(doc, JDS_OPERATIONS_ICON);
+  applyManifestLink(doc, "");
   doc.querySelector('meta[name="theme-color"]')?.setAttribute("content", JDS_OPERATIONS_THEME);
   const root = doc.documentElement;
   TENANT_VARIABLES.forEach((name) => root.style.removeProperty(name));
@@ -37,7 +38,34 @@ export function applyOperationsBranding(doc = globalThis.document, pathname = gl
   delete root.dataset.tenantButtons;
 }
 
-export function applyStorefrontBranding(doc = globalThis.document, value) {
+/**
+ * Point the page's install manifest at one shop, or remove the link when there is no shop.
+ *
+ * The static link in index.html names no shop, so on the platform host it can only 404.
+ * Every real storefront knows which shop it is, so the browser is told before it fetches:
+ * a shop address gets that shop's manifest, and a page with no shop asks for none.
+ */
+export function applyManifestLink(doc = globalThis.document, shop = "", key = "shop") {
+  if (!doc) return;
+  const slug = String(shop || "").trim();
+  const links = doc.querySelectorAll('link[rel="manifest"]');
+  if (!slug) { links.forEach((link) => link.remove()); return; }
+  const href = `/api/v1/storefront/manifest.webmanifest?${new URLSearchParams({ [key]: slug })}`;
+  if (!links.length) {
+    const link = doc.createElement("link");
+    link.setAttribute("rel", "manifest");
+    link.setAttribute("href", href);
+    doc.head?.appendChild(link);
+    return;
+  }
+  links.forEach((link) => link.setAttribute("href", href));
+}
+
+/**
+ * `resolution` is the query the storefront was actually bootstrapped with. The manifest must be
+ * addressed the same way (`review_tenant=`, `shop=`), or a review page asks for the wrong shop.
+ */
+export function applyStorefrontBranding(doc = globalThis.document, value, resolution = null) {
   if (!doc || !value) return;
   const colors = value.design?.colors || {};
   const root = doc.documentElement;
@@ -50,7 +78,11 @@ export function applyStorefrontBranding(doc = globalThis.document, value) {
   root.dataset.tenantTypography = value.design?.typography || "classic";
   root.dataset.tenantButtons = value.design?.buttonStyle || "rounded";
   doc.querySelector('meta[name="theme-color"]')?.setAttribute("content", value.design?.pwa?.themeColor || colors.primary || "#6f7d5f");
-  const iconUrl = `/api/v1/storefront/icon/192.png?tenant=${encodeURIComponent(value.tenant.id)}&v=${value.designVersion || 0}`;
+  // The shop slug travels with the icon too: a bare tenant id is not a resolution key on the
+  // shop's own address, so the generated install icon would otherwise be a 404 there.
+  const iconUrl = `/api/v1/storefront/icon/192.png?tenant=${encodeURIComponent(value.tenant.id)}&v=${value.designVersion || 0}&shop=${encodeURIComponent(value.tenant.slug || "")}`;
   doc.querySelectorAll('link[rel="apple-touch-icon"],link[rel="icon"],link[rel="shortcut icon"]').forEach((icon) => { icon.setAttribute("href", iconUrl); if (icon.getAttribute("rel") === "icon") icon.setAttribute("type", "image/png"); });
   doc.title = `${value.business?.displayName || "Order ahead"} · Order online`;
+  const reviewTenant = resolution?.get?.("review_tenant");
+  applyManifestLink(doc, reviewTenant || value.tenant?.slug, reviewTenant ? "review_tenant" : "shop");
 }

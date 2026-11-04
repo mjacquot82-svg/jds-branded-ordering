@@ -42,6 +42,7 @@ class CustomerOrderSummaryItem(CustomerSchema):
 
 class CustomerOrderSummary(CustomerSchema):
     id: int
+    reference: str
     status: str
     requested_pickup_at: str
     total_cents: int
