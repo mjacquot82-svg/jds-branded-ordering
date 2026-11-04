@@ -59,15 +59,17 @@ project. Canner Auth is passkey-only and is not wired into this app.
 - **Pull-request previews: OFF** (previews share the production database).
 - Database tab: provision Postgres 17 (`DATABASE_URL` is injected).
 - Settings → Build:
-  - Release command: `python -m app.db.migrate` (runs before each production
+  - Release command: `.venv/bin/python -m app.db.migrate` (runs before each production
     deploy, never on previews).
   - Start command:
-    `mkdir -p "$CANNER_DATA_DIR/media" && JDS_LOCAL_MEDIA_ROOT="$CANNER_DATA_DIR/media" uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-  - Health-check path: `/health/ready` (must answer within 30 s).
+    `mkdir -p "$CANNER_DATA_DIR/media" && JDS_LOCAL_MEDIA_ROOT="$CANNER_DATA_DIR/media" .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port $PORT`
+  - Health check path (Settings → Build → Health check path): `/health/ready`.
+    Any response under 500 counts as up.
 - Consider turning auto-rollback off if a future migration is not backward compatible.
 
-Python: Canner runs Python 3.11; `requires-python` allows `>=3.11,<3.13` and the
-full backend suite is run on both 3.11 and 3.12.
+Python: Canner runs Python 3.12.3 (confirmed by Canner, Nov 2). `requires-python`
+(`>=3.11,<3.13`) is unchanged and covers it. Canner builds the `pyproject.toml`
+into `.venv`; run migrations and the server through `.venv/bin/python`.
 
 ### API environment variables (mark secrets sensitive, scope runtime-only where possible)
 
@@ -98,8 +100,9 @@ Never set: `JDS_ENABLE_STAGING_REVIEW`, Clover tokens, any production
 ### Media on `CANNER_DATA_DIR`
 
 `JDS_MEDIA_STORAGE=local` is allowed because the pilot runs as `staging`
-(production refuses it). `CANNER_DATA_DIR` survives deploys, is per-app, backed up
-nightly and counts against the organization storage pool; preview deploys do not
+(production refuses it). `CANNER_DATA_DIR` is confirmed available on Live (Canner,
+Nov 2): it survives deploys, is per-app, is backed up nightly for production
+deploys only, and counts against the organization storage pool; preview deploys do not
 get it. Backups live on the same server unless off-site copies are configured.
 Canner object storage (MinIO, S3-compatible) would need a new storage adapter and
 is out of scope for the pilot.
@@ -107,6 +110,9 @@ is out of scope for the pilot.
 ## 3. Canner project `jds-pilot-web`
 
 - Same repo and branch, **root directory `/`**, previews **OFF**.
+- **Required: set Framework = Node.js** in Canner. Otherwise Canner deploys it as a
+  static site, only `dist/` ships and the proxy never runs (this is what caused the
+  Oct 28 revert of `jds-beta-web`).
 - Build command: `npm run build` (not `build:staging`, which only accepts Render origins).
 - Start command: `node scripts/canner-pilot-server.mjs`
 - Health check: `/` (serves `index.html`).
@@ -197,31 +203,30 @@ Expect two rows, both `true`. Zero rows inserted means the email didn't match.
 - [ ] Starter images; upload, replace and delete own photo
 - [ ] Redeploy API, uploaded photo still loads (CANNER_DATA_DIR persistence)
 - [ ] Two tabs open, save from both (no 403)
+- [ ] Owner login and saves pass the CSRF/Origin checks end to end through the
+      proxy (Canner's API edge may overwrite `X-Forwarded-Host`)
 - [ ] Sign out / in, data persists; preview shows checkout off
 - [ ] Activation request appears in `/admin`; Promote to live works
 - [ ] Second prospect cannot see or edit the first prospect's data
 - [ ] `/robots.txt` is `Disallow: /`; responses carry `X-Robots-Tag: noindex, nofollow`
-- [ ] Cold start after sleep (Starter): first request wakes both projects
+- [ ] Cold start after sleep: first request wakes both projects (~1–2 s each)
 - [ ] Guest House and Ladel's unaffected
 
-## 7. Cost (CAD, plus tax)
+## 7. Plan and cost (CAD, plus tax)
 
-- **Starter $0**: 512 MB app memory, 5 GB pooled storage shared with other
-  Canner apps, each project sleeps after 3 h idle (a few seconds to wake; two
-  projects may both be cold). Fine for Marc testing alone.
-- **Live $9/mo ($99/yr)**: 2 GB memory, 25 GB storage, 2 always-on projects —
-  exactly this pilot, if existing Canner apps aren't already using those slots
-  (extra always-on project $4/mo). Recommended before inviting testers.
+- Marc's 3 always-on slots are already used by existing apps. **Decision: both
+  pilot projects sleep** after 3 h idle (no extra cost; each wakes in about
+  1–2 s, and both may be cold on the first request).
+- Always-on would cost $4/mo per project ($8/mo for both) if needed later, e.g.
+  before inviting outside testers.
 
-## 8. Open questions for Canner / first test deploy
+## 8. Canner answers (Colin, Nov 2)
 
-1. Does a `pyproject.toml`-only project (no `requirements.txt`) with root
-   `backend` install via `pip install .`? Is Python 3.12 available?
-2. Does a Vite project with a custom start command run as a Node server rather
-   than a static site?
-3. Is `CANNER_DATA_DIR` available on Starter?
-4. Does Canner's edge pass `Set-Cookie`/`Origin` unchanged, set
-   `X-Forwarded-Proto`, and allow 10 MB request bodies / long requests?
-5. Can one project reach another over `https://<api>.canner.app` with low latency?
-6. Cold-start time of the Python app on Starter.
-7. How many always-on slots and how much pooled storage existing apps use.
+1. `pyproject.toml`-only backend builds fine; Python 3.12.3.
+2. Vite + custom start runs as a Node server only with Framework = Node.js.
+3. `CANNER_DATA_DIR` available on Live, survives deploys, nightly backups (production deploys).
+4. Edge passes `Set-Cookie`/`Origin` and large uploads; it may overwrite
+   `X-Forwarded-Host` (covered by the smoke test).
+5. Projects can reach each other over their public `https://<app>.canner.app` URLs.
+6. Sleeping apps wake in about 1–2 s.
+7. All always-on slots are in use (see section 7).
