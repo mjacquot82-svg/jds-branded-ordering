@@ -1,5 +1,5 @@
 import json
-from app.tenancy.pilot_shop import pilot_shop_url
+from app.tenancy.pilot_shop import pilot_shop_link_base, pilot_shop_url
 from datetime import datetime, timezone
 from typing import Literal
 from html import escape
@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.catalog import get_catalog_session, ladels_compatibility_tenant
+from app.api.v1.catalog import get_catalog_session, ladels_compatibility_tenant, optional_storefront_tenant
 from app.api.v1.owner_auth import csrf_principal, current_principal
 from app.api.v1.tenant_context import authenticated_owner_tenant
 from app.jds_auth.models import JdsApplication, JdsUser, Membership, MerchantAcquisition, Organization, Role
@@ -87,7 +87,9 @@ def media_storage(request: Request) -> MediaStorage:
     return getattr(request.app.state, "media_storage", None) or default_media_storage()
 
 @router.get("/storefront/bootstrap")
-def storefront_bootstrap(request: Request, response: Response, tenant: TenantContext = Depends(ladels_compatibility_tenant), session: Session = Depends(get_catalog_session)) -> dict:
+def storefront_bootstrap(request: Request, response: Response, tenant: TenantContext | None = Depends(optional_storefront_tenant), session: Session = Depends(get_catalog_session)):
+    if tenant is None:
+        return Response(status_code=204, headers={"Cache-Control": "no-store", "Vary": "Host"})
     workspace = session.get(DesignWorkspace, tenant.organization_id)
     version = session.get(DesignVersion, workspace.published_version_id) if workspace and workspace.published_version_id else None
     profile = session.get(BusinessProfile, tenant.organization_id)
@@ -212,7 +214,7 @@ def owner_storefront(tenant: TenantContext = Depends(authenticated_owner_tenant)
     configured=hosted_storefront_hostname(tenant.organization_slug)
     current_hostname=next((row.hostname for row in rows if row.is_canonical),None) or (rows[0].hostname if rows else None)
     suffix=current_hostname[len(tenant.organization_slug):] if current_hostname and current_hostname.startswith(tenant.organization_slug) else ""
-    return {"slug":tenant.organization_slug,"demoAddressLocked":is_prospect(session, tenant.organization_id),"slugIsSuggestion":slug_is_suggestion,"merchantAddressSuffix":f".{STANDARD_STOREFRONT_BASE_DOMAIN}","addressSuffix":suffix,"configuredHostname":configured,"hostnames":[{"id":str(row.id),"hostname":row.hostname,"status":row.status,"canonical":row.is_canonical} for row in rows]}
+    return {"slug":tenant.organization_slug,"demoAddressLocked":is_prospect(session, tenant.organization_id),"slugIsSuggestion":slug_is_suggestion,"merchantAddressSuffix":f".{STANDARD_STOREFRONT_BASE_DOMAIN}","addressSuffix":suffix,"configuredHostname":configured,"shopLink":pilot_shop_url(tenant.organization_slug),"shopLinkBase":pilot_shop_link_base(),"hostnames":[{"id":str(row.id),"hostname":row.hostname,"status":row.status,"canonical":row.is_canonical} for row in rows]}
 
 @router.get("/owner/storefront/launch-kit")
 def launch_kit(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:

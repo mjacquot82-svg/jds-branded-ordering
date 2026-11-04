@@ -25,6 +25,7 @@ test("Step 3 keeps a previously chosen authoritative web address", () => {
 
 test("Step 3 presents the standard JDS address without leaking runtime routing", () => {
   assert.equal(merchantAppAddress(businessNameSlug("Marc's Drip"),".order.jdsstudio.ca"),"marcs-drip.order.jdsstudio.ca");
+  assert.equal(merchantAppAddress("marcs-drip",".order.jdsstudio.ca","https://jds-beta-web.canner.app/?shop="),"https://jds-beta-web.canner.app/?shop=marcs-drip");
   assert.match(page,/merchantAddressSuffix/);
   assert.doesNotMatch(page,/configuredHostname|storefront\.addressSuffix/);
   assert.doesNotMatch(page.match(/<label>Your app’s web address[\s\S]*?<\/label>/)?.[0]||"",/localhost|Codespaces|github\.dev|5173/);

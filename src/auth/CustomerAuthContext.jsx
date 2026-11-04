@@ -1,4 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { isOperationsPath } from "../tenant/operationsBranding.js";
 import { fetchCustomerSession, loginCustomer, logoutCustomer } from "../services/customerAuthApi.js";
 
 const CustomerAuthContext = createContext(null);
@@ -18,7 +20,9 @@ export function CustomerAuthProvider({ children }) {
       setSession(null); setStatus("anonymous"); return null;
     }
   }, []);
-  useEffect(() => { refreshSession(); }, [refreshSession]);
+  // Owner/staff/setup pages never use the shopper session; skipping it avoids a 404 per page on the platform host.
+  const operations = isOperationsPath(useLocation().pathname);
+  useEffect(() => { if (operations) { setStatus((current) => (current === "loading" ? "anonymous" : current)); return; } refreshSession(); }, [operations, refreshSession]);
   async function login(email, password, keepSignedIn = false) {
     const value = await loginCustomer(email, password, { keepSignedIn });
     setSession(value); setStatus("authenticated"); return value;

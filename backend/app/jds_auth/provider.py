@@ -28,6 +28,19 @@ _MAX_DIAGNOSTIC_VALUE_LENGTH = 500
 _EMAIL_DIAGNOSTIC_PATTERN = re.compile(r"(?i)\b[^\s@]+@[^\s@]+\b")
 
 
+
+OWNER_SIGNUP_REDIRECT_SUFFIX = "/build/verify"
+
+
+def signup_flow_for_redirect(redirect_url: str) -> str:
+    """Tag the Supabase user so the shared "Confirm signup" template can branch.
+
+    The Supabase template reads it as {{ .Data.signup_flow }}: "owner" for the
+    Build Your Store sign-up, "customer" for shoppers.
+    """
+    path = (redirect_url or "").split("?", 1)[0].rstrip("/")
+    return "owner" if path.endswith(OWNER_SIGNUP_REDIRECT_SUFFIX) else "customer"
+
 class IdentityProviderError(RuntimeError):
     def __init__(
         self,
@@ -291,7 +304,8 @@ class SupabaseIdentityProvider:
 
     def register_user(self, email: str, password: str, redirect_url: str) -> ProviderIdentity:
         response = self._request(
-            "POST", "/signup", json={"email": email, "password": password},
+            "POST", "/signup",
+            json={"email": email, "password": password, "data": {"signup_flow": signup_flow_for_redirect(redirect_url)}},
             params={"redirect_to": redirect_url},
         )
         self._require_success(response)
