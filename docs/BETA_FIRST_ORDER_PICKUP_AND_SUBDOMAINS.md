@@ -55,3 +55,27 @@ DNS/TLS: `*.order.jdsstudio.ca` -> web project (already done).
 - Fix: typing keeps a trailing hyphen and the value is finalized once on save. Saving a **live** shop's
   address now needs an explicit confirmation (`confirm_live_change`), and saving an unchanged address is
   a no-op.
+
+## D. Shop subdomain, fixed in the browser (Nov 2026, live re-test)
+
+Section B still lost the shop host on the live beta: the running web proxy's
+`X-JDS-Storefront-Host` value never matched, so the API fell back and answered
+`tenant_not_found` on `<slug>.order.jdsstudio.ca`. Canner's edge also rewrites
+`X-Forwarded-Host`, so no server-to-server header can be relied on.
+
+- What the API accepts today is a `?shop=<slug>` query (verified live: it returns 200 and
+  sets `__Host-jds_pilot_shop`, after which `/api/v1/catalog` works on that subdomain).
+- The browser knows its own `window.location.hostname`, so `src/tenant/TenantContext.jsx` now
+  derives the shop from the address bar (`shopSlugFromHostname`) and adds `shop=<slug>` to the
+  `/api/v1/storefront/bootstrap` call. Precedence: `?review_tenant=`, then `?shop=`, then the hostname.
+- Only exactly one label under `VITE_STOREFRONT_BASE_DOMAIN` (default `order.jdsstudio.ca`) counts.
+  The bare base domain, `www`, `a.b.order.jdsstudio.ca`, the Canner app host and localhost derive
+  nothing, so behaviour there is unchanged.
+- The proxy server and backend are untouched. The `X-JDS-Storefront-Host` path and
+  `JDS_TRUST_PROXY_STOREFRONT_HOST` are still in the code and still harmless; they are now
+  redundant for browser traffic.
+- Depends on `JDS_PILOT_SHOP_LINKS=true` on the API, because that is what makes the `shop` query
+  recognised. That flag also makes the launch kit / QR / printed sign print the `?shop=` address
+  instead of the short subdomain. Printing the short address needs a small backend change
+  (accept the shop query for live, public-ready shops without also taking over the canonical
+  launch links) — not done here.
