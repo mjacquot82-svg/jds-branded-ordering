@@ -619,7 +619,7 @@ def test_30_new_shops_start_with_pay_at_pickup_off(demo_ctx):
         assert session.get(OrganizationOrderSettings, org_id) is None
         view = get_order_settings(session, org_id)
         assert view.pay_at_pickup_enabled is False
-        assert (view.pay_at_pickup_min_completed_orders, view.pay_at_pickup_max_total_cents) == (1, 2500)
+        assert (view.pay_at_pickup_min_completed_orders, view.pay_at_pickup_max_total_cents) == (0, 2500)
         # Activation (promote to live) must not switch it on either.
         _service(session, settings, provider).promote_to_live(
             organization_id=org_id, actor_user_id=issued.principal.user_id, now=datetime.now(timezone.utc)

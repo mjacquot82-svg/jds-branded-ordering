@@ -29,7 +29,7 @@ class OrderSettingsResponse(BaseModel):
 class OrderSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pay_at_pickup_enabled: bool
-    pay_at_pickup_min_completed_orders: int = Field(default=1, ge=0, le=100)
+    pay_at_pickup_min_completed_orders: int = Field(default=0, ge=0, le=100)
     pay_at_pickup_max_total_cents: int = Field(default=2500, ge=100, le=100000)
     new_order_alert_email: str | None = Field(default=None, max_length=320)
 

@@ -169,6 +169,8 @@ export function payAtPickupUnavailableMessage(eligibility) {
     case "email_not_verified": return "Verify your email to use pay at pickup.";
     case "not_enough_completed_orders": return `Pay at pickup unlocks after ${eligibility.min_completed_orders} completed order${eligibility.min_completed_orders === 1 ? "" : "s"}.`;
     case "order_total_too_high": return `Pay at pickup is for orders up to $${(eligibility.max_total_cents / 100).toFixed(2)}.`;
+    case "sign_in_required": return "Sign in to use pay at pickup at this café.";
+    case "guest_contact_required": return "Add your name and a phone number or email to pay at pickup.";
     case "blocked_after_no_show": return "Pay at pickup is turned off for your account. Please pay online.";
     default: return "";
   }

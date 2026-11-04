@@ -47,8 +47,8 @@ test("customer forms default persistence and expose guarded pending states", () 
   assert.match(cartPageSource, /Your order is already being submitted\. Please wait\./);
   assert.match(cartPageSource, /Add your first and last name, email, and phone number before placing your order\./);
   // Guests can check out (card only); signing in is offered, not required.
-  assert.match(cartPageSource, /Ordering as a guest — you’ll pay by card\./);
-  assert.match(cartPageSource, /orderingCustomer && paymentChoice === "pay_at_pickup"/);
+  assert.match(cartPageSource, /Ordering as a guest\{payAtPickup.available \? "" : " — you’ll pay by card"\}\./);
+  assert.match(cartPageSource, /if \(paymentChoice === "pay_at_pickup" && payAtPickup.available\)/);
   assert.match(cartPageSource, /\/account\/sign-in\?returnTo=%2Fcart/);
   assert.match(cartPageSource, /\/account\/create\?returnTo=%2Fcart/);
   assert.match(cartPageSource, /isOrderingCustomerSession\(session\)/);

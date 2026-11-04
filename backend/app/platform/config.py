@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 
 STANDARD_STOREFRONT_BASE_DOMAIN = "order.jdsstudio.ca"
@@ -32,22 +33,39 @@ def storefront_url(hostname: str) -> str:
     return f"{scheme}://{hostname}"
 
 
+STOREFRONT_HOST_HEADER = "x-jds-storefront-host"
+PROXY_SECRET_HEADER = "x-jds-proxy-secret"
+
+
+def _single_label_storefront_host(value: str) -> str | None:
+    base = storefront_base_domain()
+    host = (value or "").split(",", 1)[0].strip().split(":", 1)[0].rstrip(".").lower()
+    if base and host.endswith(f".{base}"):
+        label = host[: -len(base) - 1]
+        if label and "." not in label:
+            return host
+    return None
+
+
 def storefront_request_host(request) -> str | None:
     """Host to resolve a storefront from.
 
-    On Canner the web project proxies /api to the API project, so the API sees its own
-    hostname in Host and the shop's hostname in X-Forwarded-Host. When
-    JDS_TRUST_PROXY_STOREFRONT_HOST=true, a forwarded host that is exactly one label under
-    JDS_STOREFRONT_BASE_DOMAIN (e.g. maple.order.jdsstudio.ca) is used instead. That only
-    selects among verified, public-ready storefront mappings, which are public anyway.
+    On Canner the web project proxies /api to the API project. Canner's edge in front of
+    the API overwrites X-Forwarded-Host with the API's own hostname, so the shop hostname
+    is lost. The web proxy therefore also sends X-JDS-Storefront-Host plus
+    X-JDS-Proxy-Secret; when JDS_STOREFRONT_PROXY_SECRET is set and the secret matches
+    (constant-time), that dedicated header is used. JDS_TRUST_PROXY_STOREFRONT_HOST=true
+    keeps the older X-Forwarded-Host path. Either way only a host exactly one label under
+    JDS_STOREFRONT_BASE_DOMAIN is accepted, and it only selects a live, public-ready shop.
     """
     own = request.headers.get("host") or request.url.hostname
+    secret = os.getenv("JDS_STOREFRONT_PROXY_SECRET", "").strip()
+    if secret:
+        supplied = request.headers.get(PROXY_SECRET_HEADER, "")
+        if supplied and hmac.compare_digest(supplied.encode(), secret.encode()):
+            dedicated = _single_label_storefront_host(request.headers.get(STOREFRONT_HOST_HEADER, ""))
+            if dedicated:
+                return dedicated
     if os.getenv("JDS_TRUST_PROXY_STOREFRONT_HOST", "false").strip().lower() != "true":
         return own
-    base = storefront_base_domain()
-    forwarded = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip().split(":", 1)[0].rstrip(".").lower()
-    if base and forwarded.endswith(f".{base}"):
-        label = forwarded[: -len(base) - 1]
-        if label and "." not in label:
-            return forwarded
-    return own
+    return _single_label_storefront_host(request.headers.get("x-forwarded-host", "")) or own

@@ -17,7 +17,8 @@ M1 does **not** implement pay-at-pickup checkout. The data model reserves `manua
 ## M4 (trial readiness) — implemented
 
 - **Per-shop switch, off by default:** `organization_order_settings` (owner UI: Scheduling page → "Pay at pickup & order alerts", and setup step 6). API `GET/PUT /api/v1/owner/order-settings`.
-- **No-show protections (server-enforced):** verified email; at least `pay_at_pickup_min_completed_orders` paid+completed orders at this shop (default 1); total ≤ `pay_at_pickup_max_total_cents` (default $25); not in `pay_at_pickup_blocks`.
+- **No-show protections (server-enforced):** total ≤ `pay_at_pickup_max_total_cents` (default $25, the main abuse guard); not in `pay_at_pickup_blocks`; at least `pay_at_pickup_min_completed_orders` paid+completed orders at this shop (default 0, so a customer's first order works). Signed-in customers need a verified email.
+- **Guests (default):** with the minimum at 0, a guest may pay at pickup when the order carries a name plus a phone or email. A guest no-show blocks that email/phone at this shop. Owners who want prior orders first raise the minimum above 0, which puts guests back on card payment.
 - **Customer:** `GET /api/v1/payments/pay-at-pickup/eligibility?total_cents=` (advisory) and `POST /api/v1/payments/orders/{token}/pay-at-pickup` → `status=payment_pending`, `payment_status=manual_unpaid`, no provider, no txn id. Expiry extended to pickup + 12h.
 - **Staff:** `POST /api/v1/owner/orders/{id}/mark-paid` (paid at counter: `payment_status=paid`, `payment_provider=null`, audit `order.pay_at_pickup.collected`) and `POST /api/v1/owner/orders/{id}/no-show` (cancel + block customer, audit `order.pay_at_pickup.no_show`). Orders must be marked paid before "Mark Completed".
 - **Readiness:** `payment_connected` is satisfied by an electronic provider **or** pay at pickup being on. Connect Clover is shown only when the platform has Clover credentials (`paymentOptions.cloverAvailable`).

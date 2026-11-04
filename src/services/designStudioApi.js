@@ -22,7 +22,7 @@ export const fetchPlatformCapabilities = () => request("/owner/platform-capabili
 export const fetchReadiness = () => request("/owner/readiness");
 export const recheckReadiness = (csrf) => request("/owner/readiness/recheck",{method:"POST",headers:{"X-CSRF-Token":csrf}});
 export const fetchStorefront = () => request("/owner/storefront");
-export const saveStorefront = (slug,csrf) => request("/owner/storefront",{method:"PUT",headers:{"X-CSRF-Token":csrf},body:JSON.stringify({slug})});
+export const saveStorefront = (slug,csrf,{confirmLiveChange=false}={}) => request("/owner/storefront",{method:"PUT",headers:{"X-CSRF-Token":csrf},body:JSON.stringify(confirmLiveChange?{slug,confirm_live_change:true}:{slug})});
 export const fetchLaunchKit = () => request("/owner/storefront/launch-kit");
 export const fetchEntitlements = () => request("/owner/entitlements");
 export const fetchMedia = () => request("/owner/media");

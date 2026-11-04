@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { businessNameSlug, customizeBusinessSlug, initialBusinessDetails, merchantAppAddress, updateBusinessName } from "../../src/setup/businessDetails.js";
+import { businessNameSlug, customizeBusinessSlug, finalizeSlug, typedSlug, initialBusinessDetails, merchantAppAddress, updateBusinessName } from "../../src/setup/businessDetails.js";
 
 const page = readFileSync(new URL("../../src/admin/OnboardingPage.jsx", import.meta.url), "utf8");
 
@@ -42,4 +42,20 @@ test("Step 3 copy distinguishes required customer-facing details from optional f
   assert.match(page,/Example: Pick up at the front counter\. Please have your order number ready\./);
   assert.match(page,/placeholder="https:\/\/instagram.com\/yourbusiness"/);
   assert.match(page,/placeholder="https:\/\/facebook.com\/yourbusiness"/);
+});
+
+test("typing a web address keeps hyphens (zz-test-cafe-grok-qa stays hyphenated)", () => {
+  let state = { profile: {}, slug: "", slugCustomized: false };
+  let typed = "";
+  for (const ch of "zz-test-cafe-grok-qa") { typed = state.slug + ch; state = customizeBusinessSlug(state, typed); }
+  assert.equal(state.slug, "zz-test-cafe-grok-qa");
+  assert.equal(typedSlug("zz-"), "zz-");
+  assert.equal(finalizeSlug("zz-test-"), "zz-test");
+  assert.equal(finalizeSlug("zz--test"), "zz-test");
+});
+
+test("saving never silently changes a live shop's address", () => {
+  assert.match(page, /liveAddressLocked/);
+  assert.match(page, /window\.confirm/);
+  assert.match(page, /finalizeSlug\(slug\)/);
 });

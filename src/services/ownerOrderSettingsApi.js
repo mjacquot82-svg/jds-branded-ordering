@@ -2,7 +2,7 @@ const PATH = "/api/v1/owner/order-settings";
 
 export const ORDER_SETTINGS_DEFAULTS = Object.freeze({
   pay_at_pickup_enabled: false,
-  pay_at_pickup_min_completed_orders: 1,
+  pay_at_pickup_min_completed_orders: 0,
   pay_at_pickup_max_total_cents: 2500,
   new_order_alert_email: null,
 });

@@ -6,8 +6,11 @@ Rules (docs/MANUAL_AND_PAY_AT_PICKUP.md):
 - Staff record the money at the counter with an explicit action that writes an
   audit row. A no-show cancels the order and blocks pay at pickup for that
   customer at this shop.
-- Off by default per shop. When on: verified email, >= N completed orders,
-  order total <= max, and not blocked by a previous no-show.
+- Off by default per shop. When on: order total <= max (the main abuse guard),
+  not blocked by a previous no-show, and >= N completed orders (default 0, so a
+  first order works). Signed-in customers need a verified email. Guests are
+  allowed when N == 0 and the order carries a name plus a phone or email; a guest
+  no-show blocks that email/phone at the shop.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.jds_auth.models import JdsUser
@@ -31,7 +34,7 @@ from app.payments.order_payment import (
 from app.platform.models import OperationalAuditEvent
 
 PAY_AT_PICKUP_METHOD = "pay_at_pickup"
-DEFAULT_MIN_COMPLETED_ORDERS = 1
+DEFAULT_MIN_COMPLETED_ORDERS = 0
 DEFAULT_MAX_TOTAL_CENTS = 2500
 # A pay-at-pickup order stays valid until the end of its pickup window plus a
 # grace period, instead of the 30-minute electronic checkout expiry.
@@ -122,13 +125,43 @@ def is_blocked(session: Session, organization_id: UUID, user_id: UUID) -> bool:
     )
 
 
+def _clean(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def guest_is_blocked(session: Session, organization_id: UUID, *, email: str | None, phone: str | None) -> bool:
+    """A guest no-show at this shop blocks the same email or phone from pay at pickup."""
+    email, phone = _clean(email), (phone or "").strip()
+    conditions = []
+    if email:
+        conditions.append(func.lower(Order.guest_email) == email)
+    if phone:
+        conditions.append(Order.guest_phone == phone)
+    if not conditions:
+        return False
+    return session.scalar(
+        select(Order.id).where(
+            Order.organization_id == organization_id,
+            Order.payment_status == PAYMENT_STATUS_CANCELLED,
+            Order.payment_provider_metadata["no_show"].as_boolean().is_(True),
+            or_(*conditions),
+        ).limit(1)
+    ) is not None
+
+
 def check_eligibility(
     session: Session,
     organization_id: UUID,
-    user_id: UUID,
+    user_id: UUID | None,
     *,
     total_cents: int | None,
+    guest_name: str | None = None,
+    guest_email: str | None = None,
+    guest_phone: str | None = None,
+    guest_contact_known: bool = True,
 ) -> Eligibility:
+    """user_id=None means a guest. guest_contact_known=False is the cart's advisory
+    pre-check before the guest has typed their details."""
     settings = get_order_settings(session, organization_id)
     completed = 0
 
@@ -143,6 +176,17 @@ def check_eligibility(
 
     if not settings.pay_at_pickup_enabled:
         return result("not_offered")
+    if user_id is None:
+        if settings.pay_at_pickup_min_completed_orders > 0:
+            return result("sign_in_required")
+        if guest_contact_known:
+            if not (guest_name or "").strip() or not (_clean(guest_email) or (guest_phone or "").strip()):
+                return result("guest_contact_required")
+            if guest_is_blocked(session, organization_id, email=guest_email, phone=guest_phone):
+                return result("blocked_after_no_show")
+        if total_cents is not None and total_cents > settings.pay_at_pickup_max_total_cents:
+            return result("order_total_too_high")
+        return result(None)
     user = session.get(JdsUser, user_id)
     if user is None or user.status != "active" or user.email_verified_at is None:
         return result("email_not_verified")
@@ -181,7 +225,7 @@ def accept_pay_at_pickup(
     session: Session,
     order: Order,
     *,
-    customer_user_id: UUID,
+    customer_user_id: UUID | None,
     now: datetime | None = None,
 ) -> Order:
     """Turn a freshly created pending order into a pay-at-pickup order."""
@@ -195,8 +239,11 @@ def accept_pay_at_pickup(
     expires_at = order.expires_at if order.expires_at.tzinfo else order.expires_at.replace(tzinfo=timezone.utc)
     if expires_at <= now:
         raise PayAtPickupError("order_expired", "This order expired. Please place it again.")
+    if customer_user_id is None and order.customer_user_id is not None:
+        raise PayAtPickupError("order_not_found", "Sign in to use pay at pickup for this order.")
     eligibility = check_eligibility(
-        session, order.organization_id, customer_user_id, total_cents=order.total_cents
+        session, order.organization_id, customer_user_id, total_cents=order.total_cents,
+        guest_name=order.guest_name, guest_email=order.guest_email, guest_phone=order.guest_phone,
     )
     if not eligibility.available:
         raise PayAtPickupError(eligibility.reason or "not_offered", "Pay at pickup isn't available for this order.")
@@ -209,7 +256,7 @@ def accept_pay_at_pickup(
     order.expires_at = max(expires_at, pickup + PICKUP_GRACE)
     order.version += 1
     _audit(session, order, action="order.pay_at_pickup.accepted", actor_user_id=customer_user_id,
-           metadata={"total_cents": order.total_cents})
+           metadata={"total_cents": order.total_cents, "guest": customer_user_id is None})
     return order
 
 

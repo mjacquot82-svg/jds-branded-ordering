@@ -81,7 +81,7 @@ class OrganizationOrderSettings(Base):
         Boolean, default=False, server_default="false"
     )
     pay_at_pickup_min_completed_orders: Mapped[int] = mapped_column(
-        Integer, default=1, server_default="1"
+        Integer, default=0, server_default="0"
     )
     pay_at_pickup_max_total_cents: Mapped[int] = mapped_column(
         Integer, default=2500, server_default="2500"

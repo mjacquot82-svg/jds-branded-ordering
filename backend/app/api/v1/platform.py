@@ -79,6 +79,7 @@ class ProvisionOrganizationInput(Strict):
     provider_metadata: dict = Field(default_factory=dict)
 class StorefrontSlugInput(Strict):
     slug: str = Field(min_length=3,max_length=63,pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    confirm_live_change: bool = False
 
 def design_payload(workspace: DesignWorkspace) -> dict:
     return {"revision": workspace.revision, "config": workspace.draft_config, "published_version_id": str(workspace.published_version_id) if workspace.published_version_id else None}
@@ -214,7 +215,7 @@ def owner_storefront(tenant: TenantContext = Depends(authenticated_owner_tenant)
     configured=hosted_storefront_hostname(tenant.organization_slug)
     current_hostname=next((row.hostname for row in rows if row.is_canonical),None) or (rows[0].hostname if rows else None)
     suffix=current_hostname[len(tenant.organization_slug):] if current_hostname and current_hostname.startswith(tenant.organization_slug) else ""
-    return {"slug":tenant.organization_slug,"demoAddressLocked":is_prospect(session, tenant.organization_id),"slugIsSuggestion":slug_is_suggestion,"merchantAddressSuffix":f".{STANDARD_STOREFRONT_BASE_DOMAIN}","addressSuffix":suffix,"configuredHostname":configured,"shopLink":pilot_shop_url(tenant.organization_slug),"shopLinkBase":pilot_shop_link_base(),"hostnames":[{"id":str(row.id),"hostname":row.hostname,"status":row.status,"canonical":row.is_canonical} for row in rows]}
+    return {"slug":tenant.organization_slug,"demoAddressLocked":is_prospect(session, tenant.organization_id),"liveAddressLocked":_is_live_with_address(session, tenant.organization_id),"slugIsSuggestion":slug_is_suggestion,"merchantAddressSuffix":f".{STANDARD_STOREFRONT_BASE_DOMAIN}","addressSuffix":suffix,"configuredHostname":configured,"shopLink":pilot_shop_url(tenant.organization_slug),"shopLinkBase":pilot_shop_link_base(),"hostnames":[{"id":str(row.id),"hostname":row.hostname,"status":row.status,"canonical":row.is_canonical} for row in rows]}
 
 @router.get("/owner/storefront/launch-kit")
 def launch_kit(tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
@@ -253,6 +254,13 @@ def launch_print(tenant: TenantContext = Depends(authenticated_owner_tenant), se
     body=f"""<!doctype html><html><head><title>{name} app sign</title><style>body{{font-family:system-ui;text-align:center;padding:8vh;color:#222}}h1{{font-size:3rem}}img{{width:min(60vw,420px)}}p{{font-size:1.4rem}}@media print{{button{{display:none}}}}</style></head><body><h1>Scan to get our app</h1><h2>{name}</h2><img src='/api/v1/owner/storefront/launch-kit/qr.svg' alt='QR code for {name}'><p>Scan with your phone camera, then tap “Get the app” to add {name} to your home screen.</p><p>{url}</p><button onclick='print()'>Print sign</button></body></html>"""
     return HTMLResponse(body,headers={"Cache-Control":"private, no-store"})
 
+def _is_live_with_address(session: Session, organization_id) -> bool:
+    organization=session.get(Organization,organization_id)
+    if organization is None or getattr(organization,"commercial_mode","live")!="live":
+        return False
+    return session.scalar(select(StorefrontHostname.id).where(StorefrontHostname.organization_id==organization_id,StorefrontHostname.status=="verified").limit(1)) is not None
+
+
 @router.put("/owner/storefront")
 def choose_storefront(payload: StorefrontSlugInput, principal: AuthPrincipal = Depends(csrf_principal), tenant: TenantContext = Depends(authenticated_owner_tenant), session: Session = Depends(get_catalog_session)) -> dict:
     if is_prospect(session, tenant.organization_id):
@@ -261,6 +269,13 @@ def choose_storefront(payload: StorefrontSlugInput, principal: AuthPrincipal = D
         if payload.slug == tenant.organization_slug:
             return {"id":None,"slug":tenant.organization_slug,"hostname":None,"status":"demo","canonical":False,"demoAddressLocked":True}
         raise HTTPException(403, detail={"code":"demo_hostname_locked","message":"Production storefront addresses unlock after JDS activation. Use Design Studio preview while building your free demo."})
+    if payload.slug == tenant.organization_slug:
+        existing=session.scalar(select(StorefrontHostname).where(StorefrontHostname.organization_id==tenant.organization_id,StorefrontHostname.is_canonical.is_(True)))
+        if existing is not None and existing.status == "verified" and existing.hostname == hosted_storefront_hostname(payload.slug):
+            return {"id":str(existing.id),"slug":tenant.organization_slug,"hostname":existing.hostname,"status":existing.status,"canonical":True}
+    elif _is_live_with_address(session, tenant.organization_id) and not payload.confirm_live_change:
+        # Never silently move a live shop: customers already have the old link.
+        raise HTTPException(409,detail={"code":"live_address_change_requires_confirmation","message":"This shop is live. Confirm that you want to change its web address."})
     hostname=hosted_storefront_hostname(payload.slug)
     if not hostname: raise HTTPException(503,detail="Hosted storefront domains are not configured in this environment.")
     conflict=session.scalar(select(Organization.id).where(Organization.slug==payload.slug,Organization.id!=tenant.organization_id))
