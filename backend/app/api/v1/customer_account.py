@@ -11,6 +11,7 @@ from app.customers.service import CustomerAccountService
 from app.jds_auth.service import AuthPrincipal
 from app.orders.constants import FulfillmentStatus
 from app.orders.models import Order
+from app.orders.reference import order_reference
 from app.tenancy.resolver import resolve_owner_tenant_context
 
 
@@ -58,7 +59,7 @@ def update_profile(payload: CustomerProfileUpdate, response: Response, principal
 def list_orders(principal: AuthPrincipal = Depends(current_customer), session: Session = Depends(get_order_session)) -> list[CustomerOrderSummary]:
     try:
         return [CustomerOrderSummary(
-            id=order.id, status=order.status, requested_pickup_at=order.requested_pickup_at.isoformat(),
+            id=order.id, reference=order_reference(order), status=order.status, requested_pickup_at=order.requested_pickup_at.isoformat(),
             total_cents=order.total_cents, created_at=order.created_at.isoformat(),
             item_count=sum(item.quantity for item in order.items),
             fulfillment_status=order.fulfillment_status,

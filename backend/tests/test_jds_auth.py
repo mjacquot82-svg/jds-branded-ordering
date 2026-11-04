@@ -1722,6 +1722,9 @@ async def test_customer_registration_verification_profile_and_role_isolation(
     assert history.status_code == 200
     assert history.json()[0]["id"] == order_id
     assert history.json()[0]["fulfillment_status"] == "completed"
+    # Order history shows the queue's readable number, never the public access token.
+    assert history.json()[0]["reference"] == f"GH-{order_id:06d}"
+    assert "customer-public-token" not in str(history.json()[0])
     assert history.json()[0]["first_item"] == {
         "product_name": "Drip Coffee",
         "variant_name": "12oz",
@@ -1734,6 +1737,7 @@ async def test_customer_registration_verification_profile_and_role_isolation(
     detail = await auth_client.get(f"/api/v1/customer/orders/{order_id}")
     assert detail.status_code == 200
     assert detail.json()["public_token"] == "customer-public-token"
+    assert detail.json()["reference"] == f"GH-{order_id:06d}"
     assert detail.json()["fulfillment_status"] == "completed"
     assert detail.json()["tax_name"] == "HST"
 

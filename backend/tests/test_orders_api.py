@@ -124,6 +124,7 @@ def test_create_order_returns_public_pending_snapshot(
     assert response.status_code == 201
     body = response.json()
     assert set(body) == {
+        "reference",
         "public_token",
         "status",
         "customer",
@@ -154,6 +155,10 @@ def test_create_order_returns_public_pending_snapshot(
         "oat",
         "vanilla",
     ]
+    # The readable queue number is a display field derived from the order id; the public token
+    # stays exactly what the create call returned.
+    assert body["reference"] == f"GH-{1:06d}"
+    assert body["public_token"] != body["reference"]
     assert "id" not in body
     assert "source_product_id" not in body["items"][0]
     assert "idempotency_key" not in body

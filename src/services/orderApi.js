@@ -29,6 +29,7 @@ function requireOrder(payload, status) {
     !payload ||
     typeof payload !== "object" ||
     typeof payload.public_token !== "string" ||
+    (payload.reference !== undefined && typeof payload.reference !== "string") ||
     !["pending", "payment_pending", "paid", "payment_failed"].includes(
       payload.status
     ) ||

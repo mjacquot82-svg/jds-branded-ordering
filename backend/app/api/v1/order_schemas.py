@@ -10,6 +10,7 @@ from app.orders.constants import (
     OrderStatus,
 )
 from app.orders.models import Order, OrderItem, OrderItemModifier
+from app.orders.reference import order_reference
 from app.orders.schemas import (
     ConfiguredOrderLineInput,
     CreatePendingOrderInput,
@@ -142,6 +143,9 @@ class OrderItemSnapshot(OrderApiSchema):
 
 
 class PendingOrderResponse(OrderApiSchema):
+    # The readable number the shop sees in its queue ("ZTC-000010"). Display only: it is
+    # never a lookup key, so orders stay reachable only by their unguessable public token.
+    reference: str
     public_token: str
     status: OrderStatus
     customer: GuestCustomerSnapshot
@@ -160,6 +164,7 @@ class PendingOrderResponse(OrderApiSchema):
     @classmethod
     def from_model(cls, order: Order) -> "PendingOrderResponse":
         return cls(
+            reference=order_reference(order),
             public_token=order.public_access_token,
             status=order.status,
             customer=GuestCustomerSnapshot(

@@ -5,6 +5,7 @@ import { clearOrderSubmission } from "../services/checkoutOrder.js";
 import { fetchPendingOrder } from "../services/orderApi.js";
 import { removeTenantLocalStorage } from "../services/tenantBrowserState.js";
 import { refreshSquarePaymentStatus } from "../services/squareService.js";
+import { orderReference } from "../services/orderReference.js";
 
 function formatPrice(cents) {
   return new Intl.NumberFormat("en-CA", {
@@ -113,7 +114,7 @@ export default function ConfirmationPage() {
                     : `${providerName} returned you to the shop. We are waiting for its signed payment confirmation.`}
             </p>
             <div className="confirmation-summary">
-              <span>Order {order.public_token.slice(0, 8).toUpperCase()}</span>
+              <span>Order {orderReference(order)}</span>
               <strong>{formatPrice(order.total_cents)}</strong>
             </div>
             <ul className="order-item-list">

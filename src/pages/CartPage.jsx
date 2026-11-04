@@ -29,6 +29,7 @@ import {
 } from "../services/schedulingApi.js";
 import { readTenantLocalStorage, writeTenantLocalStorage } from "../services/tenantBrowserState.js";
 import { useTenant } from "../tenant/TenantContext.jsx";
+import { orderReference } from "../services/orderReference.js";
 
 function formatPrice(price) {
   return new Intl.NumberFormat("en-CA", {
@@ -383,7 +384,7 @@ export default function CartPage() {
             <span className="saved-order-check" aria-hidden="true">✓</span>
             <div>
               <strong>The café has your order</strong>
-              <span>Order {savedOrder.public_token.slice(0, 8).toUpperCase()}</span>
+              <span>Order {orderReference(savedOrder)}</span>
             </div>
           </div>
           <div className="saved-order-milestones" aria-label="Order status">
@@ -411,7 +412,7 @@ export default function CartPage() {
             <span className="saved-order-check" aria-hidden="true">✓</span>
             <div>
               <strong>Your order is confirmed</strong>
-              <span>Order {savedOrder.public_token.slice(0, 8).toUpperCase()}</span>
+              <span>Order {orderReference(savedOrder)}</span>
             </div>
           </div>
           <div className="saved-order-milestones" aria-label="Order status">
