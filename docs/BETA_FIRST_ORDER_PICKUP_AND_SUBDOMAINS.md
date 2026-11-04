@@ -55,3 +55,59 @@ DNS/TLS: `*.order.jdsstudio.ca` -> web project (already done).
 - Fix: typing keeps a trailing hyphen and the value is finalized once on save. Saving a **live** shop's
   address now needs an explicit confirmation (`confirm_live_change`), and saving an unchanged address is
   a no-op.
+
+## D. Shop subdomain, fixed in the browser (Nov 2026, live re-test)
+
+Section B still lost the shop host on the live beta: the running web proxy's
+`X-JDS-Storefront-Host` value never matched, so the API fell back and answered
+`tenant_not_found` on `<slug>.order.jdsstudio.ca`. Canner's edge also rewrites
+`X-Forwarded-Host`, so no server-to-server header can be relied on.
+
+- What the API accepts today is a `?shop=<slug>` query (verified live: it returns 200 and
+  sets `__Host-jds_pilot_shop`, after which `/api/v1/catalog` works on that subdomain).
+- The browser knows its own `window.location.hostname`, so `src/tenant/TenantContext.jsx` now
+  derives the shop from the address bar (`shopSlugFromHostname`) and adds `shop=<slug>` to the
+  `/api/v1/storefront/bootstrap` call. Precedence: `?review_tenant=`, then `?shop=`, then the hostname.
+- Only exactly one label under `VITE_STOREFRONT_BASE_DOMAIN` (default `order.jdsstudio.ca`) counts.
+  The bare base domain, `www`, `a.b.order.jdsstudio.ca`, the Canner app host and localhost derive
+  nothing, so behaviour there is unchanged.
+- The proxy server and backend are untouched. The `X-JDS-Storefront-Host` path and
+  `JDS_TRUST_PROXY_STOREFRONT_HOST` are still in the code and still harmless; they are now
+  redundant for browser traffic.
+- Depends on `JDS_PILOT_SHOP_LINKS=true` on the API, because that is what makes the `shop` query
+  recognised. That flag also makes the launch kit / QR / printed sign print the `?shop=` address
+  instead of the short subdomain. Printing the short address needs a small backend change
+  (accept the shop query for live, public-ready shops without also taking over the canonical
+  launch links) — not done here.
+
+### Sign-in from the short address
+
+`require_trusted_origin` trusted only `FRONTEND_URL` or a **verified** `storefront_hostnames` row for
+the request host. PR #37 stopped requiring that row for `<slug>.<base>`, so once a shop printed the
+short address its sign-in POSTs would have got `403 origin_invalid`.
+
+- Added one case, everywhere the check lives (`backend/app/api/v1/owner_auth.py`; that is the only
+  copy — `customer_auth.py` delegates to it): the `Origin` header is `https`, names exactly one label
+  under `JDS_STOREFRONT_BASE_DOMAIN`, and that slug resolves to a live, public-ready shop.
+- **No `Origin` hostname == request host comparison.** Canner's edge rewrites the host the API sees,
+  so that comparison can never match for a shop subdomain on this platform; verified by curl, where a
+  spoofed `Host`, `X-Forwarded-Host` and `X-JDS-Storefront-Host` were all ignored. It was only ever a
+  proxy for "this Origin is a storefront we host", and the authoritative form of that question is
+  whether the Origin itself names such a shop right now.
+- "Live and public-ready" is not re-implemented: `is_hosted_storefront_host` in
+  `backend/app/tenancy/resolver.py` wraps `_resolve_standard_subdomain`, the same lookup the
+  storefront bootstrap uses.
+- Fail closed otherwise: `http`, a two-level host, a non-443 port, a path or userinfo in the Origin,
+  `Origin: null`, a missing Origin, an unknown slug, a prospect/demo shop, and a shop that is not
+  public-ready all still get `origin_invalid`. No cache is added; a non-shop origin is rejected by a
+  string check before any query.
+- The lookups share the request session, so the check releases the read transaction it opened (only
+  when it opened one) — otherwise the per-account login rate limiter's own `session.begin()` raised
+  `A transaction is already begun`.
+- Safe because host names are not secrets: an attacker can send any Origin from curl, so this case
+  cannot be doing the work alone. What an attacker cannot do is read the host-only Secure `__Host-`
+  session cookie from another origin, read a cross-origin response body without CORS approval, or
+  serve a page on our wildcard `*.<base domain>` — so no hostile page can *be* a passing Origin.
+  CSRF tokens still gate every state-changing owner and customer call. `Origin` is also not
+  authorization: the session cookie still has to be present and valid, so this widens where a sign-in
+  may be posted from, never who may sign in.
