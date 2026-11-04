@@ -25,7 +25,7 @@ function request(port, { method = "GET", path: target = "/", headers = {}, body 
   });
 }
 
-async function setup() {
+async function setup({ proxySecret = "" } = {}) {
   const dist = await mkdtemp(path.join(os.tmpdir(), "canner-pilot-dist-"));
   await mkdir(path.join(dist, "assets"));
   await writeFile(path.join(dist, "index.html"), "<!doctype html><title>pilot</title>");
@@ -48,7 +48,7 @@ async function setup() {
     });
   });
   const upstreamPort = await listen(upstream);
-  const server = createPilotServer({ distDir: dist, apiOrigin: `http://127.0.0.1:${upstreamPort}`, allowInsecureLoopbackForTests: true });
+  const server = createPilotServer({ distDir: dist, apiOrigin: `http://127.0.0.1:${upstreamPort}`, allowInsecureLoopbackForTests: true, proxySecret });
   const port = await listen(server);
   return {
     port, seen,
@@ -165,4 +165,29 @@ test("static files, SPA fallback, noindex header, robots and service worker head
   assert.equal(sw.headers["service-worker-allowed"], "/");
   assert.match(sw.headers["cache-control"], /no-store/);
   assert.equal((await request(ctx.port, { method: "POST", path: "/build" })).status, 405);
+});
+
+test("shop host travels in X-JDS-Storefront-Host with the shared secret; client copies are dropped", async (t) => {
+  const ctx = await setup({ proxySecret: "shared-test-secret" });
+  t.after(() => ctx.close());
+  const res = await request(ctx.port, {
+    method: "GET", path: "/api/v1/storefront/bootstrap",
+    headers: { Host: "maple.order.jdsstudio.ca", "X-JDS-Storefront-Host": "evil.order.jdsstudio.ca", "X-JDS-Proxy-Secret": "guess" },
+  });
+  assert.equal(res.status, 200);
+  const forwarded = ctx.seen.at(-1);
+  assert.equal(forwarded.headers["x-jds-storefront-host"], "maple.order.jdsstudio.ca");
+  assert.equal(forwarded.headers["x-jds-proxy-secret"], "shared-test-secret");
+});
+
+test("without a configured secret no dedicated storefront headers are forwarded", async (t) => {
+  const ctx = await setup();
+  t.after(() => ctx.close());
+  await request(ctx.port, {
+    method: "GET", path: "/api/v1/storefront/bootstrap",
+    headers: { Host: "maple.order.jdsstudio.ca", "X-JDS-Storefront-Host": "evil.order.jdsstudio.ca", "X-JDS-Proxy-Secret": "guess" },
+  });
+  const forwarded = ctx.seen.at(-1);
+  assert.equal(forwarded.headers["x-jds-storefront-host"], undefined);
+  assert.equal(forwarded.headers["x-jds-proxy-secret"], undefined);
 });

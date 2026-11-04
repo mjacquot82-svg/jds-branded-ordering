@@ -70,7 +70,7 @@ def test_pay_at_pickup_off_by_default(orders_api, sent) -> None:
     body = _fresh_order(client, engine, ids)
     eligibility = client.get("/api/v1/payments/pay-at-pickup/eligibility").json()
     assert eligibility["available"] is False and eligibility["reason"] == "not_offered"
-    assert eligibility["max_total_cents"] == 2500 and eligibility["min_completed_orders"] == 1
+    assert eligibility["max_total_cents"] == 2500 and eligibility["min_completed_orders"] == 0
     response = client.post(f"/api/v1/payments/orders/{body['public_token']}/pay-at-pickup")
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "not_offered"
@@ -212,7 +212,7 @@ def test_owner_order_settings_round_trip(owner_orders_api) -> None:
     with Session(engine) as session, session.begin():
         session.execute(delete(OrganizationOrderSettings))
     assert client.get("/api/v1/owner/order-settings").json() == {
-        "pay_at_pickup_enabled": False, "pay_at_pickup_min_completed_orders": 1,
+        "pay_at_pickup_enabled": False, "pay_at_pickup_min_completed_orders": 0,
         "pay_at_pickup_max_total_cents": 2500, "new_order_alert_email": None,
     }
     bad = client.put("/api/v1/owner/order-settings", json={"pay_at_pickup_enabled": True, "new_order_alert_email": "nope"})

@@ -24,8 +24,20 @@ export function updateBusinessName(state, displayName) {
   };
 }
 
+// While typing, keep a trailing hyphen so "zz-test" can be typed at all (the old
+// per-keystroke slugify dropped every "-" the moment it was typed). finalizeSlug trims it on save.
+export function typedSlug(value) {
+  const trailing = /[-\s_]$/.test(String(value || ""));
+  const base = businessNameSlug(value);
+  return trailing && base && base.length < 63 ? `${base}-` : base;
+}
+
+export function finalizeSlug(value) {
+  return String(value || "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 export function customizeBusinessSlug(state, value) {
-  return { ...state, slug: businessNameSlug(value), slugCustomized: true };
+  return { ...state, slug: typedSlug(value), slugCustomized: true };
 }
 
 export function merchantAppAddress(slug, suffix, shopLinkBase) {

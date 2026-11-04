@@ -15,6 +15,8 @@ const HOP_BY_HOP = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection",
   "te", "trailer", "transfer-encoding", "upgrade", "host", "forwarded",
   "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip",
+  // Never forward client-supplied copies of the dedicated storefront headers.
+  "x-jds-storefront-host", "x-jds-proxy-secret",
 ]);
 const NOINDEX = "noindex, nofollow";
 const ROBOTS_BODY = "User-agent: *\nDisallow: /\n";
@@ -74,7 +76,7 @@ export function safePathname(rawUrl) {
   return decoded;
 }
 
-function proxy(req, res, upstream, rawUrl, transport) {
+function proxy(req, res, upstream, rawUrl, transport, proxySecret = "") {
   const target = new URL(upstream.origin + rawUrl);
   if (target.origin !== upstream.origin) return send(res, 400, "Bad request.\n");
   const headers = {};
@@ -87,6 +89,12 @@ function proxy(req, res, upstream, rawUrl, transport) {
   headers["x-forwarded-host"] = incomingHost;
   headers["x-forwarded-proto"] = incomingProto === "http" ? "http" : "https";
   if (req.socket.remoteAddress) headers["x-forwarded-for"] = req.socket.remoteAddress;
+  // Canner's edge in front of the API rewrites X-Forwarded-Host, so the shop host also
+  // travels in a dedicated header the API trusts only alongside the shared secret.
+  if (proxySecret) {
+    headers["x-jds-storefront-host"] = incomingHost.split(":", 1)[0].toLowerCase();
+    headers["x-jds-proxy-secret"] = proxySecret;
+  }
 
   const upstreamReq = transport.request(target, { method: req.method, headers }, (upstreamRes) => {
     const responseHeaders = {};
@@ -137,7 +145,7 @@ async function resolveStatic(distRoot, pathname) {
   return null;
 }
 
-export function createPilotServer({ distDir, apiOrigin, allowedHost = "", allowInsecureLoopbackForTests = false }) {
+export function createPilotServer({ distDir, apiOrigin, allowedHost = "", allowInsecureLoopbackForTests = false, proxySecret = "" }) {
   const upstream = validateApiOrigin(apiOrigin, { allowedHost, allowInsecureLoopbackForTests });
   const transport = upstream.protocol === "https:" ? https : http;
   const distRoot = path.resolve(distDir);
@@ -149,7 +157,7 @@ export function createPilotServer({ distDir, apiOrigin, allowedHost = "", allowI
       const pathname = safePathname(rawUrl);
       if (pathname === null) return send(res, 400, "Bad request.\n");
       if (PROXY_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
-        return proxy(req, res, upstream, rawUrl, transport);
+        return proxy(req, res, upstream, rawUrl, transport, proxySecret);
       }
       if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "Method not allowed.\n", { Allow: "GET, HEAD" });
       if (pathname === "/robots.txt") return send(res, 200, req.method === "HEAD" ? "" : ROBOTS_BODY, { "Cache-Control": "public, max-age=300" });
@@ -171,6 +179,7 @@ if (isMain) {
     distDir: process.env.PILOT_DIST_DIR || path.join(repoRoot, "dist"),
     apiOrigin: process.env.PILOT_API_ORIGIN,
     allowedHost: process.env.PILOT_API_ALLOWED_HOST || "",
+    proxySecret: (process.env.JDS_STOREFRONT_PROXY_SECRET || "").trim(),
   });
   server.requestTimeout = 0; // allow slow 10 MB uploads; upstream timeout still applies
   const port = Number(process.env.PORT || 3000);

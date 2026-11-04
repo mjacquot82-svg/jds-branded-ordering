@@ -118,6 +118,36 @@ def resolve_local_review_context(session: Session, slug: str, *, staging: bool =
     )
 
 
+def _resolve_standard_subdomain(session: Session, host: str) -> TenantContext | None:
+    """<slug>.<JDS_STOREFRONT_BASE_DOMAIN> works for every live shop with no per-shop step.
+
+    The wildcard DNS + certificate cover every label, so the slug itself is the mapping.
+    Only a live (not demo), public-ready organization resolves; anything else is "not ready".
+    """
+    from app.platform.config import storefront_base_domain
+
+    base = storefront_base_domain()
+    if not base or not host.endswith(f".{base}"):
+        return None
+    label = host[: -len(base) - 1]
+    if not label or "." in label:
+        return None
+    organization = session.scalar(select(Organization).where(Organization.slug == label))
+    if organization is None:
+        return None
+    if (
+        not getattr(organization, "is_active", True)
+        or getattr(organization, "commercial_mode", "live") != "live"
+        or not evaluate_storefront_readiness(session, organization.id).public_ready
+    ):
+        raise TenantResolutionError("Storefront is not ready.")
+    return TenantContext(
+        organization_id=organization.id,
+        organization_slug=organization.slug,
+        source=TenantResolutionSource.VERIFIED_HOSTNAME,
+    )
+
+
 def resolve_storefront_context(
     session: Session, *, host: str | None, frontend_url: str | None = None,
     headers: object | None = None, query_params: object | None = None,
@@ -149,6 +179,9 @@ def resolve_storefront_context(
         )
     )
     if mapping is None:
+        slug_context = _resolve_standard_subdomain(session, normalized)
+        if slug_context is not None:
+            return slug_context
         return resolve_ladels_compatibility_context(
             session, host=host, frontend_url=frontend_url, headers=headers,
             query_params=query_params,

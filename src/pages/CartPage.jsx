@@ -174,7 +174,7 @@ export default function CartPage() {
     [catalog?.pricing, resolvedCart.totalCents]
   );
   useEffect(() => {
-    if (!orderingCustomer || stagingPaymentsDisabled || savedOrder) return;
+    if (stagingPaymentsDisabled || savedOrder) return;
     let isCurrent = true;
     fetchPayAtPickupEligibility(orderPricing.totalCents).then((value) => {
       if (!isCurrent) return;
@@ -292,8 +292,9 @@ export default function CartPage() {
       const submission = await prepareOrderSubmission(request);
       const order = await createPendingOrder(submission);
       setSavedOrder(order);
-      // Guests always pay by card; pay at pickup needs a signed-in customer with prior paid orders.
-      if (orderingCustomer && paymentChoice === "pay_at_pickup" && payAtPickup.available) {
+      // Guests and signed-in customers can both pay at pickup; the server re-checks
+      // the shop's rules (max total, no-show block, guest name + phone/email).
+      if (paymentChoice === "pay_at_pickup" && payAtPickup.available) {
         await choosePayAtPickup(order.public_token);
         setPayAtPickupConfirmed(true);
         clearOrderSubmission();
@@ -593,7 +594,7 @@ export default function CartPage() {
               <h2>How should we contact you?</h2>
             </div>
           </div>
-          {!orderingCustomer ? <p className="checkout-guest-note" role="note">Ordering as a guest — you’ll pay by card. <Link to="/account/sign-in?returnTo=%2Fcart">Sign in</Link> or <Link to="/account/create?returnTo=%2Fcart">create an account</Link> to save your details and earn rewards.</p> : null}
+          {!orderingCustomer ? <p className="checkout-guest-note" role="note">Ordering as a guest{payAtPickup.available ? "" : " — you’ll pay by card"}. <Link to="/account/sign-in?returnTo=%2Fcart">Sign in</Link> or <Link to="/account/create?returnTo=%2Fcart">create an account</Link> to save your details and earn rewards.</p> : null}
           <div className="checkout-contact-grid">
             <label>
               <span>Name</span>

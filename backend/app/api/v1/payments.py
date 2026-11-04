@@ -12,7 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.v1.catalog import ladels_compatibility_tenant
-from app.api.v1.customer_auth import current_ordering_customer, optional_ordering_customer
+from app.api.v1.customer_auth import optional_ordering_customer
 from app.orders.repository import order_owner_clause
 from app.api.v1.owner_auth import require_read_permission
 from app.api.v1.tenant_context import authenticated_owner_tenant
@@ -209,17 +209,20 @@ PAY_AT_PICKUP_ERROR_STATUS = {
 def pay_at_pickup_eligibility(
     response: Response,
     total_cents: int | None = None,
-    customer: AuthPrincipal = Depends(current_ordering_customer),
+    customer: AuthPrincipal | None = Depends(optional_ordering_customer),
     session: Session = Depends(get_db_session),
     tenant: TenantContext = Depends(ladels_compatibility_tenant),
 ) -> PayAtPickupEligibilityResponse:
     """Tells the cart whether to show the pay-at-pickup option. Advisory only;
-    the POST below re-checks everything on the server."""
+    the POST below re-checks everything (including guest contact) on the server."""
     response.headers["Cache-Control"] = "no-store"
-    if customer.organization_id != tenant.organization_id:
+    if customer is not None and customer.organization_id != tenant.organization_id:
         raise HTTPException(status_code=404, detail={"code": "tenant_not_found"})
     try:
-        result = check_eligibility(session, tenant.organization_id, customer.user_id, total_cents=total_cents)
+        result = check_eligibility(
+            session, tenant.organization_id, customer.user_id if customer else None,
+            total_cents=total_cents, guest_contact_known=customer is not None,
+        )
     except SQLAlchemyError as error:
         raise HTTPException(status_code=503, detail={"code": "pay_at_pickup_unavailable"}) from error
     return PayAtPickupEligibilityResponse(
@@ -235,7 +238,7 @@ def pay_at_pickup_eligibility(
 def choose_pay_at_pickup(
     public_token: str,
     response: Response,
-    customer: AuthPrincipal = Depends(current_ordering_customer),
+    customer: AuthPrincipal | None = Depends(optional_ordering_customer),
     session: Session = Depends(get_db_session),
     tenant: TenantContext = Depends(ladels_compatibility_tenant),
 ) -> PayAtPickupResponse:
@@ -247,7 +250,8 @@ def choose_pay_at_pickup(
             .options(selectinload(Order.items).selectinload(OrderItem.modifiers))
             .where(
                 Order.public_access_token == public_token,
-                Order.customer_user_id == customer.user_id,
+                # Guests reach only guest orders, via the unguessable public token.
+                Order.customer_user_id == customer.user_id if customer else Order.customer_user_id.is_(None),
                 Order.organization_id == tenant.organization_id,
             )
             .with_for_update()
@@ -259,7 +263,7 @@ def choose_pay_at_pickup(
     already = order.payment_status == "manual_unpaid"
     try:
         enforce_live_commerce(session, order.organization_id, action="pay_at_pickup")
-        accept_pay_at_pickup(session, order, customer_user_id=customer.user_id)
+        accept_pay_at_pickup(session, order, customer_user_id=customer.user_id if customer else None)
         session.commit()
     except PayAtPickupError as error:
         session.rollback()
